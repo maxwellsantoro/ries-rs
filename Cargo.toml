@@ -1,0 +1,43 @@
+[package]
+name = "ries-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["RIES Contributors"]
+description = "Find algebraic equations given their solution - Rust implementation"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/clsn/ries"
+
+[features]
+default = ["parallel"]
+parallel = ["rayon"]
+highprec = ["rug"]
+
+[dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Parallelization
+rayon = { version = "1.10", optional = true }
+
+# Arbitrary precision (optional)
+rug = { version = "1.24", optional = true }
+
+# Utilities
+ordered-float = "4.2"
+smallvec = "1.13"
+thiserror = "1.0"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "evaluation"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+
+# Create .cargo/config.toml for native CPU optimization

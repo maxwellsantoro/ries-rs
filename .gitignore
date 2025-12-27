@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug and profiling
+*.dSYM/
+*.profraw
+
+# Temporary files
+*.tmp
+*.bak
