@@ -2,69 +2,91 @@
 //!
 //! Implements a bounded pool that keeps the best matches across
 //! multiple dimensions (error, complexity) with deduplication.
+//!
+//! # Key Design
+//!
+//! Keys use `Expression` directly rather than `String` for zero-allocation
+//! deduplication. Since `Expression` uses `SmallVec<[Symbol; 21]>`, expressions
+//! within the length limit stay inline on the stack, avoiding heap allocation
+//! during hashing and comparison.
 
+use crate::expr::Expression;
 use crate::search::Match;
+use crate::thresholds::{
+    ACCEPT_ERROR_TIGHTEN_FACTOR, BEST_ERROR_TIGHTEN_FACTOR, EXACT_MATCH_TOLERANCE,
+    NEWTON_TOLERANCE, STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR,
+};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 
-/// Keys for deduplication
+/// Keys for full equation deduplication (LHS + RHS pair)
+///
+/// Uses a pair of expressions directly for zero-allocation hashing.
+/// The tuple (lhs, rhs) uniquely identifies an equation.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct EqnKey {
-    /// Normalized full equation (LHS + RHS)
-    pub key: String,
+    /// LHS expression (contains x)
+    lhs: Expression,
+    /// RHS expression (constants only)
+    rhs: Expression,
 }
 
 impl EqnKey {
+    /// Create a key from a match
+    #[inline]
     pub fn from_match(m: &Match) -> Self {
-        // Combine LHS and RHS postfix for full equation key
-        let key = format!("{}={}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix());
-        Self { key }
+        Self {
+            lhs: m.lhs.expr.clone(),
+            rhs: m.rhs.expr.clone(),
+        }
     }
 }
 
+/// Keys for LHS-only deduplication
+///
+/// Used to prevent adding too many variants of the same LHS expression.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct LhsKey {
-    /// Normalized LHS only
-    pub key: String,
+    /// LHS expression
+    lhs: Expression,
 }
 
 impl LhsKey {
+    /// Create a key from a match
+    #[inline]
     pub fn from_match(m: &Match) -> Self {
         Self {
-            key: m.lhs.expr.to_postfix(),
+            lhs: m.lhs.expr.clone(),
         }
     }
 }
 
 /// Signature for operator/constant pattern (used for "interesting" dedupe)
+///
+/// Uses a boxed slice for efficient storage and hashing.
+/// Signatures are created during pool insertion (not the hot path).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SignatureKey {
-    /// Operator pattern signature
-    pub key: String,
+    /// Operator pattern signature as bytes
+    key: Box<[u8]>,
 }
 
 impl SignatureKey {
     pub fn from_match(m: &Match) -> Self {
-        use crate::symbol::Seft;
-
         // Build a signature from operator types and constants used
-        let mut ops: Vec<char> = Vec::new();
+        let expected_len = m.lhs.expr.len() + m.rhs.expr.len() + 1;
+        let mut ops = Vec::with_capacity(expected_len);
+
         for sym in m.lhs.expr.symbols() {
-            match sym.seft() {
-                Seft::A => ops.push((*sym as u8) as char),
-                Seft::B | Seft::C => ops.push((*sym as u8) as char),
-            }
+            ops.push(*sym as u8);
         }
-        ops.push('=');
+        ops.push(b'=');
         for sym in m.rhs.expr.symbols() {
-            match sym.seft() {
-                Seft::A => ops.push((*sym as u8) as char),
-                Seft::B | Seft::C => ops.push((*sym as u8) as char),
-            }
+            ops.push(*sym as u8);
         }
 
         Self {
-            key: ops.into_iter().collect(),
+            key: ops.into_boxed_slice(),
         }
     }
 }
@@ -158,7 +180,7 @@ impl TopKPool {
     /// Returns true if inserted, false if rejected
     pub fn try_insert(&mut self, m: Match) -> bool {
         let error = m.error.abs();
-        let is_exact = error < 1e-14;
+        let is_exact = error < EXACT_MATCH_TOLERANCE;
 
         // Check error threshold (must be better than accept_error)
         if !is_exact && error > self.accept_error {
@@ -183,16 +205,16 @@ impl TopKPool {
         // Update thresholds
         if is_exact {
             // Exact match: tighten best_error aggressively but keep a floor
-            self.best_error = 1e-14_f64.max(self.best_error * 0.999);
+            self.best_error = EXACT_MATCH_TOLERANCE.max(self.best_error * BEST_ERROR_TIGHTEN_FACTOR);
         } else if error < self.best_error {
             // Better approximation: tighten best_error
-            self.best_error = error * 0.999 - 1e-15;
-            self.best_error = self.best_error.max(1e-14);
+            self.best_error = error * BEST_ERROR_TIGHTEN_FACTOR - NEWTON_TOLERANCE;
+            self.best_error = self.best_error.max(EXACT_MATCH_TOLERANCE);
         }
 
         // Slowly tighten accept_error for diversity
-        if error < self.accept_error * 0.9999 {
-            self.accept_error *= 0.9999;
+        if error < self.accept_error * ACCEPT_ERROR_TIGHTEN_FACTOR {
+            self.accept_error *= ACCEPT_ERROR_TIGHTEN_FACTOR;
         }
 
         // Evict worst if over capacity
@@ -230,11 +252,11 @@ impl TopKPool {
         }
 
         // Stricter check when pool is near capacity:
-        // If we're at 80%+ capacity and have good matches, be more aggressive
-        if self.heap.len() >= self.capacity * 4 / 5 {
-            // Only accept if error is at least 2x better than accept threshold
+        // If we're at capacity fraction and have good matches, be more aggressive
+        if self.heap.len() as f64 >= self.capacity as f64 * STRICT_GATE_CAPACITY_FRACTION {
+            // Only accept if error is below strict gate threshold
             // This avoids Newton calls for marginal candidates
-            if coarse_error > self.accept_error * 0.5 {
+            if coarse_error > self.accept_error * STRICT_GATE_FACTOR {
                 return false;
             }
         }
@@ -248,7 +270,12 @@ impl TopKPool {
         matches.sort_by(|a, b| {
             a.complexity
                 .cmp(&b.complexity)
-                .then_with(|| a.error.abs().partial_cmp(&b.error.abs()).unwrap())
+                .then_with(|| {
+                    a.error
+                        .abs()
+                        .partial_cmp(&b.error.abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
         });
         matches
     }

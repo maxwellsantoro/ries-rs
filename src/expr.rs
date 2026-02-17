@@ -99,7 +99,11 @@ impl Expression {
     /// Create an expression from a slice of symbols
     #[cfg(test)]
     pub fn from_symbols(symbols: &[Symbol]) -> Self {
-        let complexity: u32 = symbols.iter().map(|s| s.weight()).sum();
+        // Use saturating_add to prevent overflow with maliciously large weights
+        let complexity: u32 = symbols
+            .iter()
+            .map(|s| s.weight())
+            .fold(0u32, |acc, w| acc.saturating_add(w));
         let contains_x = symbols.contains(&Symbol::X);
         Self {
             symbols: SmallVec::from_slice(symbols),
@@ -114,7 +118,11 @@ impl Expression {
         for b in s.bytes() {
             symbols.push(Symbol::from_byte(b)?);
         }
-        let complexity: u32 = symbols.iter().map(|s: &Symbol| s.weight()).sum();
+        // Use saturating_add to prevent overflow with maliciously large weights
+        let complexity: u32 = symbols
+            .iter()
+            .map(|s: &Symbol| s.weight())
+            .fold(0u32, |acc, w| acc.saturating_add(w));
         let contains_x = symbols.contains(&Symbol::X);
         Some(Self {
             symbols,

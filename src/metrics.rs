@@ -9,6 +9,7 @@
 
 use crate::search::Match;
 use crate::symbol::{Seft, Symbol};
+use crate::thresholds::{DEGENERATE_TEST_THRESHOLD, EXACT_MATCH_TOLERANCE};
 use std::collections::HashMap;
 
 /// Metrics computed for a match
@@ -34,7 +35,7 @@ impl MatchMetrics {
     /// Compute metrics for a match
     pub fn from_match(m: &Match, freq_map: Option<&OperatorFrequency>) -> Self {
         let error = m.error.abs();
-        let is_exact = error < 1e-14;
+        let is_exact = error < EXACT_MATCH_TOLERANCE;
         let complexity = m.complexity;
 
         // Ugliness: penalize deep nesting and operator count
@@ -74,7 +75,7 @@ impl MatchMetrics {
         }
 
         // Normalize error to [0, 1] range within cap
-        let error_norm = if self.error < 1e-14 {
+        let error_norm = if self.error < EXACT_MATCH_TOLERANCE {
             0.0
         } else {
             (self.error.log10() + 14.0) / (error_cap.log10() + 14.0)
@@ -307,7 +308,7 @@ fn compute_stability(m: &Match) -> f64 {
 
     // Ideal: derivative magnitude near 1 (order-1 updates)
     // Bad: too small (sensitive) or too large (ill-conditioned)
-    if deriv < 1e-10 {
+    if deriv < DEGENERATE_TEST_THRESHOLD {
         return 0.0; // Very unstable (degenerate)
     }
 

@@ -19,7 +19,6 @@ use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::UserFunction;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Configuration for expression generation
 #[derive(Clone)]
@@ -85,35 +84,6 @@ pub struct StreamingCallbacks<'a> {
     /// Called for each LHS (contains x) expression generated
     /// Return false to stop generation early
     pub on_lhs: &'a mut dyn FnMut(&EvaluatedExpr) -> bool,
-}
-
-/// Early-exit signal for streaming generation
-///
-/// This is passed through the streaming callbacks to allow stopping
-/// generation when good matches are found.
-#[derive(Default)]
-pub struct EarlyExit(AtomicBool);
-
-impl EarlyExit {
-    /// Create a new early-exit signal
-    pub fn new() -> Self {
-        Self(AtomicBool::new(false))
-    }
-
-    /// Signal that generation should stop
-    pub fn signal(&self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-
-    /// Check if early exit has been signaled
-    pub fn should_exit(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
-    }
-
-    /// Reset the signal
-    pub fn reset(&self) {
-        self.0.store(false, Ordering::Relaxed);
-    }
 }
 
 /// Quantize a value to reduce floating-point noise

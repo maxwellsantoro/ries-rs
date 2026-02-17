@@ -10,6 +10,9 @@
 //! - **Newton-Raphson**: Convergence and stability thresholds
 //! - **Pruning**: Thresholds for expression pruning decisions
 //! - **Numerical safety**: Thresholds for avoiding numerical issues
+//!
+//! Note: Some constants are defined for completeness and future use.
+#![allow(dead_code)]
 
 // =============================================================================
 // Match Quality Thresholds

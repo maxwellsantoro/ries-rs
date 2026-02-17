@@ -11,6 +11,7 @@ mod fast_match;
 mod gen;
 mod metrics;
 mod pool;
+#[cfg(feature = "highprec")]
 mod precision;
 mod profile;
 mod report;
@@ -24,6 +25,7 @@ use profile::Profile;
 use report::{Report, ReportConfig};
 use std::path::PathBuf;
 use std::time::Instant;
+use thresholds::EXACT_MATCH_TOLERANCE;
 
 /// Find algebraic equations given their solution
 #[derive(Parser, Debug)]
@@ -221,6 +223,14 @@ fn parse_user_constant_from_cli(profile: &mut Profile, spec: &str) -> Result<(),
     let value: f64 = parts[3]
         .parse()
         .map_err(|_| format!("Invalid value: {}", parts[3]))?;
+
+    // Validate that the value is finite (not NaN or infinity)
+    if !value.is_finite() {
+        return Err(format!(
+            "Constant value must be finite (got {})",
+            value
+        ));
+    }
 
     // Determine numeric type based on value characteristics
     let num_type = if value.fract() == 0.0 && value.abs() < 1e10 {
@@ -497,6 +507,12 @@ fn main() {
         }
     };
 
+    // Validate that target is finite
+    if !target.is_finite() {
+        eprintln!("Error: TARGET must be a finite number (got {})", target);
+        std::process::exit(1);
+    }
+
     // Print header
     println!();
     println!(
@@ -691,7 +707,7 @@ fn print_match_relative(m: &search::Match, solve: bool, format: expr::OutputForm
     let lhs_str = m.lhs.expr.to_infix_with_format(format);
     let rhs_str = m.rhs.expr.to_infix_with_format(format);
 
-    let error_str = if m.error.abs() < 1e-14 {
+    let error_str = if m.error.abs() < EXACT_MATCH_TOLERANCE {
         "('exact' match)".to_string()
     } else {
         let sign = if m.error >= 0.0 { "+" } else { "-" };
