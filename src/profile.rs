@@ -17,10 +17,17 @@ pub use crate::udf::UserFunction;
 #[derive(Clone, Debug)]
 pub struct UserConstant {
     /// Weight (complexity) of this constant
-    pub weight: u16,
+    ///
+    /// This field is part of the public API and is used when generating expressions
+    /// that include user-defined constants.
+    #[allow(dead_code)]
+    pub weight: u32,
     /// Short name (single character)
     pub name: String,
     /// Description (for display)
+    ///
+    /// This field is part of the public API for documentation and display purposes.
+    #[allow(dead_code)]
     pub description: String,
     /// Numeric value
     pub value: f64,
@@ -38,7 +45,7 @@ pub struct Profile {
     /// Custom symbol names (e.g., :p:π)
     pub symbol_names: HashMap<Symbol, String>,
     /// Custom symbol weights
-    pub symbol_weights: HashMap<Symbol, u16>,
+    pub symbol_weights: HashMap<Symbol, u32>,
     /// Additional profile files to include
     pub includes: Vec<PathBuf>,
 }
@@ -201,7 +208,7 @@ fn parse_user_constant(profile: &mut Profile, line: &str) -> Result<(), String> 
         ));
     }
 
-    let weight: u16 = parts[0]
+    let weight: u32 = parts[0]
         .parse()
         .map_err(|_| format!("Invalid weight: {}", parts[0]))?;
 
@@ -316,7 +323,7 @@ fn parse_symbol_weights(profile: &mut Profile, line: &str) -> Result<(), String>
                 .chars()
                 .next()
                 .ok_or("Empty symbol in --symbol-weights")?;
-            let weight: u16 = inner[colon_pos + 1..]
+            let weight: u32 = inner[colon_pos + 1..]
                 .parse()
                 .map_err(|_| format!("Invalid weight in --symbol-weights: {}", inner))?;
 

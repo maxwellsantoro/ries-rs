@@ -33,6 +33,11 @@ impl Category {
         }
     }
 
+    /// Get the description for this category
+    ///
+    /// This method is part of the public API for library consumers who want
+    /// to display category descriptions in their output formatting.
+    #[allow(dead_code)]
     pub fn description(&self) -> &'static str {
         match self {
             Category::Exact => "Equations that hold exactly at the target value",
@@ -86,7 +91,11 @@ impl Default for ReportConfig {
 }
 
 impl ReportConfig {
-    /// Create config with all categories
+    /// Create config with all categories (including stable)
+    ///
+    /// This method is part of the public API for library consumers who want
+    /// to ensure the stability category is included in their reports.
+    #[allow(dead_code)]
     pub fn with_stable(mut self) -> Self {
         if !self.categories.contains(&Category::Stable) {
             self.categories.push(Category::Stable);

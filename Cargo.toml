@@ -44,9 +44,18 @@ thiserror = "1.0"
 
 [dev-dependencies]
 criterion = "0.5"
+proptest = "1.4"
 
 [[bench]]
 name = "evaluation"
+harness = false
+
+[[bench]]
+name = "search"
+harness = false
+
+[[bench]]
+name = "generation"
 harness = false
 
 [profile.release]

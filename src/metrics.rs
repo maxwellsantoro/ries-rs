@@ -19,7 +19,7 @@ pub struct MatchMetrics {
     /// Whether this is an exact match (error < 1e-14)
     pub is_exact: bool,
     /// Total complexity score
-    pub complexity: u16,
+    pub complexity: u32,
     /// "Ugliness" penalty (deep nesting, many ops)
     pub ugliness: f64,
     /// Novelty score (rarer operators/constants)

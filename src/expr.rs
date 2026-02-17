@@ -81,7 +81,7 @@ pub struct Expression {
     /// Symbols in postfix order
     symbols: SmallVec<[Symbol; MAX_EXPR_LEN]>,
     /// Cached complexity score
-    complexity: u16,
+    complexity: u32,
     /// Whether this expression contains the variable x
     contains_x: bool,
 }
@@ -99,7 +99,7 @@ impl Expression {
     /// Create an expression from a slice of symbols
     #[cfg(test)]
     pub fn from_symbols(symbols: &[Symbol]) -> Self {
-        let complexity: u16 = symbols.iter().map(|s| s.weight()).sum();
+        let complexity: u32 = symbols.iter().map(|s| s.weight()).sum();
         let contains_x = symbols.contains(&Symbol::X);
         Self {
             symbols: SmallVec::from_slice(symbols),
@@ -114,7 +114,7 @@ impl Expression {
         for b in s.bytes() {
             symbols.push(Symbol::from_byte(b)?);
         }
-        let complexity: u16 = symbols.iter().map(|s: &Symbol| s.weight()).sum();
+        let complexity: u32 = symbols.iter().map(|s: &Symbol| s.weight()).sum();
         let contains_x = symbols.contains(&Symbol::X);
         Some(Self {
             symbols,
@@ -143,7 +143,7 @@ impl Expression {
 
     /// Get the complexity score
     #[inline]
-    pub fn complexity(&self) -> u16 {
+    pub fn complexity(&self) -> u32 {
         self.complexity
     }
 
@@ -154,6 +154,10 @@ impl Expression {
     }
 
     /// Check if this is a valid complete expression (stack depth = 1)
+    ///
+    /// This method is part of the public API for external consumers who may want to
+    /// validate expressions before processing them.
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         let mut depth: i32 = 0;
         for sym in &self.symbols {
@@ -195,60 +199,135 @@ impl Expression {
     }
 
     /// Convert to infix notation for display
+    ///
+    /// Uses proper operator precedence and associativity rules:
+    /// - Precedence levels (higher = tighter binding):
+    ///   - 100: Atoms (constants, x, function calls)
+    ///   - 9: Power (right-associative)
+    ///   - 7: Unary operators (negation, reciprocal)
+    ///   - 6: Multiplication, division
+    ///   - 5: Addition, subtraction
+    /// - Right-associative operators (power) bind right-to-left
+    /// - Left-associative operators bind left-to-right
     pub fn to_infix(&self) -> String {
+        /// Precedence levels for operators
+        const PREC_ATOM: u8 = 100; // Constants, x, function calls
+        const PREC_POWER: u8 = 9; // ^ (right-associative)
+        const PREC_UNARY: u8 = 8; // Unary minus, reciprocal
+        const PREC_MUL: u8 = 6; // *, /
+        const PREC_ADD: u8 = 4; // +, -
+
+        /// Check if we need parentheses around an operand
+        /// parent_prec: precedence of the parent operator
+        /// child_prec: precedence of the child expression
+        /// is_right_assoc: true if parent is right-associative
+        /// is_right_operand: true if this is the right operand
+        fn needs_paren(
+            parent_prec: u8,
+            child_prec: u8,
+            is_right_assoc: bool,
+            is_right_operand: bool,
+        ) -> bool {
+            if child_prec < parent_prec {
+                return true;
+            }
+            // For right-associative operators, the right operand needs parens
+            // if it has the same precedence (e.g., a^(b^c) needs parens)
+            if is_right_assoc && is_right_operand && child_prec == parent_prec {
+                return true;
+            }
+            false
+        }
+
+        /// Wrap in parentheses if needed
+        fn maybe_paren_prec(s: &str, prec: u8, parent_prec: u8, is_right_assoc: bool, is_right: bool) -> String {
+            if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
+                format!("({})", s)
+            } else {
+                s.to_string()
+            }
+        }
+
         let mut stack: Vec<(String, u8)> = Vec::new(); // (string, precedence)
 
         for &sym in &self.symbols {
             match sym.seft() {
                 Seft::A => {
-                    stack.push((sym.name().to_string(), 100));
+                    stack.push((sym.name().to_string(), PREC_ATOM));
                 }
                 Seft::B => {
-                    let (arg, _prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (arg, arg_prec) = stack.pop().unwrap_or(("?".into(), 0));
                     let result = match sym {
-                        Symbol::Neg => format!("-({})", arg),
-                        Symbol::Recip => format!("1/{}", Self::maybe_paren(&arg, 10)),
+                        Symbol::Neg => {
+                            // Negation needs parens around low-precedence expressions
+                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_UNARY, false, false);
+                            format!("-{}", arg_s)
+                        }
+                        Symbol::Recip => {
+                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_MUL, false, false);
+                            format!("1/{}", arg_s)
+                        }
                         Symbol::Sqrt => format!("sqrt({})", arg),
-                        Symbol::Square => format!("{}^2", Self::maybe_paren(&arg, 8)),
+                        Symbol::Square => {
+                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_POWER, false, false);
+                            format!("{}^2", arg_s)
+                        }
                         Symbol::Ln => format!("ln({})", arg),
-                        Symbol::Exp => format!("e^{}", Self::maybe_paren(&arg, 8)),
+                        Symbol::Exp => {
+                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_POWER, true, true);
+                            format!("e^{}", arg_s)
+                        }
                         Symbol::SinPi => format!("sinpi({})", arg),
                         Symbol::CosPi => format!("cospi({})", arg),
                         Symbol::TanPi => format!("tanpi({})", arg),
                         Symbol::LambertW => format!("W({})", arg),
                         _ => unreachable!(),
                     };
-                    stack.push((result, 90));
+                    stack.push((result, PREC_ATOM)); // Function calls are atomic
                 }
                 Seft::C => {
-                    let (b, _) = stack.pop().unwrap_or(("?".into(), 0));
-                    let (a, _) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (b, b_prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (a, a_prec) = stack.pop().unwrap_or(("?".into(), 0));
                     let (result, prec) = match sym {
-                        Symbol::Add => (format!("{}+{}", a, b), 4),
-                        Symbol::Sub => (format!("{}-{}", a, Self::maybe_paren(&b, 4)), 4),
+                        Symbol::Add => {
+                            // Left operand never needs parens for left-associative +
+                            // Right operand needs parens if lower precedence
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
+                            (format!("{}+{}", a, b_s), PREC_ADD)
+                        }
+                        Symbol::Sub => {
+                            // Right operand needs parens for - and +
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
+                            (format!("{}-{}", a, b_s), PREC_ADD)
+                        }
                         Symbol::Mul => {
-                            let a_s = Self::maybe_paren(&a, 5);
-                            let b_s = Self::maybe_paren(&b, 5);
-                            // Omit * in some cases
+                            let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL, false, true);
+                            // Omit * in some cases: 2x instead of 2*x
                             if a_s.chars().last().map_or(false, |c| c.is_ascii_digit())
                                 && b_s.chars().next().map_or(false, |c| c.is_alphabetic())
                             {
-                                (format!("{} {}", a_s, b_s), 6)
+                                (format!("{} {}", a_s, b_s), PREC_MUL)
                             } else {
-                                (format!("{}*{}", a_s, b_s), 6)
+                                (format!("{}*{}", a_s, b_s), PREC_MUL)
                             }
                         }
-                        Symbol::Div => (
-                            format!("{}/{}", Self::maybe_paren(&a, 5), Self::maybe_paren(&b, 6)),
-                            6,
-                        ),
-                        Symbol::Pow => (
-                            format!("{}^{}", Self::maybe_paren(&a, 9), Self::maybe_paren(&b, 8)),
-                            8,
-                        ),
-                        Symbol::Root => (format!("{}\"/{}", a, b), 8),
-                        Symbol::Log => (format!("log_{}({})", a, b), 90),
-                        Symbol::Atan2 => (format!("atan2({}, {})", a, b), 90),
+                        Symbol::Div => {
+                            let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL + 1, false, true);
+                            (format!("{}/{}", a_s, b_s), PREC_MUL)
+                        }
+                        Symbol::Pow => {
+                            // Power is right-associative: a^b^c = a^(b^c)
+                            // Left operand needs parens if lower precedence
+                            let a_s = maybe_paren_prec(&a, a_prec, PREC_POWER, true, false);
+                            // Right operand needs parens if same or lower precedence (due to right-assoc)
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_POWER, true, true);
+                            (format!("{}^{}", a_s, b_s), PREC_POWER)
+                        }
+                        Symbol::Root => (format!("{}\"/{}", a, b), PREC_POWER),
+                        Symbol::Log => (format!("log_{}({})", a, b), PREC_ATOM),
+                        Symbol::Atan2 => (format!("atan2({}, {})", a, b), PREC_ATOM),
                         _ => unreachable!(),
                     };
                     stack.push((result, prec));
@@ -293,16 +372,6 @@ impl Expression {
             }
         }
     }
-
-    fn maybe_paren(s: &str, min_prec: u8) -> String {
-        // Simple heuristic: add parens if the string contains low-precedence ops
-        let needs_paren = s.contains('+') || s.contains('-');
-        if needs_paren && min_prec > 4 {
-            format!("({})", s)
-        } else {
-            s.to_string()
-        }
-    }
 }
 
 impl Default for Expression {
@@ -333,6 +402,10 @@ pub struct EvaluatedExpr {
     /// Derivative with respect to x
     pub derivative: f64,
     /// Numeric type classification
+    ///
+    /// This field is part of the public API for library consumers who need
+    /// to track the numeric type of evaluated expressions.
+    #[allow(dead_code)]
     pub num_type: NumType,
 }
 
