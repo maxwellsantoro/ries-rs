@@ -6,6 +6,10 @@ authors = ["RIES Contributors"]
 description = "Find algebraic equations given their solution - Rust implementation"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/clsn/ries"
+documentation = "https://docs.rs/ries-rs"
+readme = "README.md"
+keywords = ["math", "equation", "solver", "algebraic", "ries"]
+categories = ["mathematics", "science"]
 
 [lib]
 name = "ries_rs"
