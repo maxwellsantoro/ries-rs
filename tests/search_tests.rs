@@ -1,5 +1,7 @@
 //! Integration tests for the search module
 
+#![allow(clippy::field_reassign_with_default)]
+
 use ries_rs::eval;
 use ries_rs::expr::Expression;
 use ries_rs::gen::{generate_all, GenConfig};
@@ -31,49 +33,6 @@ fn fast_config() -> GenConfig {
         ],
         unary_ops: vec![Symbol::Neg, Symbol::Recip, Symbol::Square, Symbol::Sqrt],
         binary_ops: vec![Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div],
-        min_num_type: NumType::Transcendental,
-        generate_lhs: true,
-        generate_rhs: true,
-        user_constants: Vec::new(),
-        user_functions: Vec::new(),
-    }
-}
-
-/// Create a config for search tests with enough complexity to find common matches
-fn search_config() -> GenConfig {
-    GenConfig {
-        max_lhs_complexity: 50,
-        max_rhs_complexity: 50,
-        max_length: 12,
-        constants: vec![
-            Symbol::One,
-            Symbol::Two,
-            Symbol::Three,
-            Symbol::Four,
-            Symbol::Five,
-            Symbol::Six,
-            Symbol::Seven,
-            Symbol::Eight,
-            Symbol::Nine,
-            Symbol::Pi,
-            Symbol::E,
-            Symbol::Phi,
-        ],
-        unary_ops: vec![
-            Symbol::Neg,
-            Symbol::Recip,
-            Symbol::Square,
-            Symbol::Sqrt,
-            Symbol::Ln,
-            Symbol::Exp,
-        ],
-        binary_ops: vec![
-            Symbol::Add,
-            Symbol::Sub,
-            Symbol::Mul,
-            Symbol::Div,
-            Symbol::Pow,
-        ],
         min_num_type: NumType::Transcendental,
         generate_lhs: true,
         generate_rhs: true,
@@ -150,7 +109,7 @@ fn test_expr_database() {
 #[test]
 fn test_pi_generation() {
     let config = fast_config();
-    let generated = generate_all(&config, 3.14);
+    let generated = generate_all(&config, std::f64::consts::PI);
 
     // Should be able to find π in RHS expressions
     let has_pi = generated.rhs.iter().any(|e| e.expr.to_postfix() == "p");
@@ -263,7 +222,7 @@ fn test_find_golden_ratio() {
     let mut config = fast_config();
     config.constants.push(Symbol::Phi); // Add phi constant
 
-    let phi = 1.6180339887498948482;
+    let phi = 1.618_033_988_749_895;
     let (matches, _stats) = search_with_stats_and_options(phi, &config, 50, false, None);
 
     // Should find some match (not necessarily exact due to transcendental nature)

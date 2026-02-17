@@ -2009,7 +2009,7 @@ fn test_full_gem_formula() {
 
             match evaluate(&expr, 0.0) {
                 Ok(result) => {
-                    let gamma1 = 14.134725141734693790457251983562_f64;
+                    let gamma1 = 14.134_725_141_734_694_f64;
                     println!("\nValue: {:.15}", result.value);
                     println!("γ₁:    {:.15}", gamma1);
                     println!("Error: {:.2e}", result.value - gamma1);

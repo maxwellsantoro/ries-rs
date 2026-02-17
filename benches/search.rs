@@ -3,6 +3,8 @@
 //! Measures performance of equation search with varying complexity levels
 //! and parallel vs sequential execution.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ries_rs::gen::GenConfig;
 use ries_rs::search::{search, search_with_stats, ExprDatabase, SearchConfig};
@@ -55,7 +57,7 @@ fn bench_different_targets(c: &mut Criterion) {
         ("e", std::f64::consts::E),
         ("sqrt2", std::f64::consts::SQRT_2),
         ("golden", 1.618_033_988_749_895),
-        ("arbitrary", 2.718_281_828),
+        ("arbitrary", 2.345_678),
     ];
 
     let max_matches = 50;

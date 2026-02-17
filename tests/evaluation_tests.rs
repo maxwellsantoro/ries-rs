@@ -1,5 +1,7 @@
 //! Tests for expression evaluation and automatic differentiation
 
+#![allow(clippy::field_reassign_with_default)]
+
 mod common;
 use common::approx_eq_default;
 

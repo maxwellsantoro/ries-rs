@@ -192,7 +192,7 @@ impl TopKPool {
 
         // Slowly tighten accept_error for diversity
         if error < self.accept_error * 0.9999 {
-            self.accept_error = self.accept_error * 0.9999;
+            self.accept_error *= 0.9999;
         }
 
         // Evict worst if over capacity
@@ -256,6 +256,12 @@ impl TopKPool {
     /// Get current pool size
     pub fn len(&self) -> usize {
         self.heap.len()
+    }
+
+    /// Check if pool is empty
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.heap.is_empty()
     }
 }
 

@@ -1,5 +1,7 @@
 //! Tests for expression parsing, conversion, and complexity
 
+#![allow(clippy::field_reassign_with_default)]
+
 mod common;
 
 use ries_rs::expr::Expression;

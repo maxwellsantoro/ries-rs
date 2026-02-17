@@ -189,12 +189,12 @@ fn parse_user_constant(profile: &mut Profile, line: &str) -> Result<(), String> 
     let rest = line[2..].trim();
 
     // Handle both quoted and unquoted formats
-    let content = if rest.starts_with('"') {
+    let content = if let Some(stripped) = rest.strip_prefix('"') {
         // Quoted format: -X "weight:name:description:value"
-        let end_quote = rest[1..]
+        let end_quote = stripped
             .find('"')
             .ok_or("Unclosed quote in -X directive")?;
-        &rest[1..end_quote + 1]
+        &stripped[..end_quote]
     } else {
         // Unquoted format: -X weight:name:description:value
         rest
@@ -262,12 +262,12 @@ fn parse_user_function(profile: &mut Profile, line: &str) -> Result<(), String> 
     let rest = line["--define".len()..].trim();
 
     // Handle both quoted and unquoted formats
-    let content = if rest.starts_with('"') {
+    let content = if let Some(stripped) = rest.strip_prefix('"') {
         // Quoted format: --define "weight:name:description:formula"
-        let end_quote = rest[1..]
+        let end_quote = stripped
             .find('"')
             .ok_or("Unclosed quote in --define directive")?;
-        &rest[1..end_quote + 1]
+        &stripped[..end_quote]
     } else {
         // Unquoted format: --define weight:name:description:formula
         rest

@@ -46,6 +46,7 @@ pub enum EvalError {
 
 impl EvalError {
     /// Get a human-readable description of this error
+    #[allow(dead_code)]
     pub fn description(&self) -> &'static str {
         match self {
             EvalError::StackUnderflow => "Stack underflow: not enough operands on stack",
@@ -58,6 +59,7 @@ impl EvalError {
     }
 
     /// Create a detailed error message with context
+    #[allow(dead_code)]
     pub fn with_context(&self, position: Option<usize>, value: Option<f64>) -> String {
         let mut msg = self.description().to_string();
         if let Some(pos) = position {
@@ -82,15 +84,15 @@ impl std::error::Error for EvalError {}
 pub mod constants {
     pub const PI: f64 = std::f64::consts::PI;
     pub const E: f64 = std::f64::consts::E;
-    pub const PHI: f64 = 1.6180339887498948482; // Golden ratio
+    pub const PHI: f64 = 1.618_033_988_749_895; // Golden ratio
     /// Euler-Mascheroni constant γ
-    pub const GAMMA: f64 = 0.57721566490153286060651209008240243104215933593992;
+    pub const GAMMA: f64 = 0.577_215_664_901_532_9;
     /// Plastic constant ρ (root of x³ = x + 1)
-    pub const PLASTIC: f64 = 1.32471795724474602596090885447809734073440405690133;
+    pub const PLASTIC: f64 = 1.324_717_957_244_746;
     /// Apéry's constant ζ(3)
-    pub const APERY: f64 = 1.20205690315959428539973816151144999076498629234050;
+    pub const APERY: f64 = 1.202_056_903_159_594_2;
     /// Catalan's constant G
-    pub const CATALAN: f64 = 0.91596559417721901505460351493238411077414937428167;
+    pub const CATALAN: f64 = 0.915_965_594_177_219;
 }
 
 /// Stack entry for evaluation with derivative tracking

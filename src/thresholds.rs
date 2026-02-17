@@ -216,6 +216,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_constants_are_sane() {
         // Exact match tolerance should be small but not at machine epsilon
         assert!(EXACT_MATCH_TOLERANCE > 1e-16);

@@ -3,6 +3,8 @@
 //! Measures performance of LHS and RHS expression generation at various
 //! complexity levels.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ries_rs::gen::{generate_all, generate_all_parallel, GenConfig};
 
