@@ -133,7 +133,6 @@ impl Expression {
     }
 
     /// Check if this is a valid complete expression (stack depth = 1)
-    #[cfg(test)]
     pub fn is_valid(&self) -> bool {
         let mut depth: i32 = 0;
         for sym in &self.symbols {
