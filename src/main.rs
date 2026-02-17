@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn test_format_value() {
-        assert_eq!(format_value(3.14159), "3.1415900000");
+        assert_eq!(format_value(2.71828), "2.7182800000"); // e approximation
         assert_eq!(format_value(1e10), "1.0000000000e10");
     }
 }
