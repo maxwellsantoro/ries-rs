@@ -49,6 +49,7 @@
 //! - [`pool`] - Bounded priority pool for match collection
 //! - [`profile`] - Profile file support for configuration
 //! - [`report`] - Categorized match output
+//! - [`precision`] - Precision abstraction for numeric types
 //! - [`search`] - Search algorithms and matching
 //! - [`symbol`] - Symbol definitions and type system
 //! - [`udf`] - User-defined functions
@@ -58,6 +59,7 @@ pub mod expr;
 pub mod gen;
 pub mod metrics;
 pub mod pool;
+pub mod precision;
 pub mod symbol;
 pub mod udf;
 pub mod profile;
