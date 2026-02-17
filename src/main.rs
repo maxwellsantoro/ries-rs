@@ -172,6 +172,11 @@ struct Args {
     #[arg(long, default_value = "15")]
     newton_iterations: usize,
 
+    /// Precision in bits for high-precision mode (e.g., 256 for ~77 digits)
+    /// Note: High-precision mode is not yet implemented; this flag is reserved
+    #[arg(long)]
+    precision: Option<u32>,
+
     /// Threshold for pruning LHS expressions with near-zero values (default: 1e-4)
     #[arg(long)]
     zero_threshold: Option<f64>,
@@ -352,6 +357,12 @@ fn eval_expression(
 
 fn main() {
     let args = Args::parse();
+
+    // Warn about unimplemented precision flag
+    if args.precision.is_some() {
+        eprintln!("Warning: --precision flag specified but high-precision mode is not yet implemented.");
+        eprintln!("         Using standard f64 precision (~15 digits).");
+    }
 
     // Load profile early (needed for both --eval-expression and search modes)
     let mut profile = Profile::load_from(args.profile.as_deref());
