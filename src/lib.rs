@@ -83,6 +83,7 @@
 
 pub mod eval;
 pub mod expr;
+pub mod fast_match;
 pub mod gen;
 pub mod metrics;
 pub mod pool;
@@ -113,6 +114,9 @@ pub type Complexity = u32;
 
 // High-level API
 pub use search::search;
+
+// Fast exact match detection
+pub use fast_match::find_fast_match;
 
 // Common types
 pub use eval::{EvalError, EvalResult};
