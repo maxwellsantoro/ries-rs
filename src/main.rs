@@ -116,6 +116,16 @@ struct Args {
     #[arg(short = 'i', long, alias = "integer-subexpressions")]
     integer: bool,
 
+    /// Integer exact mode (equivalent to -i --stop-at-exact)
+    /// Stops at first integer match
+    #[arg(long = "ie")]
+    integer_exact: bool,
+
+    /// Rational exact mode (equivalent to -r --stop-at-exact)
+    /// Stops at first rational match
+    #[arg(long = "re")]
+    rational_exact: bool,
+
     /// Restrict to Liouvillian subexpressions
     #[arg(long = "liouvillian-subexpressions")]
     liouvillian: bool,
@@ -1132,11 +1142,29 @@ fn main() {
     let max_lhs_complexity = (base_lhs + level_factor) as u32;
     let max_rhs_complexity = (base_rhs + level_factor) as u32;
 
+    // Handle -i/-ie/-r/-re flags
+    // --ie = integer exact mode (stops at first exact match)
+    // --re = rational exact mode (stops at first exact match)
+    let (integer_mode, rational_mode, exact_mode) = if args.integer_exact {
+        (true, false, true)
+    } else if args.rational_exact {
+        (false, true, true)
+    } else if args.integer {
+        if target.fract() != 0.0 {
+            eprintln!("ries: Replacing -i with -r because target isn't an integer.");
+            (false, true, false) // Fallback to rational mode
+        } else {
+            (true, false, false)
+        }
+    } else {
+        (args.integer, args.rational, false)
+    };
+
     // Determine numeric type restriction
     // Check liouvillian_override first (from -l legacy semantics)
-    let min_type = if args.integer {
+    let min_type = if integer_mode {
         symbol::NumType::Integer
-    } else if args.rational {
+    } else if rational_mode {
         symbol::NumType::Rational
     } else if args.constructible {
         symbol::NumType::Constructible
@@ -1185,7 +1213,10 @@ fn main() {
     };
 
     // Classic mode = "sniper mode": stop early like original RIES
+    // Also stop at exact for --ie/--re exact modes
     let stop_at_exact = if args.classic && !args.stop_at_exact {
+        true
+    } else if exact_mode {
         true
     } else {
         args.stop_at_exact
