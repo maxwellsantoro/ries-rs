@@ -633,3 +633,22 @@ fn test_s_flag_without_complex_lhs_works_correctly() {
         stdout
     );
 }
+
+#[test]
+fn test_p_flag_without_file_accepts_target() {
+    // Original ries behavior: ries -p 2.5 -> uses default profile, searches for 2.5
+    // The -p flag should NOT greedily consume the target value as a profile filename
+    let output = run_ries_raw(&["-p", "2.5", "--classic", "--report", "false", "-n", "1"]);
+    assert!(
+        output.status.success(),
+        "Should accept target after -p\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("2.5"),
+        "Should show target value 2.5\n{}",
+        stdout
+    );
+}

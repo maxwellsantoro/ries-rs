@@ -23,12 +23,9 @@ mod udf;
 use clap::{ArgAction, Parser};
 use profile::Profile;
 use report::{Report, ReportConfig};
-use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::Instant;
 use thresholds::EXACT_MATCH_TOLERANCE;
-
-const DEFAULT_PROFILE_SENTINEL: &str = "__ries_default_profile__";
 
 /// Find algebraic equations given their solution
 #[derive(Parser, Debug)]
@@ -175,7 +172,7 @@ struct Args {
     stop_below: Option<f64>,
 
     /// Load profile file for custom constants and symbol settings
-    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = DEFAULT_PROFILE_SENTINEL)]
+    #[arg(short = 'p', long)]
     profile: Option<PathBuf>,
 
     /// Include additional profile file (can be used multiple times)
@@ -931,17 +928,34 @@ fn main() {
         eprintln!("         Using standard f64 precision (~15 digits).");
     }
 
-    // Load profile early (needed for both --eval-expression and search modes)
-    let mut profile = if let Some(profile_path) = args.profile.as_deref() {
-        if profile_path.as_os_str() == OsStr::new(DEFAULT_PROFILE_SENTINEL) {
-            Profile::load_default()
-        } else {
-            match Profile::from_file(profile_path) {
-                Ok(profile) => profile,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    std::process::exit(2);
+    // Handle -p legacy semantics: if profile looks like a number and no target, treat as target
+    // Original ries behavior: "ries -p 2.5" means "use default profile and search for 2.5"
+    let (profile_arg, resolved_target) =
+        if let Some(ref profile_path) = args.profile {
+            if args.target.is_none() {
+                // Check if profile argument looks like a target (numeric)
+                if let Ok(val) = profile_path.to_string_lossy().parse::<f64>() {
+                    // It's a number, treat as target and use default profile
+                    (None, Some(val))
+                } else {
+                    // Not a number, use as profile path
+                    (args.profile.clone(), args.target)
                 }
+            } else {
+                // Both -p and target provided, use both normally
+                (args.profile.clone(), args.target)
+            }
+        } else {
+            (None, args.target)
+        };
+
+    // Load profile early (needed for both --eval-expression and search modes)
+    let mut profile = if let Some(profile_path) = profile_arg.as_deref() {
+        match Profile::from_file(profile_path) {
+            Ok(profile) => profile,
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(2);
             }
         }
     } else {
@@ -1024,7 +1038,7 @@ fn main() {
 
     // Handle --eval-expression mode (evaluate and exit)
     if let Some(expr_str) = &args.find_expression {
-        let x = args.at.or(args.target).unwrap_or(1.0);
+        let x = args.at.or(resolved_target).unwrap_or(1.0);
         match eval_expression(expr_str, x, &profile.constants, &profile.functions) {
             Ok(result) => {
                 println!("Expression: {}", expr_str);
@@ -1059,7 +1073,7 @@ fn main() {
     }
 
     // Target is required when not using --eval-expression
-    let target = match args.target {
+    let target = match resolved_target {
         Some(t) => t,
         None => {
             eprintln!("Error: TARGET is required unless using --eval-expression");
