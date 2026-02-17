@@ -742,3 +742,16 @@ fn test_re_rational_exact_mode() {
     assert!(stdout.contains("('exact' match)"),
             "Should find exact match for 2.5\n{}", stdout);
 }
+
+#[test]
+fn test_s_bare_symbol_table() {
+    // -S without argument should print the symbol table and exit
+    let output = run_ries_raw(&["-S"]);
+    assert!(output.status.success(), "Should succeed with bare -S");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should print symbol table with pi, e, and other symbols
+    assert!(stdout.contains("pi") && stdout.contains("e"),
+            "Should print symbol table with pi and e\n{}", stdout);
+    assert!(stdout.contains("Explicit values") || stdout.contains("description"),
+            "Should show symbol table header\n{}", stdout);
+}

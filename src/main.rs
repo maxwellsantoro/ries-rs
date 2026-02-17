@@ -67,8 +67,9 @@ struct Args {
     #[arg(short = 'E', long = "enable")]
     enable: Option<String>,
 
-    /// Only use these symbols
-    #[arg(short = 'S', long)]
+    /// Only use these symbols, or print symbol table if no argument
+    /// Using -S alone prints the full symbol table and exits
+    #[arg(short = 'S', long, num_args = 0..=1)]
     only_symbols: Option<String>,
 
     /// Operator/symbol count limits (C RIES -O semantics).
@@ -540,6 +541,109 @@ fn parse_symbol_count_limits(spec: &str) -> Result<std::collections::HashMap<sym
     Ok(limits)
 }
 
+/// Print the symbol table (for -S without argument)
+fn print_symbol_table() {
+    println!("Explicit values:");
+    println!(" sym seft wght name description");
+    for sym in symbol::Symbol::constants() {
+        let byte = *sym as u8;
+        if byte < 128 {
+            // Skip user constants
+            println!(
+                "  {:<2}   {:<1}   {:<3} {:<6} {}",
+                byte as char,
+                match sym.seft() {
+                    symbol::Seft::A => "a",
+                    symbol::Seft::B => "b",
+                    symbol::Seft::C => "c",
+                },
+                sym.weight(),
+                sym.name(),
+                sym_description(*sym)
+            );
+        }
+    }
+
+    println!("\nFunctions of one argument:");
+    println!(" sym seft wght name description");
+    for sym in symbol::Symbol::unary_ops() {
+        let byte = *sym as u8;
+        println!(
+            "  {:<2}   {:<1}   {:<3} {:<6} {}",
+            byte as char,
+            match sym.seft() {
+                symbol::Seft::A => "a",
+                symbol::Seft::B => "b",
+                symbol::Seft::C => "c",
+            },
+            sym.weight(),
+            sym.name(),
+            sym_description(*sym)
+        );
+    }
+
+    println!("\nFunctions of two arguments:");
+    println!(" sym seft wght name description");
+    for sym in symbol::Symbol::binary_ops() {
+        let byte = *sym as u8;
+        println!(
+            "  {:<2}   {:<1}   {:<3} {:<6} {}",
+            byte as char,
+            match sym.seft() {
+                symbol::Seft::A => "a",
+                symbol::Seft::B => "b",
+                symbol::Seft::C => "c",
+            },
+            sym.weight(),
+            sym.name(),
+            sym_description(*sym)
+        );
+    }
+}
+
+/// Get a description for a symbol (for -S symbol table output)
+fn sym_description(sym: symbol::Symbol) -> &'static str {
+    use symbol::Symbol;
+    match sym {
+        Symbol::One => "integer",
+        Symbol::Two => "integer",
+        Symbol::Three => "integer",
+        Symbol::Four => "integer",
+        Symbol::Five => "integer",
+        Symbol::Six => "integer",
+        Symbol::Seven => "integer",
+        Symbol::Eight => "integer",
+        Symbol::Nine => "integer",
+        Symbol::Pi => "pi = 3.14159...",
+        Symbol::E => "e = base of natural logarithms, 2.71828...",
+        Symbol::Phi => "phi = the golden ratio, (1+sqrt(5))/2",
+        Symbol::Gamma => "Euler-Mascheroni constant gamma",
+        Symbol::Plastic => "plastic constant",
+        Symbol::Apery => "Apery's constant zeta(3)",
+        Symbol::Catalan => "Catalan's constant",
+        Symbol::X => "the variable of the equation",
+        Symbol::Neg => "negate",
+        Symbol::Recip => "reciprocal",
+        Symbol::Sqrt => "sqrt(x) = square root",
+        Symbol::Square => "^2 = square",
+        Symbol::Ln => "ln(x) = natural logarithm or log base e",
+        Symbol::Exp => "natural exponent function",
+        Symbol::SinPi => "sinpi(X) = sin(pi * x)",
+        Symbol::CosPi => "cospi(X) = cos(pi * x)",
+        Symbol::TanPi => "tanpi(X) = tan(pi * x)",
+        Symbol::LambertW => "Lambert W function",
+        Symbol::Add => "add",
+        Symbol::Sub => "subtract",
+        Symbol::Mul => "multiply",
+        Symbol::Div => "divide",
+        Symbol::Pow => "power",
+        Symbol::Root => "a-th root of b",
+        Symbol::Log => "log base a of b",
+        Symbol::Atan2 => "2-argument arctangent",
+        _ => "",
+    }
+}
+
 /// Parse effective allowed/excluded symbol sets with optional re-enable set.
 fn parse_symbol_sets(
     only_symbols: Option<&str>,
@@ -894,6 +998,18 @@ fn main() {
         for opt in opts {
             println!("{}", opt);
         }
+        return;
+    }
+
+    // Handle -S without argument (print symbol table and exit)
+    // When -S is used with num_args=0..=1, bare -S gives Some("") and -S with value gives Some(value)
+    // Also check if target is None to distinguish from "-S symbols target"
+    // Note: clap's num_args=0..=1 with a positional arg means -S alone could also give None
+    // if the positional target is consumed instead
+    let is_bare_s = (args.only_symbols.as_ref().is_some_and(|s| s.is_empty()) && args.target.is_none())
+        || (args.only_symbols.is_none() && args.target.is_none() && std::env::args().any(|a| a == "-S"));
+    if is_bare_s {
+        print_symbol_table();
         return;
     }
 
