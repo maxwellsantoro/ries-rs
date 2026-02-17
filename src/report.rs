@@ -237,7 +237,7 @@ fn category_filter(mwm: &MatchWithMetrics, category: Category, config: &ReportCo
     match category {
         Category::Exact => mwm.metrics.is_exact,
         Category::Best => !mwm.metrics.is_exact, // Non-exact only (exact are in Exact)
-        Category::Elegant => true, // All matches eligible
+        Category::Elegant => true,               // All matches eligible
         Category::Interesting => {
             mwm.metrics.error <= config.interesting_error_cap && !mwm.metrics.is_exact
         }
@@ -257,32 +257,47 @@ fn category_compare(
     match category {
         Category::Exact => {
             // Sort by complexity, then by equation length (shorter first)
-            a.metrics.complexity.cmp(&b.metrics.complexity)
-                .then_with(|| (a.m.lhs.expr.len() + a.m.rhs.expr.len())
-                    .cmp(&(b.m.lhs.expr.len() + b.m.rhs.expr.len())))
+            a.metrics
+                .complexity
+                .cmp(&b.metrics.complexity)
+                .then_with(|| {
+                    (a.m.lhs.expr.len() + a.m.rhs.expr.len())
+                        .cmp(&(b.m.lhs.expr.len() + b.m.rhs.expr.len()))
+                })
         }
         Category::Best => {
             // Sort by error (lower first)
-            a.metrics.error.partial_cmp(&b.metrics.error).unwrap_or(Ordering::Equal)
+            a.metrics
+                .error
+                .partial_cmp(&b.metrics.error)
+                .unwrap_or(Ordering::Equal)
         }
         Category::Elegant => {
             // Sort by elegant score (lower first)
-            a.metrics.elegant_score()
+            a.metrics
+                .elegant_score()
                 .partial_cmp(&b.metrics.elegant_score())
                 .unwrap_or(Ordering::Equal)
         }
         Category::Interesting => {
             // Sort by interesting score (higher first)
-            b.metrics.interesting_score(config.interesting_error_cap)
+            b.metrics
+                .interesting_score(config.interesting_error_cap)
                 .partial_cmp(&a.metrics.interesting_score(config.interesting_error_cap))
                 .unwrap_or(Ordering::Equal)
         }
         Category::Stable => {
             // Sort by stability score (higher first), then by error
-            b.metrics.stable_score()
+            b.metrics
+                .stable_score()
                 .partial_cmp(&a.metrics.stable_score())
                 .unwrap_or(Ordering::Equal)
-                .then_with(|| a.metrics.error.partial_cmp(&b.metrics.error).unwrap_or(Ordering::Equal))
+                .then_with(|| {
+                    a.metrics
+                        .error
+                        .partial_cmp(&b.metrics.error)
+                        .unwrap_or(Ordering::Equal)
+                })
         }
     }
 }
@@ -324,7 +339,7 @@ fn print_match(m: &Match, metrics: &MatchMetrics, _target: f64, absolute: bool, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::{Expression, EvaluatedExpr};
+    use crate::expr::{EvaluatedExpr, Expression};
     use crate::symbol::NumType;
 
     fn make_match(lhs: &str, rhs: &str, error: f64) -> Match {
@@ -342,9 +357,9 @@ mod tests {
     #[test]
     fn test_report_generation() {
         let matches = vec![
-            make_match("2x*", "5", 0.0),                    // Exact
-            make_match("xx^", "ps", 0.00066),              // Interesting
-            make_match("x1+", "35/", 1e-10),               // Best approx
+            make_match("2x*", "5", 0.0),      // Exact
+            make_match("xx^", "ps", 0.00066), // Interesting
+            make_match("x1+", "35/", 1e-10),  // Best approx
         ];
 
         let config = ReportConfig::default().with_target(2.5);

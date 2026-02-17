@@ -2,8 +2,8 @@
 //!
 //! Generates valid postfix expressions by enumerating "forms" (stack effect patterns).
 
-use crate::expr::{EvaluatedExpr, Expression, MAX_EXPR_LEN};
 use crate::eval::evaluate_fast_with_constants_and_functions;
+use crate::expr::{EvaluatedExpr, Expression, MAX_EXPR_LEN};
 use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::UserFunction;
@@ -54,7 +54,6 @@ impl Default for GenConfig {
     }
 }
 
-
 /// Result of expression generation
 pub struct GeneratedExprs {
     /// LHS expressions (contain x)
@@ -102,7 +101,8 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
     let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
     for expr in rhs_raw {
         let key = quantize_value(expr.value);
-        rhs_map.entry(key)
+        rhs_map
+            .entry(key)
             .and_modify(|existing| {
                 if expr.expr.complexity() < existing.expr.complexity() {
                     *existing = expr.clone();
@@ -115,7 +115,8 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
     let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
     for expr in lhs_raw {
         let key = (quantize_value(expr.value), quantize_value(expr.derivative));
-        lhs_map.entry(key)
+        lhs_map
+            .entry(key)
             .and_modify(|existing| {
                 if expr.expr.complexity() < existing.expr.complexity() {
                     *existing = expr.clone();
@@ -153,12 +154,8 @@ fn generate_recursive(
                 // Skip infinite or very large values
             } else if result.num_type >= config.min_num_type {
                 let expr = current.clone();
-                let eval_expr = EvaluatedExpr::new(
-                    expr,
-                    result.value,
-                    result.derivative,
-                    result.num_type,
-                );
+                let eval_expr =
+                    EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
 
                 if current.contains_x() {
                     if config.generate_lhs && current.complexity() <= config.max_lhs_complexity {
@@ -268,7 +265,9 @@ fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u16 {
     }
 
     // Need (stack_depth - 1) binary operators to reduce to 1
-    let min_binary_weight = config.binary_ops.iter()
+    let min_binary_weight = config
+        .binary_ops
+        .iter()
         .map(|s| s.weight())
         .min()
         .unwrap_or(4);
@@ -333,7 +332,13 @@ fn should_prune_binary(expr: &Expression, sym: Symbol) -> bool {
         // Prefer a*2 over a+a
         Add if is_same_subexpr(symbols, 2) => true,
         // x + (-x) = 0 - check for negated x
-        Add if last == Neg && symbols.len() >= 3 && symbols[symbols.len() - 2] == X && prev == X => true,
+        Add if last == Neg
+            && symbols.len() >= 3
+            && symbols[symbols.len() - 2] == X
+            && prev == X =>
+        {
+            true
+        }
 
         // 1^b = 1 (degenerate - always equals 1 regardless of b)
         // This catches 1^x, 1^(anything)
@@ -378,9 +383,15 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
     use rayon::prelude::*;
 
     // Split work by first symbol
-    let first_symbols: Vec<Symbol> = config.constants.iter()
+    let first_symbols: Vec<Symbol> = config
+        .constants
+        .iter()
         .copied()
-        .chain(if config.generate_lhs { Some(Symbol::X) } else { None })
+        .chain(if config.generate_lhs {
+            Some(Symbol::X)
+        } else {
+            None
+        })
         .collect();
 
     let results: Vec<(Vec<EvaluatedExpr>, Vec<EvaluatedExpr>)> = first_symbols
@@ -391,9 +402,7 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
             let mut expr = Expression::new();
             expr.push(first_sym);
 
-            generate_recursive(
-                config, target, &mut expr, 1, &mut lhs, &mut rhs
-            );
+            generate_recursive(config, target, &mut expr, 1, &mut lhs, &mut rhs);
 
             (lhs, rhs)
         })
@@ -411,7 +420,8 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
     let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
     for expr in rhs_raw {
         let key = quantize_value(expr.value);
-        rhs_map.entry(key)
+        rhs_map
+            .entry(key)
             .and_modify(|existing| {
                 if expr.expr.complexity() < existing.expr.complexity() {
                     *existing = expr.clone();
@@ -424,7 +434,8 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
     let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
     for expr in lhs_raw {
         let key = (quantize_value(expr.value), quantize_value(expr.derivative));
-        lhs_map.entry(key)
+        lhs_map
+            .entry(key)
             .and_modify(|existing| {
                 if expr.expr.complexity() < existing.expr.complexity() {
                     *existing = expr.clone();
@@ -499,31 +510,37 @@ mod tests {
 #[test]
 fn test_x_to_x_generated() {
     use crate::expr::Expression;
-    
+
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 50;
     config.max_rhs_complexity = 50;
-    
+
     let result = generate_all(&config, 2.5);
-    
+
     // Check if xx^ (x^x) is generated
-    let has_xx_pow = result.lhs.iter()
-        .any(|e| e.expr.to_postfix() == "xx^");
-    
+    let has_xx_pow = result.lhs.iter().any(|e| e.expr.to_postfix() == "xx^");
+
     println!("LHS contains xx^ (x^x): {}", has_xx_pow);
-    
+
     // Find expressions with value near 9.88 (x^x at 2.5)
-    let near_xx: Vec<_> = result.lhs.iter()
+    let near_xx: Vec<_> = result
+        .lhs
+        .iter()
         .filter(|e| (e.value - 9.88).abs() < 0.5)
         .take(5)
         .collect();
-    
+
     println!("\nLHS expressions with value ≈ 9.88:");
     for e in &near_xx {
-        println!("  {} = {} (value={:.4}, deriv={:.4})", 
-            e.expr.to_postfix(), e.expr.to_infix(), e.value, e.derivative);
+        println!(
+            "  {} = {} (value={:.4}, deriv={:.4})",
+            e.expr.to_postfix(),
+            e.expr.to_infix(),
+            e.value,
+            e.derivative
+        );
     }
-    
+
     assert!(has_xx_pow, "xx^ should be generated");
 }
 
@@ -532,24 +549,29 @@ fn test_pi_squared_in_rhs() {
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 50;
     config.max_rhs_complexity = 50;
-    
+
     let result = generate_all(&config, 2.5);
-    
+
     // Check for pi^2 (postfix: ps)
-    let has_pi_sq = result.rhs.iter()
-        .any(|e| e.expr.to_postfix() == "ps");
+    let has_pi_sq = result.rhs.iter().any(|e| e.expr.to_postfix() == "ps");
     println!("RHS contains ps (pi^2): {}", has_pi_sq);
-    
+
     // Find RHS near 9.87 (pi^2)
-    let near_pi2: Vec<_> = result.rhs.iter()
+    let near_pi2: Vec<_> = result
+        .rhs
+        .iter()
         .filter(|e| (e.value - 9.87).abs() < 0.5)
         .take(5)
         .collect();
-    
+
     println!("\nRHS expressions with value ≈ 9.87 (pi^2):");
     for e in &near_pi2 {
-        println!("  {} = {} (value={:.6})", 
-            e.expr.to_postfix(), e.expr.to_infix(), e.value);
+        println!(
+            "  {} = {} (value={:.6})",
+            e.expr.to_postfix(),
+            e.expr.to_infix(),
+            e.value
+        );
     }
 }
 
@@ -558,35 +580,47 @@ fn test_pi_squared_value() {
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 60;
     config.max_rhs_complexity = 60;
-    
+
     let result = generate_all(&config, 2.5);
-    
+
     // Find RHS with value exactly near pi^2 = 9.8696
     let pi_sq = std::f64::consts::PI * std::f64::consts::PI;
     println!("pi^2 = {}", pi_sq);
-    
-    let near_pi2: Vec<_> = result.rhs.iter()
+
+    let near_pi2: Vec<_> = result
+        .rhs
+        .iter()
         .filter(|e| (e.value - pi_sq).abs() < 0.01)
         .collect();
-    
+
     println!("\nRHS expressions with value within 0.01 of pi^2:");
     for e in &near_pi2 {
-        println!("  {} = {} (value={:.10})", 
-            e.expr.to_postfix(), e.expr.to_infix(), e.value);
+        println!(
+            "  {} = {} (value={:.10})",
+            e.expr.to_postfix(),
+            e.expr.to_infix(),
+            e.value
+        );
     }
-    
+
     // Also check what's at value 9.882 (x^x at 2.5)
     let xx_val = 2.5_f64.powf(2.5);
     println!("\nx^x at 2.5 = {}", xx_val);
-    
-    let near_xx: Vec<_> = result.rhs.iter()
+
+    let near_xx: Vec<_> = result
+        .rhs
+        .iter()
         .filter(|e| (e.value - xx_val).abs() < 0.02)
         .collect();
-    
+
     println!("\nRHS expressions with value within 0.02 of x^x:");
     for e in &near_xx {
-        println!("  {} = {} (value={:.10})", 
-            e.expr.to_postfix(), e.expr.to_infix(), e.value);
+        println!(
+            "  {} = {} (value={:.10})",
+            e.expr.to_postfix(),
+            e.expr.to_infix(),
+            e.value
+        );
     }
 }
 
@@ -595,33 +629,43 @@ fn test_find_ps_specifically() {
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 60;
     config.max_rhs_complexity = 60;
-    
+
     let result = generate_all(&config, 2.5);
-    
+
     // Find ps specifically
-    let ps_expr = result.rhs.iter()
-        .find(|e| e.expr.to_postfix() == "ps");
-    
+    let ps_expr = result.rhs.iter().find(|e| e.expr.to_postfix() == "ps");
+
     if let Some(e) = ps_expr {
-        println!("Found ps: {} = {} (value={:.10})", 
-            e.expr.to_postfix(), e.expr.to_infix(), e.value);
+        println!(
+            "Found ps: {} = {} (value={:.10})",
+            e.expr.to_postfix(),
+            e.expr.to_infix(),
+            e.value
+        );
     } else {
         println!("ps not found in deduplicated RHS!");
-        
+
         // Check what expression has the same quantized value
         let pi_sq = std::f64::consts::PI * std::f64::consts::PI;
         let key = (pi_sq * 1e8).round() as i64;
         println!("Key for pi^2 = {}", key);
-        
+
         // Find all expressions with same key
-        let same_key: Vec<_> = result.rhs.iter()
+        let same_key: Vec<_> = result
+            .rhs
+            .iter()
             .filter(|e| (e.value * 1e8).round() as i64 == key)
             .collect();
-        
+
         println!("\nExpressions with same key:");
         for e in &same_key {
-            println!("  {} = {} (value={:.10}, complexity={})", 
-                e.expr.to_postfix(), e.expr.to_infix(), e.value, e.expr.complexity());
+            println!(
+                "  {} = {} (value={:.10}, complexity={})",
+                e.expr.to_postfix(),
+                e.expr.to_infix(),
+                e.value,
+                e.expr.complexity()
+            );
         }
     }
 }
@@ -631,41 +675,52 @@ fn test_xx_in_final_lhs() {
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 50;
     config.max_rhs_complexity = 50;
-    
+
     let result = generate_all(&config, 2.5);
-    
+
     // Check if xx^ is in final deduplicated LHS
-    let xx_expr = result.lhs.iter()
-        .find(|e| e.expr.to_postfix() == "xx^");
-    
+    let xx_expr = result.lhs.iter().find(|e| e.expr.to_postfix() == "xx^");
+
     if let Some(e) = xx_expr {
-        println!("xx^ in final LHS: {} (value={:.4}, deriv={:.4}, complexity={})", 
-            e.expr.to_infix(), e.value, e.derivative, e.expr.complexity());
+        println!(
+            "xx^ in final LHS: {} (value={:.4}, deriv={:.4}, complexity={})",
+            e.expr.to_infix(),
+            e.value,
+            e.derivative,
+            e.expr.complexity()
+        );
     } else {
         println!("xx^ NOT in final LHS - was deduplicated");
-        
+
         // Find what has the same key
         let xx_val = 2.5_f64.powf(2.5);
         let xx_deriv = xx_val * (1.0 + 2.5_f64.ln());
         println!("Expected: value={:.4}, deriv={:.4}", xx_val, xx_deriv);
-        
+
         let key_val = (xx_val * 1e8).round() as i64;
         let key_deriv = (xx_deriv * 1e8).round() as i64;
         println!("Key: ({}, {})", key_val, key_deriv);
-        
+
         // Find expressions with same key
-        let same: Vec<_> = result.lhs.iter()
+        let same: Vec<_> = result
+            .lhs
+            .iter()
             .filter(|e| {
                 let kv = (e.value * 1e8).round() as i64;
                 let kd = (e.derivative * 1e8).round() as i64;
                 kv == key_val && kd == key_deriv
             })
             .collect();
-        
+
         println!("\nExpressions with same key:");
         for e in &same {
-            println!("  {} (value={:.4}, deriv={:.4}, complexity={})",
-                e.expr.to_postfix(), e.value, e.derivative, e.expr.complexity());
+            println!(
+                "  {} (value={:.4}, deriv={:.4}, complexity={})",
+                e.expr.to_postfix(),
+                e.value,
+                e.derivative,
+                e.expr.complexity()
+            );
         }
     }
 }

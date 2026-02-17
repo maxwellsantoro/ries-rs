@@ -95,9 +95,15 @@ fn test_symbol_names() {
     profile.symbol_names.insert(Symbol::E, "ℯ".to_string());
     profile.symbol_names.insert(Symbol::Phi, "φ".to_string());
 
-    assert_eq!(profile.symbol_names.get(&Symbol::Pi), Some(&"π".to_string()));
+    assert_eq!(
+        profile.symbol_names.get(&Symbol::Pi),
+        Some(&"π".to_string())
+    );
     assert_eq!(profile.symbol_names.get(&Symbol::E), Some(&"ℯ".to_string()));
-    assert_eq!(profile.symbol_names.get(&Symbol::Phi), Some(&"φ".to_string()));
+    assert_eq!(
+        profile.symbol_names.get(&Symbol::Phi),
+        Some(&"φ".to_string())
+    );
 }
 
 /// Test symbol weight customization

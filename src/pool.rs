@@ -3,9 +3,9 @@
 //! Implements a bounded pool that keeps the best matches across
 //! multiple dimensions (error, complexity) with deduplication.
 
-use std::collections::{BinaryHeap, HashSet};
-use std::cmp::Ordering;
 use crate::search::Match;
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashSet};
 
 /// Keys for deduplication
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -30,7 +30,9 @@ pub struct LhsKey {
 
 impl LhsKey {
     pub fn from_match(m: &Match) -> Self {
-        Self { key: m.lhs.expr.to_postfix() }
+        Self {
+            key: m.lhs.expr.to_postfix(),
+        }
     }
 }
 
@@ -61,7 +63,9 @@ impl SignatureKey {
             }
         }
 
-        Self { key: ops.into_iter().collect() }
+        Self {
+            key: ops.into_iter().collect(),
+        }
     }
 }
 
@@ -242,7 +246,8 @@ impl TopKPool {
     pub fn into_sorted(self) -> Vec<Match> {
         let mut matches: Vec<Match> = self.heap.into_iter().map(|e| e.m).collect();
         matches.sort_by(|a, b| {
-            a.complexity.cmp(&b.complexity)
+            a.complexity
+                .cmp(&b.complexity)
                 .then_with(|| a.error.abs().partial_cmp(&b.error.abs()).unwrap())
         });
         matches
@@ -257,7 +262,7 @@ impl TopKPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::{Expression, EvaluatedExpr};
+    use crate::expr::{EvaluatedExpr, Expression};
     use crate::symbol::NumType;
 
     fn make_match(lhs: &str, rhs: &str, error: f64, complexity: u16) -> Match {

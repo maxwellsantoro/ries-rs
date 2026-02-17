@@ -60,11 +60,11 @@ pub mod gen;
 pub mod metrics;
 pub mod pool;
 pub mod precision;
-pub mod symbol;
-pub mod udf;
 pub mod profile;
 pub mod report;
 pub mod search;
+pub mod symbol;
+pub mod udf;
 
 pub use expr::OutputFormat;
 pub use profile::{Profile, UserConstant};

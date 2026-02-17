@@ -133,8 +133,8 @@ pub enum Symbol {
     Mul = b'*',
     Div = b'/',
     Pow = b'^',
-    Root = b'v',  // a-th root of b
-    Log = b'L',   // log base a of b
+    Root = b'v', // a-th root of b
+    Log = b'L',  // log base a of b
     Atan2 = b'A',
 }
 
@@ -144,18 +144,17 @@ impl Symbol {
     pub const fn seft(self) -> Seft {
         use Symbol::*;
         match self {
-            One | Two | Three | Four | Five | Six | Seven | Eight | Nine |
-            Pi | E | Phi | Gamma | Plastic | Apery | Catalan | X |
-            UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 |
-            UserConstant4 | UserConstant5 | UserConstant6 | UserConstant7 |
-            UserConstant8 | UserConstant9 | UserConstant10 | UserConstant11 |
-            UserConstant12 | UserConstant13 | UserConstant14 | UserConstant15 => Seft::A,
+            One | Two | Three | Four | Five | Six | Seven | Eight | Nine | Pi | E | Phi | Gamma
+            | Plastic | Apery | Catalan | X | UserConstant0 | UserConstant1 | UserConstant2
+            | UserConstant3 | UserConstant4 | UserConstant5 | UserConstant6 | UserConstant7
+            | UserConstant8 | UserConstant9 | UserConstant10 | UserConstant11 | UserConstant12
+            | UserConstant13 | UserConstant14 | UserConstant15 => Seft::A,
 
-            Neg | Recip | Sqrt | Square | Ln | Exp | SinPi | CosPi | TanPi | LambertW |
-            UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 |
-            UserFunction4 | UserFunction5 | UserFunction6 | UserFunction7 |
-            UserFunction8 | UserFunction9 | UserFunction10 | UserFunction11 |
-            UserFunction12 | UserFunction13 | UserFunction14 | UserFunction15 => Seft::B,
+            Neg | Recip | Sqrt | Square | Ln | Exp | SinPi | CosPi | TanPi | LambertW
+            | UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 | UserFunction4
+            | UserFunction5 | UserFunction6 | UserFunction7 | UserFunction8 | UserFunction9
+            | UserFunction10 | UserFunction11 | UserFunction12 | UserFunction13
+            | UserFunction14 | UserFunction15 => Seft::B,
 
             Add | Sub | Mul | Div | Pow | Root | Log | Atan2 => Seft::C,
         }
@@ -188,19 +187,19 @@ impl Symbol {
             E => 8,
             Phi => 10,
             // New constants - similar weights to other special constants
-            Gamma => 10,    // Euler-Mascheroni γ
-            Plastic => 10,  // Plastic constant (algebraic)
-            Apery => 12,    // Apéry's constant (unknown type, treated as transcendental)
-            Catalan => 10,  // Catalan's constant
+            Gamma => 10,   // Euler-Mascheroni γ
+            Plastic => 10, // Plastic constant (algebraic)
+            Apery => 12,   // Apéry's constant (unknown type, treated as transcendental)
+            Catalan => 10, // Catalan's constant
 
             // Variable
             X => 6,
 
             // User constants have a default weight (can be customized via profile)
-            UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 |
-            UserConstant4 | UserConstant5 | UserConstant6 | UserConstant7 |
-            UserConstant8 | UserConstant9 | UserConstant10 | UserConstant11 |
-            UserConstant12 | UserConstant13 | UserConstant14 | UserConstant15 => 8,
+            UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 | UserConstant4
+            | UserConstant5 | UserConstant6 | UserConstant7 | UserConstant8 | UserConstant9
+            | UserConstant10 | UserConstant11 | UserConstant12 | UserConstant13
+            | UserConstant14 | UserConstant15 => 8,
 
             // Unary operators
             Neg => 4,
@@ -215,10 +214,10 @@ impl Symbol {
             LambertW => 12,
 
             // User-defined functions have a default weight (can be customized via profile)
-            UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 |
-            UserFunction4 | UserFunction5 | UserFunction6 | UserFunction7 |
-            UserFunction8 | UserFunction9 | UserFunction10 | UserFunction11 |
-            UserFunction12 | UserFunction13 | UserFunction14 | UserFunction15 => 8,
+            UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 | UserFunction4
+            | UserFunction5 | UserFunction6 | UserFunction7 | UserFunction8 | UserFunction9
+            | UserFunction10 | UserFunction11 | UserFunction12 | UserFunction13
+            | UserFunction14 | UserFunction15 => 8,
 
             // Binary operators
             Add => 3,
@@ -234,8 +233,8 @@ impl Symbol {
 
     /// Get the result type when this operation is applied
     pub fn result_type(self, arg_types: &[NumType]) -> NumType {
-        use Symbol::*;
         use NumType::*;
+        use Symbol::*;
 
         match self {
             // Integer constants
@@ -261,10 +260,10 @@ impl Symbol {
             X => Transcendental,
 
             // User constants - assume transcendental (most general)
-            UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 |
-            UserConstant4 | UserConstant5 | UserConstant6 | UserConstant7 |
-            UserConstant8 | UserConstant9 | UserConstant10 | UserConstant11 |
-            UserConstant12 | UserConstant13 | UserConstant14 | UserConstant15 => Transcendental,
+            UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 | UserConstant4
+            | UserConstant5 | UserConstant6 | UserConstant7 | UserConstant8 | UserConstant9
+            | UserConstant10 | UserConstant11 | UserConstant12 | UserConstant13
+            | UserConstant14 | UserConstant15 => Transcendental,
 
             // Operations that preserve integer-ness
             Neg | Add | Sub | Mul => {
@@ -280,7 +279,11 @@ impl Symbol {
             // Division: integer -> rational
             Div | Recip => {
                 let base = arg_types.iter().copied().fold(Integer, NumType::combine);
-                if base == Integer { Rational } else { base }
+                if base == Integer {
+                    Rational
+                } else {
+                    base
+                }
             }
 
             // Square root: rational -> constructible (or algebraic)
@@ -316,10 +319,10 @@ impl Symbol {
             Ln | Exp | SinPi | CosPi | TanPi | Log | LambertW | Atan2 => Transcendental,
 
             // User-defined functions - assume transcendental (most general)
-            UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 |
-            UserFunction4 | UserFunction5 | UserFunction6 | UserFunction7 |
-            UserFunction8 | UserFunction9 | UserFunction10 | UserFunction11 |
-            UserFunction12 | UserFunction13 | UserFunction14 | UserFunction15 => Transcendental,
+            UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 | UserFunction4
+            | UserFunction5 | UserFunction6 | UserFunction7 | UserFunction8 | UserFunction9
+            | UserFunction10 | UserFunction11 | UserFunction12 | UserFunction13
+            | UserFunction14 | UserFunction15 => Transcendental,
         }
     }
 
@@ -327,29 +330,74 @@ impl Symbol {
     pub const fn name(self) -> &'static str {
         use Symbol::*;
         match self {
-            One => "1", Two => "2", Three => "3", Four => "4", Five => "5",
-            Six => "6", Seven => "7", Eight => "8", Nine => "9",
-            Pi => "pi", E => "e", Phi => "phi",
-            Gamma => "gamma", Plastic => "plastic", Apery => "apery", Catalan => "catalan",
+            One => "1",
+            Two => "2",
+            Three => "3",
+            Four => "4",
+            Five => "5",
+            Six => "6",
+            Seven => "7",
+            Eight => "8",
+            Nine => "9",
+            Pi => "pi",
+            E => "e",
+            Phi => "phi",
+            Gamma => "gamma",
+            Plastic => "plastic",
+            Apery => "apery",
+            Catalan => "catalan",
             X => "x",
-            Neg => "-", Recip => "1/", Sqrt => "sqrt", Square => "^2",
-            Ln => "ln", Exp => "e^", SinPi => "sinpi", CosPi => "cospi",
-            TanPi => "tanpi", LambertW => "W",
-            Add => "+", Sub => "-", Mul => "*", Div => "/",
-            Pow => "^", Root => "\"/", Log => "log_", Atan2 => "atan2",
+            Neg => "-",
+            Recip => "1/",
+            Sqrt => "sqrt",
+            Square => "^2",
+            Ln => "ln",
+            Exp => "e^",
+            SinPi => "sinpi",
+            CosPi => "cospi",
+            TanPi => "tanpi",
+            LambertW => "W",
+            Add => "+",
+            Sub => "-",
+            Mul => "*",
+            Div => "/",
+            Pow => "^",
+            Root => "\"/",
+            Log => "log_",
+            Atan2 => "atan2",
             // User constants - placeholder names (can be overridden by profile)
-            UserConstant0 => "u0", UserConstant1 => "u1", UserConstant2 => "u2",
-            UserConstant3 => "u3", UserConstant4 => "u4", UserConstant5 => "u5",
-            UserConstant6 => "u6", UserConstant7 => "u7", UserConstant8 => "u8",
-            UserConstant9 => "u9", UserConstant10 => "u10", UserConstant11 => "u11",
-            UserConstant12 => "u12", UserConstant13 => "u13", UserConstant14 => "u14",
+            UserConstant0 => "u0",
+            UserConstant1 => "u1",
+            UserConstant2 => "u2",
+            UserConstant3 => "u3",
+            UserConstant4 => "u4",
+            UserConstant5 => "u5",
+            UserConstant6 => "u6",
+            UserConstant7 => "u7",
+            UserConstant8 => "u8",
+            UserConstant9 => "u9",
+            UserConstant10 => "u10",
+            UserConstant11 => "u11",
+            UserConstant12 => "u12",
+            UserConstant13 => "u13",
+            UserConstant14 => "u14",
             UserConstant15 => "u15",
             // User functions - placeholder names (can be overridden by profile)
-            UserFunction0 => "f0", UserFunction1 => "f1", UserFunction2 => "f2",
-            UserFunction3 => "f3", UserFunction4 => "f4", UserFunction5 => "f5",
-            UserFunction6 => "f6", UserFunction7 => "f7", UserFunction8 => "f8",
-            UserFunction9 => "f9", UserFunction10 => "f10", UserFunction11 => "f11",
-            UserFunction12 => "f12", UserFunction13 => "f13", UserFunction14 => "f14",
+            UserFunction0 => "f0",
+            UserFunction1 => "f1",
+            UserFunction2 => "f2",
+            UserFunction3 => "f3",
+            UserFunction4 => "f4",
+            UserFunction5 => "f5",
+            UserFunction6 => "f6",
+            UserFunction7 => "f7",
+            UserFunction8 => "f8",
+            UserFunction9 => "f9",
+            UserFunction10 => "f10",
+            UserFunction11 => "f11",
+            UserFunction12 => "f12",
+            UserFunction13 => "f13",
+            UserFunction14 => "f14",
             UserFunction15 => "f15",
         }
     }
@@ -358,38 +406,94 @@ impl Symbol {
     pub fn from_byte(b: u8) -> Option<Self> {
         use Symbol::*;
         Some(match b {
-            b'1' => One, b'2' => Two, b'3' => Three, b'4' => Four, b'5' => Five,
-            b'6' => Six, b'7' => Seven, b'8' => Eight, b'9' => Nine,
-            b'p' => Pi, b'e' => E, b'f' => Phi, b'x' => X,
-            b'g' => Gamma, b'P' => Plastic, b'z' => Apery, b'G' => Catalan,
-            b'n' => Neg, b'r' => Recip, b'q' => Sqrt, b's' => Square,
-            b'l' => Ln, b'E' => Exp, b'S' => SinPi, b'C' => CosPi,
-            b'T' => TanPi, b'W' => LambertW,
-            b'+' => Add, b'-' => Sub, b'*' => Mul, b'/' => Div,
-            b'^' => Pow, b'v' => Root, b'L' => Log, b'A' => Atan2,
+            b'1' => One,
+            b'2' => Two,
+            b'3' => Three,
+            b'4' => Four,
+            b'5' => Five,
+            b'6' => Six,
+            b'7' => Seven,
+            b'8' => Eight,
+            b'9' => Nine,
+            b'p' => Pi,
+            b'e' => E,
+            b'f' => Phi,
+            b'x' => X,
+            b'g' => Gamma,
+            b'P' => Plastic,
+            b'z' => Apery,
+            b'G' => Catalan,
+            b'n' => Neg,
+            b'r' => Recip,
+            b'q' => Sqrt,
+            b's' => Square,
+            b'l' => Ln,
+            b'E' => Exp,
+            b'S' => SinPi,
+            b'C' => CosPi,
+            b'T' => TanPi,
+            b'W' => LambertW,
+            b'+' => Add,
+            b'-' => Sub,
+            b'*' => Mul,
+            b'/' => Div,
+            b'^' => Pow,
+            b'v' => Root,
+            b'L' => Log,
+            b'A' => Atan2,
             // User constants (byte range 128-143)
-            128 => UserConstant0, 129 => UserConstant1, 130 => UserConstant2,
-            131 => UserConstant3, 132 => UserConstant4, 133 => UserConstant5,
-            134 => UserConstant6, 135 => UserConstant7, 136 => UserConstant8,
-            137 => UserConstant9, 138 => UserConstant10, 139 => UserConstant11,
-            140 => UserConstant12, 141 => UserConstant13, 142 => UserConstant14,
+            128 => UserConstant0,
+            129 => UserConstant1,
+            130 => UserConstant2,
+            131 => UserConstant3,
+            132 => UserConstant4,
+            133 => UserConstant5,
+            134 => UserConstant6,
+            135 => UserConstant7,
+            136 => UserConstant8,
+            137 => UserConstant9,
+            138 => UserConstant10,
+            139 => UserConstant11,
+            140 => UserConstant12,
+            141 => UserConstant13,
+            142 => UserConstant14,
             143 => UserConstant15,
             // User functions (byte range 144-159)
             // Also support printable aliases for CLI use:
             // 'H'-'W' (skipping used ones) and 'Y', 'Z'
-            144 => UserFunction0, 145 => UserFunction1, 146 => UserFunction2,
-            147 => UserFunction3, 148 => UserFunction4, 149 => UserFunction5,
-            150 => UserFunction6, 151 => UserFunction7, 152 => UserFunction8,
-            153 => UserFunction9, 154 => UserFunction10, 155 => UserFunction11,
-            156 => UserFunction12, 157 => UserFunction13, 158 => UserFunction14,
+            144 => UserFunction0,
+            145 => UserFunction1,
+            146 => UserFunction2,
+            147 => UserFunction3,
+            148 => UserFunction4,
+            149 => UserFunction5,
+            150 => UserFunction6,
+            151 => UserFunction7,
+            152 => UserFunction8,
+            153 => UserFunction9,
+            154 => UserFunction10,
+            155 => UserFunction11,
+            156 => UserFunction12,
+            157 => UserFunction13,
+            158 => UserFunction14,
             159 => UserFunction15,
             // Printable aliases for user functions (for CLI expression parsing)
             // H=0, I=1, J=2, K=3, M=4, N=5, O=6, Q=7, R=8, U=9, V=10, Y=11, Z=12, B=13, D=14, F=15
-            b'H' => UserFunction0, b'I' => UserFunction1, b'J' => UserFunction2,
-            b'K' => UserFunction3, b'M' => UserFunction4, b'N' => UserFunction5,
-            b'O' => UserFunction6, b'Q' => UserFunction7, b'R' => UserFunction8,
-            b'U' => UserFunction9, b'V' => UserFunction10, b'Y' => UserFunction11,
-            b'Z' => UserFunction12, b'B' => UserFunction13, b'D' => UserFunction14,
+            b'H' => UserFunction0,
+            b'I' => UserFunction1,
+            b'J' => UserFunction2,
+            b'K' => UserFunction3,
+            b'M' => UserFunction4,
+            b'N' => UserFunction5,
+            b'O' => UserFunction6,
+            b'Q' => UserFunction7,
+            b'R' => UserFunction8,
+            b'U' => UserFunction9,
+            b'V' => UserFunction10,
+            b'Y' => UserFunction11,
+            b'Z' => UserFunction12,
+            b'B' => UserFunction13,
+            b'D' => UserFunction14,
             b'F' => UserFunction15,
             _ => return None,
         })
@@ -399,11 +503,21 @@ impl Symbol {
     pub fn user_constant_index(self) -> Option<u8> {
         use Symbol::*;
         match self {
-            UserConstant0 => Some(0), UserConstant1 => Some(1), UserConstant2 => Some(2),
-            UserConstant3 => Some(3), UserConstant4 => Some(4), UserConstant5 => Some(5),
-            UserConstant6 => Some(6), UserConstant7 => Some(7), UserConstant8 => Some(8),
-            UserConstant9 => Some(9), UserConstant10 => Some(10), UserConstant11 => Some(11),
-            UserConstant12 => Some(12), UserConstant13 => Some(13), UserConstant14 => Some(14),
+            UserConstant0 => Some(0),
+            UserConstant1 => Some(1),
+            UserConstant2 => Some(2),
+            UserConstant3 => Some(3),
+            UserConstant4 => Some(4),
+            UserConstant5 => Some(5),
+            UserConstant6 => Some(6),
+            UserConstant7 => Some(7),
+            UserConstant8 => Some(8),
+            UserConstant9 => Some(9),
+            UserConstant10 => Some(10),
+            UserConstant11 => Some(11),
+            UserConstant12 => Some(12),
+            UserConstant13 => Some(13),
+            UserConstant14 => Some(14),
             UserConstant15 => Some(15),
             _ => None,
         }
@@ -413,11 +527,21 @@ impl Symbol {
     pub fn user_function_index(self) -> Option<u8> {
         use Symbol::*;
         match self {
-            UserFunction0 => Some(0), UserFunction1 => Some(1), UserFunction2 => Some(2),
-            UserFunction3 => Some(3), UserFunction4 => Some(4), UserFunction5 => Some(5),
-            UserFunction6 => Some(6), UserFunction7 => Some(7), UserFunction8 => Some(8),
-            UserFunction9 => Some(9), UserFunction10 => Some(10), UserFunction11 => Some(11),
-            UserFunction12 => Some(12), UserFunction13 => Some(13), UserFunction14 => Some(14),
+            UserFunction0 => Some(0),
+            UserFunction1 => Some(1),
+            UserFunction2 => Some(2),
+            UserFunction3 => Some(3),
+            UserFunction4 => Some(4),
+            UserFunction5 => Some(5),
+            UserFunction6 => Some(6),
+            UserFunction7 => Some(7),
+            UserFunction8 => Some(8),
+            UserFunction9 => Some(9),
+            UserFunction10 => Some(10),
+            UserFunction11 => Some(11),
+            UserFunction12 => Some(12),
+            UserFunction13 => Some(13),
+            UserFunction14 => Some(14),
             UserFunction15 => Some(15),
             _ => None,
         }
@@ -426,14 +550,18 @@ impl Symbol {
     /// Get all constant symbols (Seft::A)
     pub fn constants() -> &'static [Symbol] {
         use Symbol::*;
-        &[One, Two, Three, Four, Five, Six, Seven, Eight, Nine, Pi, E, Phi,
-          Gamma, Plastic, Apery, Catalan]
+        &[
+            One, Two, Three, Four, Five, Six, Seven, Eight, Nine, Pi, E, Phi, Gamma, Plastic,
+            Apery, Catalan,
+        ]
     }
 
     /// Get all unary operators (Seft::B)
     pub fn unary_ops() -> &'static [Symbol] {
         use Symbol::*;
-        &[Neg, Recip, Sqrt, Square, Ln, Exp, SinPi, CosPi, TanPi, LambertW]
+        &[
+            Neg, Recip, Sqrt, Square, Ln, Exp, SinPi, CosPi, TanPi, LambertW,
+        ]
     }
 
     /// Get all binary operators (Seft::C)
@@ -461,7 +589,8 @@ mod tests {
 
     #[test]
     fn test_symbol_roundtrip() {
-        for &sym in Symbol::constants().iter()
+        for &sym in Symbol::constants()
+            .iter()
             .chain(Symbol::unary_ops())
             .chain(Symbol::binary_ops())
         {
