@@ -180,9 +180,16 @@ fn compute_ugliness(m: &Match) -> f64 {
 
     // Penalize transcendental operators (they're "expensive")
     for sym in m.lhs.expr.symbols().iter().chain(m.rhs.expr.symbols()) {
-        if matches!(sym,
-            Symbol::Ln | Symbol::Exp | Symbol::SinPi | Symbol::CosPi |
-            Symbol::TanPi | Symbol::LambertW | Symbol::Log | Symbol::Atan2
+        if matches!(
+            sym,
+            Symbol::Ln
+                | Symbol::Exp
+                | Symbol::SinPi
+                | Symbol::CosPi
+                | Symbol::TanPi
+                | Symbol::LambertW
+                | Symbol::Log
+                | Symbol::Atan2
         ) {
             score += 1.0;
         }
@@ -193,7 +200,9 @@ fn compute_ugliness(m: &Match) -> f64 {
 
 /// Count operators in an expression
 fn count_operators(expr: &crate::expr::EvaluatedExpr) -> usize {
-    expr.expr.symbols().iter()
+    expr.expr
+        .symbols()
+        .iter()
         .filter(|s| s.seft() != Seft::A)
         .count()
 }
@@ -255,20 +264,40 @@ fn default_rarity(sym: Symbol) -> f64 {
         Symbol::LambertW | Symbol::Atan2 => 1.0,
 
         // User constants - medium rarity
-        Symbol::UserConstant0 | Symbol::UserConstant1 | Symbol::UserConstant2 |
-        Symbol::UserConstant3 | Symbol::UserConstant4 | Symbol::UserConstant5 |
-        Symbol::UserConstant6 | Symbol::UserConstant7 | Symbol::UserConstant8 |
-        Symbol::UserConstant9 | Symbol::UserConstant10 | Symbol::UserConstant11 |
-        Symbol::UserConstant12 | Symbol::UserConstant13 | Symbol::UserConstant14 |
-        Symbol::UserConstant15 => 0.5,
+        Symbol::UserConstant0
+        | Symbol::UserConstant1
+        | Symbol::UserConstant2
+        | Symbol::UserConstant3
+        | Symbol::UserConstant4
+        | Symbol::UserConstant5
+        | Symbol::UserConstant6
+        | Symbol::UserConstant7
+        | Symbol::UserConstant8
+        | Symbol::UserConstant9
+        | Symbol::UserConstant10
+        | Symbol::UserConstant11
+        | Symbol::UserConstant12
+        | Symbol::UserConstant13
+        | Symbol::UserConstant14
+        | Symbol::UserConstant15 => 0.5,
 
         // User functions - medium-high rarity (custom operations)
-        Symbol::UserFunction0 | Symbol::UserFunction1 | Symbol::UserFunction2 |
-        Symbol::UserFunction3 | Symbol::UserFunction4 | Symbol::UserFunction5 |
-        Symbol::UserFunction6 | Symbol::UserFunction7 | Symbol::UserFunction8 |
-        Symbol::UserFunction9 | Symbol::UserFunction10 | Symbol::UserFunction11 |
-        Symbol::UserFunction12 | Symbol::UserFunction13 | Symbol::UserFunction14 |
-        Symbol::UserFunction15 => 0.6,
+        Symbol::UserFunction0
+        | Symbol::UserFunction1
+        | Symbol::UserFunction2
+        | Symbol::UserFunction3
+        | Symbol::UserFunction4
+        | Symbol::UserFunction5
+        | Symbol::UserFunction6
+        | Symbol::UserFunction7
+        | Symbol::UserFunction8
+        | Symbol::UserFunction9
+        | Symbol::UserFunction10
+        | Symbol::UserFunction11
+        | Symbol::UserFunction12
+        | Symbol::UserFunction13
+        | Symbol::UserFunction14
+        | Symbol::UserFunction15 => 0.6,
     }
 }
 
@@ -300,9 +329,16 @@ fn compute_diversity(m: &Match) -> f64 {
 
     for sym in m.lhs.expr.symbols().iter().chain(m.rhs.expr.symbols()) {
         match sym {
-            Symbol::Add | Symbol::Sub | Symbol::Mul | Symbol::Div |
-            Symbol::Pow | Symbol::Sqrt | Symbol::Square | Symbol::Root |
-            Symbol::Neg | Symbol::Recip => has_algebraic = true,
+            Symbol::Add
+            | Symbol::Sub
+            | Symbol::Mul
+            | Symbol::Div
+            | Symbol::Pow
+            | Symbol::Sqrt
+            | Symbol::Square
+            | Symbol::Root
+            | Symbol::Neg
+            | Symbol::Recip => has_algebraic = true,
 
             Symbol::Ln | Symbol::Exp | Symbol::LambertW => has_transcendental = true,
 
@@ -333,7 +369,7 @@ fn compute_diversity(m: &Match) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::{Expression, EvaluatedExpr};
+    use crate::expr::{EvaluatedExpr, Expression};
     use crate::symbol::NumType;
 
     fn make_match(lhs: &str, rhs: &str, error: f64, deriv: f64) -> Match {

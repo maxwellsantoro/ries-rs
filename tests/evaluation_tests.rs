@@ -3,8 +3,8 @@
 mod common;
 use common::approx_eq_default;
 
-use ries_rs::expr::Expression;
 use ries_rs::eval::{evaluate, evaluate_with_constants, EvalError};
+use ries_rs::expr::Expression;
 use ries_rs::profile::UserConstant;
 
 #[test]

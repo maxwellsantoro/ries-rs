@@ -4,9 +4,9 @@
 //! user-defined constants, user-defined functions, symbol names, and symbol weights.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::io::{self, BufRead};
+use std::path::{Path, PathBuf};
 
 use crate::symbol::{NumType, Symbol};
 
@@ -52,15 +52,14 @@ impl Profile {
     /// Load a profile from a file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, ProfileError> {
         let path = path.as_ref();
-        let file = fs::File::open(path)
-            .map_err(|e| ProfileError::IoError(path.to_path_buf(), e))?;
+        let file =
+            fs::File::open(path).map_err(|e| ProfileError::IoError(path.to_path_buf(), e))?;
 
         let mut profile = Profile::new();
         let reader = io::BufReader::new(file);
 
         for (line_num, line_result) in reader.lines().enumerate() {
-            let line = line_result
-                .map_err(|e| ProfileError::IoError(path.to_path_buf(), e))?;
+            let line = line_result.map_err(|e| ProfileError::IoError(path.to_path_buf(), e))?;
 
             // Skip empty lines and comments
             let trimmed = line.trim();
@@ -185,7 +184,8 @@ fn parse_user_constant(profile: &mut Profile, line: &str) -> Result<(), String> 
     // Handle both quoted and unquoted formats
     let content = if rest.starts_with('"') {
         // Quoted format: -X "weight:name:description:value"
-        let end_quote = rest[1..].find('"')
+        let end_quote = rest[1..]
+            .find('"')
             .ok_or("Unclosed quote in -X directive")?;
         &rest[1..end_quote + 1]
     } else {
@@ -201,13 +201,15 @@ fn parse_user_constant(profile: &mut Profile, line: &str) -> Result<(), String> 
         ));
     }
 
-    let weight: u16 = parts[0].parse()
+    let weight: u16 = parts[0]
+        .parse()
         .map_err(|_| format!("Invalid weight: {}", parts[0]))?;
 
     let name = parts[1].to_string();
     let description = parts[2].to_string();
 
-    let value: f64 = parts[3].parse()
+    let value: f64 = parts[3]
+        .parse()
         .map_err(|_| format!("Invalid value: {}", parts[3]))?;
 
     // Determine numeric type based on value characteristics
@@ -255,7 +257,8 @@ fn parse_user_function(profile: &mut Profile, line: &str) -> Result<(), String> 
     // Handle both quoted and unquoted formats
     let content = if rest.starts_with('"') {
         // Quoted format: --define "weight:name:description:formula"
-        let end_quote = rest[1..].find('"')
+        let end_quote = rest[1..]
+            .find('"')
             .ok_or("Unclosed quote in --define directive")?;
         &rest[1..end_quote + 1]
     } else {
@@ -282,7 +285,9 @@ fn parse_symbol_names(profile: &mut Profile, line: &str) -> Result<(), String> {
 
         let inner = &part[1..];
         if let Some(colon_pos) = inner.find(':') {
-            let symbol_char = inner[..colon_pos].chars().next()
+            let symbol_char = inner[..colon_pos]
+                .chars()
+                .next()
                 .ok_or("Empty symbol in --symbol-names")?;
             let name = inner[colon_pos + 1..].to_string();
 
@@ -307,9 +312,12 @@ fn parse_symbol_weights(profile: &mut Profile, line: &str) -> Result<(), String>
 
         let inner = &part[1..];
         if let Some(colon_pos) = inner.find(':') {
-            let symbol_char = inner[..colon_pos].chars().next()
+            let symbol_char = inner[..colon_pos]
+                .chars()
+                .next()
                 .ok_or("Empty symbol in --symbol-weights")?;
-            let weight: u16 = inner[colon_pos + 1..].parse()
+            let weight: u16 = inner[colon_pos + 1..]
+                .parse()
                 .map_err(|_| format!("Invalid weight in --symbol-weights: {}", inner))?;
 
             if let Some(symbol) = Symbol::from_byte(symbol_char as u8) {
@@ -328,7 +336,7 @@ fn parse_include(profile: &mut Profile, line: &str) -> Result<(), String> {
 
     // Remove quotes if present
     let path_str = if rest.starts_with('"') && rest.ends_with('"') {
-        &rest[1..rest.len()-1]
+        &rest[1..rest.len() - 1]
     } else {
         rest
     };
@@ -353,7 +361,13 @@ impl std::fmt::Display for ProfileError {
                 write!(f, "Error reading {}: {}", path.display(), e)
             }
             ProfileError::ParseError(path, line, msg) => {
-                write!(f, "Parse error in {} at line {}: {}", path.display(), line, msg)
+                write!(
+                    f,
+                    "Parse error in {} at line {}: {}",
+                    path.display(),
+                    line,
+                    msg
+                )
             }
         }
     }
@@ -368,7 +382,11 @@ mod tests {
     #[test]
     fn test_parse_user_constant() {
         let mut profile = Profile::new();
-        parse_user_constant(&mut profile, r#"-X "4:gamma:Euler's constant:0.5772156649""#).unwrap();
+        parse_user_constant(
+            &mut profile,
+            r#"-X "4:gamma:Euler's constant:0.5772156649""#,
+        )
+        .unwrap();
 
         assert_eq!(profile.constants.len(), 1);
         assert_eq!(profile.constants[0].name, "gamma");
@@ -381,7 +399,10 @@ mod tests {
         let mut profile = Profile::new();
         parse_symbol_names(&mut profile, "--symbol-names :p:π :e:ℯ").unwrap();
 
-        assert_eq!(profile.symbol_names.get(&Symbol::Pi), Some(&"π".to_string()));
+        assert_eq!(
+            profile.symbol_names.get(&Symbol::Pi),
+            Some(&"π".to_string())
+        );
         assert_eq!(profile.symbol_names.get(&Symbol::E), Some(&"ℯ".to_string()));
     }
 

@@ -32,10 +32,7 @@ fn test_infix_conversion_basic() {
 
 #[test]
 fn test_infix_conversion_precedence() {
-    assert_eq!(
-        Expression::parse("32+5*").unwrap().to_infix(),
-        "(3+2)*5"
-    );
+    assert_eq!(Expression::parse("32+5*").unwrap().to_infix(), "(3+2)*5");
 }
 
 #[test]
@@ -48,7 +45,7 @@ fn test_infix_conversion_constants() {
 #[test]
 fn test_complexity_calculation() {
     let expr = Expression::parse("xs").unwrap(); // x^2
-    // x = 6, s (square) = 5
+                                                 // x = 6, s (square) = 5
     assert_eq!(expr.complexity(), 6 + 5);
 }
 
@@ -74,6 +71,10 @@ fn test_output_formats() {
     let expr = Expression::parse("pq").unwrap(); // sqrt(pi)
 
     assert_eq!(expr.to_infix_with_format(OutputFormat::Default), "sqrt(pi)");
-    assert!(expr.to_infix_with_format(OutputFormat::Pretty).contains("π"));
-    assert!(expr.to_infix_with_format(OutputFormat::Mathematica).contains("Pi"));
+    assert!(expr
+        .to_infix_with_format(OutputFormat::Pretty)
+        .contains("π"));
+    assert!(expr
+        .to_infix_with_format(OutputFormat::Mathematica)
+        .contains("Pi"));
 }

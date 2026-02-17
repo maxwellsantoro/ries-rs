@@ -2,12 +2,12 @@
 
 mod common;
 
-use ries_rs::search::{search, search_with_stats};
 use ries_rs::gen::{generate_all, GenConfig};
+use ries_rs::search::{search, search_with_stats};
 
 fn default_config() -> GenConfig {
     let mut config = GenConfig::default();
-    config.max_lhs_complexity = 20;  // Reduced for faster tests
+    config.max_lhs_complexity = 20; // Reduced for faster tests
     config.max_rhs_complexity = 22;
     config
 }
@@ -23,9 +23,9 @@ fn test_search_finds_2x_equals_5() {
     let matches = search(2.5, &default_config(), 20);
 
     // Should find 2x = 5
-    let has_2x = matches.iter().any(|m| {
-        m.lhs.expr.to_postfix() == "2x*" && m.rhs.expr.to_postfix() == "5"
-    });
+    let has_2x = matches
+        .iter()
+        .any(|m| m.lhs.expr.to_postfix() == "2x*" && m.rhs.expr.to_postfix() == "5");
     assert!(has_2x, "Should find 2x = 5");
 }
 
@@ -34,10 +34,7 @@ fn test_search_exact_matches() {
     let matches = search(2.5, &default_config(), 20);
 
     // Count exact matches
-    let exact: Vec<_> = matches
-        .iter()
-        .filter(|m| m.error.abs() < 1e-14)
-        .collect();
+    let exact: Vec<_> = matches.iter().filter(|m| m.error.abs() < 1e-14).collect();
 
     assert!(!exact.is_empty(), "Should have at least one exact match");
 
@@ -85,8 +82,8 @@ fn test_pi_search() {
     let matches = search(std::f64::consts::PI, &default_config(), 20);
 
     // Should find x = pi exactly
-    let has_pi = matches.iter().any(|m| {
-        m.error.abs() < 1e-14 && m.rhs.expr.to_postfix() == "p"
-    });
+    let has_pi = matches
+        .iter()
+        .any(|m| m.error.abs() < 1e-14 && m.rhs.expr.to_postfix() == "p");
     assert!(has_pi, "Should find x = pi");
 }

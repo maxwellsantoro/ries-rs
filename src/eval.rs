@@ -65,11 +65,19 @@ struct StackEntry {
 
 impl StackEntry {
     fn new(val: f64, deriv: f64, num_type: NumType) -> Self {
-        Self { val, deriv, num_type }
+        Self {
+            val,
+            deriv,
+            num_type,
+        }
     }
 
     fn constant(val: f64, num_type: NumType) -> Self {
-        Self { val, deriv: 0.0, num_type }
+        Self {
+            val,
+            deriv: 0.0,
+            num_type,
+        }
     }
 }
 
@@ -167,11 +175,24 @@ pub fn evaluate_with_workspace_and_constants_and_functions(
             }
             Seft::B => {
                 // Check if this is a user function
-                if matches!(sym,
-                    Symbol::UserFunction0 | Symbol::UserFunction1 | Symbol::UserFunction2 | Symbol::UserFunction3 |
-                    Symbol::UserFunction4 | Symbol::UserFunction5 | Symbol::UserFunction6 | Symbol::UserFunction7 |
-                    Symbol::UserFunction8 | Symbol::UserFunction9 | Symbol::UserFunction10 | Symbol::UserFunction11 |
-                    Symbol::UserFunction12 | Symbol::UserFunction13 | Symbol::UserFunction14 | Symbol::UserFunction15
+                if matches!(
+                    sym,
+                    Symbol::UserFunction0
+                        | Symbol::UserFunction1
+                        | Symbol::UserFunction2
+                        | Symbol::UserFunction3
+                        | Symbol::UserFunction4
+                        | Symbol::UserFunction5
+                        | Symbol::UserFunction6
+                        | Symbol::UserFunction7
+                        | Symbol::UserFunction8
+                        | Symbol::UserFunction9
+                        | Symbol::UserFunction10
+                        | Symbol::UserFunction11
+                        | Symbol::UserFunction12
+                        | Symbol::UserFunction13
+                        | Symbol::UserFunction14
+                        | Symbol::UserFunction15
                 ) {
                     // Evaluate user function
                     let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
@@ -228,7 +249,13 @@ pub fn evaluate_with_constants(
     user_constants: &[UserConstant],
 ) -> Result<EvalResult, EvalError> {
     let mut workspace = EvalWorkspace::new();
-    evaluate_with_workspace_and_constants_and_functions(expr, x, &mut workspace, user_constants, &[])
+    evaluate_with_workspace_and_constants_and_functions(
+        expr,
+        x,
+        &mut workspace,
+        user_constants,
+        &[],
+    )
 }
 
 /// Evaluate an expression at a given value of x with user constants and user functions.
@@ -241,7 +268,13 @@ pub fn evaluate_with_constants_and_functions(
     user_functions: &[UserFunction],
 ) -> Result<EvalResult, EvalError> {
     let mut workspace = EvalWorkspace::new();
-    evaluate_with_workspace_and_constants_and_functions(expr, x, &mut workspace, user_constants, user_functions)
+    evaluate_with_workspace_and_constants_and_functions(
+        expr,
+        x,
+        &mut workspace,
+        user_constants,
+        user_functions,
+    )
 }
 
 /// Evaluate an expression using a thread-local workspace (zero allocations after warmup).
@@ -287,7 +320,13 @@ pub fn evaluate_fast_with_constants_and_functions(
 
     WORKSPACE.with(|ws| {
         let mut workspace = ws.borrow_mut();
-        evaluate_with_workspace_and_constants_and_functions(expr, x, &mut workspace, user_constants, user_functions)
+        evaluate_with_workspace_and_constants_and_functions(
+            expr,
+            x,
+            &mut workspace,
+            user_constants,
+            user_functions,
+        )
     })
 }
 
@@ -362,13 +401,14 @@ fn eval_constant_with_user(sym: Symbol, x: f64, user_constants: &[UserConstant])
         Catalan => StackEntry::constant(constants::CATALAN, NumType::Transcendental),
         X => StackEntry::new(x, 1.0, NumType::Transcendental), // dx/dx = 1
         // User constants - look up value from the user_constants slice
-        UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 |
-        UserConstant4 | UserConstant5 | UserConstant6 | UserConstant7 |
-        UserConstant8 | UserConstant9 | UserConstant10 | UserConstant11 |
-        UserConstant12 | UserConstant13 | UserConstant14 | UserConstant15 => {
+        UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 | UserConstant4
+        | UserConstant5 | UserConstant6 | UserConstant7 | UserConstant8 | UserConstant9
+        | UserConstant10 | UserConstant11 | UserConstant12 | UserConstant13 | UserConstant14
+        | UserConstant15 => {
             // Get the index from the symbol
             let idx = sym.user_constant_index().unwrap() as usize;
-            user_constants.get(idx)
+            user_constants
+                .get(idx)
                 .map(|uc| StackEntry::constant(uc.value, uc.num_type))
                 .unwrap_or_else(|| {
                     // No user constant at this index - return 0.0 as fallback
@@ -572,10 +612,10 @@ fn eval_unary(sym: Symbol, a: StackEntry) -> Result<StackEntry, EvalError> {
 
         // User functions are handled at the main evaluation loop level, not here
         // If we reach this point, it's a bug
-        UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 |
-        UserFunction4 | UserFunction5 | UserFunction6 | UserFunction7 |
-        UserFunction8 | UserFunction9 | UserFunction10 | UserFunction11 |
-        UserFunction12 | UserFunction13 | UserFunction14 | UserFunction15 => {
+        UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 | UserFunction4
+        | UserFunction5 | UserFunction6 | UserFunction7 | UserFunction8 | UserFunction9
+        | UserFunction10 | UserFunction11 | UserFunction12 | UserFunction13 | UserFunction14
+        | UserFunction15 => {
             unreachable!("User functions should be handled at evaluation loop level")
         }
 
@@ -970,7 +1010,8 @@ mod tests {
         let expr = Expression::from_symbols(&[Symbol::X, Symbol::UserFunction0]);
 
         // sinh(1) = (e - e^-1) / 2 ≈ 1.1752
-        let result = evaluate_with_constants_and_functions(&expr, 1.0, &[], &user_functions).unwrap();
+        let result =
+            evaluate_with_constants_and_functions(&expr, 1.0, &[], &user_functions).unwrap();
         let expected = (constants::E - 1.0 / constants::E) / 2.0;
         assert!(approx_eq(result.value, expected));
 
@@ -991,7 +1032,8 @@ mod tests {
         let expr = Expression::from_symbols(&[Symbol::X, Symbol::UserFunction0]);
 
         // XeX(1) = 1 * e^1 = e
-        let result = evaluate_with_constants_and_functions(&expr, 1.0, &[], &user_functions).unwrap();
+        let result =
+            evaluate_with_constants_and_functions(&expr, 1.0, &[], &user_functions).unwrap();
         assert!(approx_eq(result.value, constants::E));
 
         // Derivative: d(x*e^x)/dx = e^x + x*e^x = e^x * (1 + x) = e * 2

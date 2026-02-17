@@ -190,10 +190,14 @@ fn parse_user_constant_from_cli(profile: &mut Profile, spec: &str) -> Result<(),
 
     let parts: Vec<&str> = spec.split(':').collect();
     if parts.len() != 4 {
-        return Err(format!("Expected 4 colon-separated parts, got {}", parts.len()));
+        return Err(format!(
+            "Expected 4 colon-separated parts, got {}",
+            parts.len()
+        ));
     }
 
-    let weight: u16 = parts[0].parse()
+    let weight: u16 = parts[0]
+        .parse()
         .map_err(|_| format!("Invalid weight: {}", parts[0]))?;
 
     let name = parts[1].to_string();
@@ -203,7 +207,8 @@ fn parse_user_constant_from_cli(profile: &mut Profile, spec: &str) -> Result<(),
 
     let description = parts[2].to_string();
 
-    let value: f64 = parts[3].parse()
+    let value: f64 = parts[3]
+        .parse()
         .map_err(|_| format!("Invalid value: {}", parts[3]))?;
 
     // Determine numeric type based on value characteristics
@@ -275,8 +280,10 @@ fn build_gen_config(
     let allowed: Option<std::collections::HashSet<u8>> = only_symbols.map(|s| s.bytes().collect());
     let excluded: Option<std::collections::HashSet<u8>> = exclude.map(|s| s.bytes().collect());
     // RHS-specific filtering (for future use when GenConfig supports separate RHS symbols)
-    let _allowed_rhs: Option<std::collections::HashSet<u8>> = only_symbols_rhs.map(|s| s.bytes().collect());
-    let _excluded_rhs: Option<std::collections::HashSet<u8>> = exclude_rhs.map(|s| s.bytes().collect());
+    let _allowed_rhs: Option<std::collections::HashSet<u8>> =
+        only_symbols_rhs.map(|s| s.bytes().collect());
+    let _excluded_rhs: Option<std::collections::HashSet<u8>> =
+        exclude_rhs.map(|s| s.bytes().collect());
 
     // Parse operator limits (simplified - just filter to allowed operators)
     let op_limit_allowed: Option<std::collections::HashSet<u8>> = op_limits.map(|s| {
@@ -298,14 +305,30 @@ fn build_gen_config(
     });
 
     // Apply LHS symbol filtering
-    config.constants = filter_symbols(symbol::Symbol::constants(), allowed.as_ref(), excluded.as_ref());
-    config.unary_ops = filter_symbols(symbol::Symbol::unary_ops(), allowed.as_ref(), excluded.as_ref());
-    config.binary_ops = filter_symbols(symbol::Symbol::binary_ops(), allowed.as_ref(), excluded.as_ref());
+    config.constants = filter_symbols(
+        symbol::Symbol::constants(),
+        allowed.as_ref(),
+        excluded.as_ref(),
+    );
+    config.unary_ops = filter_symbols(
+        symbol::Symbol::unary_ops(),
+        allowed.as_ref(),
+        excluded.as_ref(),
+    );
+    config.binary_ops = filter_symbols(
+        symbol::Symbol::binary_ops(),
+        allowed.as_ref(),
+        excluded.as_ref(),
+    );
 
     // Apply operator limits if specified
     if let Some(ref op_allowed) = op_limit_allowed {
-        config.unary_ops.retain(|s| op_allowed.contains(&(*s as u8)));
-        config.binary_ops.retain(|s| op_allowed.contains(&(*s as u8)));
+        config
+            .unary_ops
+            .retain(|s| op_allowed.contains(&(*s as u8)));
+        config
+            .binary_ops
+            .retain(|s| op_allowed.contains(&(*s as u8)));
     }
 
     // Add user constant symbols to the constants pool
@@ -314,7 +337,9 @@ fn build_gen_config(
         if idx < 16 {
             if let Some(sym) = symbol::Symbol::from_byte(128 + idx as u8) {
                 // Only add if not excluded
-                let is_excluded = excluded.as_ref().map_or(false, |excl| excl.contains(&(128 + idx as u8)));
+                let is_excluded = excluded
+                    .as_ref()
+                    .map_or(false, |excl| excl.contains(&(128 + idx as u8)));
                 if !is_excluded {
                     config.constants.push(sym);
                 }
@@ -328,7 +353,9 @@ fn build_gen_config(
         if idx < 16 {
             if let Some(sym) = symbol::Symbol::from_byte(144 + idx as u8) {
                 // Only add if not excluded
-                let is_excluded = excluded.as_ref().map_or(false, |excl| excl.contains(&(144 + idx as u8)));
+                let is_excluded = excluded
+                    .as_ref()
+                    .map_or(false, |excl| excl.contains(&(144 + idx as u8)));
                 if !is_excluded {
                     config.unary_ops.push(sym);
                 }
@@ -350,8 +377,7 @@ fn eval_expression(
     user_functions: &[udf::UserFunction],
 ) -> Result<eval::EvalResult, eval::EvalError> {
     use expr::Expression;
-    let expr = Expression::parse(expr_str)
-        .ok_or(eval::EvalError::Invalid)?;
+    let expr = Expression::parse(expr_str).ok_or(eval::EvalError::Invalid)?;
     eval::evaluate_with_constants_and_functions(&expr, x, user_constants, user_functions)
 }
 
@@ -360,7 +386,9 @@ fn main() {
 
     // Warn about unimplemented precision flag
     if args.precision.is_some() {
-        eprintln!("Warning: --precision flag specified but high-precision mode is not yet implemented.");
+        eprintln!(
+            "Warning: --precision flag specified but high-precision mode is not yet implemented."
+        );
         eprintln!("         Using standard f64 precision (~15 digits).");
     }
 
@@ -377,14 +405,20 @@ fn main() {
     // Parse user constants from CLI
     for constant_spec in &args.user_constant {
         if let Err(e) = parse_user_constant_from_cli(&mut profile, constant_spec) {
-            eprintln!("Warning: Failed to parse user constant '{}': {}", constant_spec, e);
+            eprintln!(
+                "Warning: Failed to parse user constant '{}': {}",
+                constant_spec, e
+            );
         }
     }
 
     // Parse user-defined functions from CLI
     for func_spec in &args.define {
         if let Err(e) = parse_user_function_from_cli(&mut profile, func_spec) {
-            eprintln!("Warning: Failed to parse user function '{}': {}", func_spec, e);
+            eprintln!(
+                "Warning: Failed to parse user function '{}': {}",
+                func_spec, e
+            );
         }
     }
 
@@ -461,8 +495,8 @@ fn main() {
         args.exclude_rhs.as_deref(),
         args.only_symbols_rhs.as_deref(),
         args.op_limits.as_deref(),
-        profile.constants,    // Pass user constants from profile
-        profile.functions,    // Pass user functions from profile
+        profile.constants, // Pass user constants from profile
+        profile.functions, // Pass user functions from profile
     );
 
     // Determine pool size based on mode
@@ -553,7 +587,10 @@ fn main() {
         println!();
         if matches.len() >= effective_max_matches {
             let next_level = (args.level + 1.0) as i32;
-            println!("                  (for more results, use the option '-l{}')", next_level);
+            println!(
+                "                  (for more results, use the option '-l{}')",
+                next_level
+            );
         }
     } else {
         // Report mode: categorized output
@@ -570,10 +607,7 @@ fn main() {
     }
 
     println!();
-    println!(
-        "  Search completed in {:.3}s",
-        elapsed.as_secs_f64()
-    );
+    println!("  Search completed in {:.3}s", elapsed.as_secs_f64());
 
     // Print detailed stats if requested
     if args.stats {
@@ -612,10 +646,7 @@ fn print_match_relative(m: &search::Match, solve: bool, format: expr::OutputForm
 
     if solve {
         // Try to display as x = ...
-        println!(
-            "     x = {:40} {} {{{}}}",
-            rhs_str, error_str, m.complexity
-        );
+        println!("     x = {:40} {} {{{}}}", rhs_str, error_str, m.complexity);
     } else {
         println!(
             "{:>24} = {:<24} {} {{{}}}",

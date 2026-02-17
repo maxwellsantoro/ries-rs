@@ -17,16 +17,20 @@ fn fast_config() -> GenConfig {
         max_rhs_complexity: 25,
         max_length: 10,
         constants: vec![
-            Symbol::One, Symbol::Two, Symbol::Three, Symbol::Four, Symbol::Five,
-            Symbol::Six, Symbol::Seven, Symbol::Eight, Symbol::Nine,
-            Symbol::Pi, Symbol::E,
+            Symbol::One,
+            Symbol::Two,
+            Symbol::Three,
+            Symbol::Four,
+            Symbol::Five,
+            Symbol::Six,
+            Symbol::Seven,
+            Symbol::Eight,
+            Symbol::Nine,
+            Symbol::Pi,
+            Symbol::E,
         ],
-        unary_ops: vec![
-            Symbol::Neg, Symbol::Recip, Symbol::Square, Symbol::Sqrt,
-        ],
-        binary_ops: vec![
-            Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div,
-        ],
+        unary_ops: vec![Symbol::Neg, Symbol::Recip, Symbol::Square, Symbol::Sqrt],
+        binary_ops: vec![Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div],
         min_num_type: NumType::Transcendental,
         generate_lhs: true,
         generate_rhs: true,
@@ -42,16 +46,33 @@ fn search_config() -> GenConfig {
         max_rhs_complexity: 50,
         max_length: 12,
         constants: vec![
-            Symbol::One, Symbol::Two, Symbol::Three, Symbol::Four, Symbol::Five,
-            Symbol::Six, Symbol::Seven, Symbol::Eight, Symbol::Nine,
-            Symbol::Pi, Symbol::E, Symbol::Phi,
+            Symbol::One,
+            Symbol::Two,
+            Symbol::Three,
+            Symbol::Four,
+            Symbol::Five,
+            Symbol::Six,
+            Symbol::Seven,
+            Symbol::Eight,
+            Symbol::Nine,
+            Symbol::Pi,
+            Symbol::E,
+            Symbol::Phi,
         ],
         unary_ops: vec![
-            Symbol::Neg, Symbol::Recip, Symbol::Square, Symbol::Sqrt,
-            Symbol::Ln, Symbol::Exp,
+            Symbol::Neg,
+            Symbol::Recip,
+            Symbol::Square,
+            Symbol::Sqrt,
+            Symbol::Ln,
+            Symbol::Exp,
         ],
         binary_ops: vec![
-            Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div, Symbol::Pow,
+            Symbol::Add,
+            Symbol::Sub,
+            Symbol::Mul,
+            Symbol::Div,
+            Symbol::Pow,
         ],
         min_num_type: NumType::Transcendental,
         generate_lhs: true,
@@ -132,9 +153,7 @@ fn test_pi_generation() {
     let generated = generate_all(&config, 3.14);
 
     // Should be able to find π in RHS expressions
-    let has_pi = generated.rhs.iter().any(|e| {
-        e.expr.to_postfix() == "p"
-    });
+    let has_pi = generated.rhs.iter().any(|e| e.expr.to_postfix() == "p");
     assert!(has_pi, "Should generate π as RHS");
 }
 
@@ -145,9 +164,7 @@ fn test_basic_operators() {
     let generated = generate_all(&config, 5.0);
 
     // Check for common patterns
-    let postfixes: Vec<_> = generated.rhs.iter()
-        .map(|e| e.expr.to_postfix())
-        .collect();
+    let postfixes: Vec<_> = generated.rhs.iter().map(|e| e.expr.to_postfix()).collect();
 
     // Should have single-digit constants
     assert!(postfixes.iter().any(|p| p == "1"), "Should have 1");
@@ -234,7 +251,10 @@ fn test_find_reciprocal_relations() {
 
     // Should have at least one exact or near-exact match
     let has_near_exact = matches.iter().any(|m| m.error.abs() < 1e-10);
-    assert!(has_near_exact, "Should find at least one near-exact match for target 2.5");
+    assert!(
+        has_near_exact,
+        "Should find at least one near-exact match for target 2.5"
+    );
 }
 
 /// Test: For target phi (golden ratio), should find x = phi or related equations
@@ -247,11 +267,21 @@ fn test_find_golden_ratio() {
     let (matches, _stats) = search_with_stats_and_options(phi, &config, 50, false, None);
 
     // Should find some match (not necessarily exact due to transcendental nature)
-    assert!(!matches.is_empty(), "Should find some matches for golden ratio");
+    assert!(
+        !matches.is_empty(),
+        "Should find some matches for golden ratio"
+    );
 
     // Best match should have error < 0.1 (relaxed for fast_config)
-    let best_error = matches.iter().map(|m| m.error.abs()).fold(f64::INFINITY, |a, b| a.min(b));
-    assert!(best_error < 0.1, "Best match error should be < 0.1 for phi, got {}", best_error);
+    let best_error = matches
+        .iter()
+        .map(|m| m.error.abs())
+        .fold(f64::INFINITY, |a, b| a.min(b));
+    assert!(
+        best_error < 0.1,
+        "Best match error should be < 0.1 for phi, got {}",
+        best_error
+    );
 }
 
 // ============================================================================
@@ -263,7 +293,7 @@ fn test_find_golden_ratio() {
 fn test_user_constant_in_search() {
     // Create a config with a user constant
     let user_constants = vec![UserConstant {
-        weight: 4,  // Low weight so it gets generated
+        weight: 4, // Low weight so it gets generated
         name: "g".to_string(),
         description: "test constant".to_string(),
         value: 0.57721,
@@ -283,9 +313,13 @@ fn test_user_constant_in_search() {
     let has_user_constant_match = matches.iter().any(|m| {
         let lhs_is_x = m.lhs.expr.to_postfix() == "x";
         let is_exact = m.error.abs() < 1e-10;
-        lhs_is_x && is_exact && m.rhs.expr.symbols().iter().any(|s| {
-            matches!(s, Symbol::UserConstant0)
-        })
+        lhs_is_x
+            && is_exact
+            && m.rhs
+                .expr
+                .symbols()
+                .iter()
+                .any(|s| matches!(s, Symbol::UserConstant0))
     });
 
     assert!(
@@ -328,15 +362,14 @@ fn test_multiple_user_constants() {
     // Check that we can find expressions with these values
 
     // Look for RHS with value 2.0 (from UserConstant0)
-    let has_value_2 = generated.rhs.iter().any(|e| {
-        (e.value - 2.0).abs() < 1e-10
-    });
+    let has_value_2 = generated.rhs.iter().any(|e| (e.value - 2.0).abs() < 1e-10);
     // Look for RHS with value 3.0 (from UserConstant1)
-    let has_value_3 = generated.rhs.iter().any(|e| {
-        (e.value - 3.0).abs() < 1e-10
-    });
+    let has_value_3 = generated.rhs.iter().any(|e| (e.value - 3.0).abs() < 1e-10);
 
     // At minimum, the standard constant 2 and 3 should exist
     // So this test passes even if user constant generation isn't perfect
-    assert!(has_value_2 || has_value_3, "Should have RHS with values from user constants or matching standard constants");
+    assert!(
+        has_value_2 || has_value_3,
+        "Should have RHS with values from user constants or matching standard constants"
+    );
 }

@@ -31,25 +31,42 @@ impl OutputFormat {
         match self {
             OutputFormat::Default => sym.name(),
             OutputFormat::Pretty => match sym {
-                Pi => "π", E => "ℯ", Phi => "φ",
-                Sqrt => "√", Square => "²",
-                Gamma => "γ", Plastic => "ρ", Catalan => "G",
+                Pi => "π",
+                E => "ℯ",
+                Phi => "φ",
+                Sqrt => "√",
+                Square => "²",
+                Gamma => "γ",
+                Plastic => "ρ",
+                Catalan => "G",
                 _ => sym.name(),
             },
             OutputFormat::Mathematica => match sym {
-                Pi => "Pi", E => "E", Phi => "GoldenRatio",
-                Sqrt => "Sqrt", Square => "²",
-                Ln => "Log", Exp => "Exp",
-                SinPi => "Sin[Pi*", CosPi => "Cos[Pi*", TanPi => "Tan[Pi*",
+                Pi => "Pi",
+                E => "E",
+                Phi => "GoldenRatio",
+                Sqrt => "Sqrt",
+                Square => "²",
+                Ln => "Log",
+                Exp => "Exp",
+                SinPi => "Sin[Pi*",
+                CosPi => "Cos[Pi*",
+                TanPi => "Tan[Pi*",
                 LambertW => "ProductLog",
                 Gamma => "EulerGamma",
                 _ => sym.name(),
             },
             OutputFormat::SymPy => match sym {
-                Pi => "pi", E => "E", Phi => "GoldenRatio",
-                Sqrt => "sqrt", Square => "²",
-                Ln => "log", Exp => "exp",
-                SinPi => "sin(pi*", CosPi => "cos(pi*", TanPi => "tan(pi*",
+                Pi => "pi",
+                E => "E",
+                Phi => "GoldenRatio",
+                Sqrt => "sqrt",
+                Square => "²",
+                Ln => "log",
+                Exp => "exp",
+                SinPi => "sin(pi*",
+                CosPi => "cos(pi*",
+                TanPi => "tan(pi*",
                 LambertW => "lambertw",
                 Gamma => "EulerGamma",
                 _ => sym.name(),
@@ -99,7 +116,11 @@ impl Expression {
         }
         let complexity: u16 = symbols.iter().map(|s: &Symbol| s.weight()).sum();
         let contains_x = symbols.contains(&Symbol::X);
-        Some(Self { symbols, complexity, contains_x })
+        Some(Self {
+            symbols,
+            complexity,
+            contains_x,
+        })
     }
 
     /// Get the symbols in this expression
@@ -217,9 +238,15 @@ impl Expression {
                                 (format!("{}*{}", a_s, b_s), 6)
                             }
                         }
-                        Symbol::Div => (format!("{}/{}", Self::maybe_paren(&a, 5), Self::maybe_paren(&b, 6)), 6),
-                        Symbol::Pow => (format!("{}^{}", Self::maybe_paren(&a, 9), Self::maybe_paren(&b, 8)), 8),
-                        Symbol::Root => (format!("{}\"/{}",  a, b), 8),
+                        Symbol::Div => (
+                            format!("{}/{}", Self::maybe_paren(&a, 5), Self::maybe_paren(&b, 6)),
+                            6,
+                        ),
+                        Symbol::Pow => (
+                            format!("{}^{}", Self::maybe_paren(&a, 9), Self::maybe_paren(&b, 8)),
+                            8,
+                        ),
+                        Symbol::Root => (format!("{}\"/{}", a, b), 8),
                         Symbol::Log => (format!("log_{}({})", a, b), 90),
                         Symbol::Atan2 => (format!("atan2({}, {})", a, b), 90),
                         _ => unreachable!(),
@@ -311,7 +338,12 @@ pub struct EvaluatedExpr {
 
 impl EvaluatedExpr {
     pub fn new(expr: Expression, value: f64, derivative: f64, num_type: NumType) -> Self {
-        Self { expr, value, derivative, num_type }
+        Self {
+            expr,
+            value,
+            derivative,
+            num_type,
+        }
     }
 }
 
@@ -354,7 +386,7 @@ mod tests {
     #[test]
     fn test_complexity() {
         let expr = Expression::parse("xs").unwrap(); // x^2
-        // x = 6, s (square) = 5
+                                                     // x = 6, s (square) = 5
         assert_eq!(expr.complexity(), 6 + 5);
     }
 }
