@@ -87,6 +87,7 @@ pub mod fast_match;
 pub mod gen;
 pub mod metrics;
 pub mod pool;
+#[cfg(feature = "highprec")]
 pub mod precision;
 pub mod profile;
 pub mod report;
@@ -131,3 +132,7 @@ pub use udf::UserFunction;
 pub use thresholds::{
     EXACT_MATCH_TOLERANCE, NEWTON_TOLERANCE, DEGENERATE_DERIVATIVE,
 };
+
+// High-precision types (when feature is enabled)
+#[cfg(feature = "highprec")]
+pub use precision::{HighPrec, RiesFloat, DEFAULT_PRECISION};

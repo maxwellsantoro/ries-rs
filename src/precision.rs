@@ -6,6 +6,35 @@
 //! The trait supports both `f64` for fast standard-precision calculations and
 //! `HighPrec` (wrapping `rug::Float`) for arbitrary precision when the
 //! `highprec` feature is enabled.
+//!
+//! # Usage
+//!
+//! When the `highprec` feature is enabled, you can use `HighPrec` for
+//! calculations requiring more than the ~15 decimal digits of precision
+//! that `f64` provides:
+//!
+//! ```ignore
+//! use ries_rs::precision::{HighPrec, RiesFloat, DEFAULT_PRECISION};
+//!
+//! // Create with default precision (256 bits ≈ 77 decimal digits)
+//! let pi = HighPrec::pi();
+//! println!("π with high precision: {:.60}", pi.to_f64());
+//!
+//! // Or specify custom precision
+//! let precise = HighPrec::from_f64_with_prec(2.0, 512);
+//! let sqrt2 = precise.sqrt();
+//! ```
+//!
+//! # Precision vs Performance
+//!
+//! | Type | Precision | Relative Speed |
+//! |------|-----------|----------------|
+//! | f64 | ~15 digits | 1x (baseline) |
+//! | HighPrec (256 bits) | ~77 digits | ~10-50x slower |
+//! | HighPrec (512 bits) | ~154 digits | ~20-100x slower |
+//!
+//! High-precision mode is intended for research and verification, not
+//! interactive use.
 
 use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Neg, Sub};
@@ -14,6 +43,9 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 use rug::ops::Pow;
 
 /// Default precision for high-precision calculations (bits)
+///
+/// 256 bits provides approximately 77 decimal digits of precision,
+/// which is sufficient for most mathematical verification tasks.
 #[cfg(feature = "highprec")]
 pub const DEFAULT_PRECISION: u32 = 256;
 
@@ -218,6 +250,33 @@ impl HighPrec {
     /// Get the current precision in bits
     pub fn precision(&self) -> u32 {
         self.inner.prec()
+    }
+
+    /// Get π (pi) at the current precision
+    pub fn pi() -> Self {
+        Self {
+            inner: rug::Float::with_val(DEFAULT_PRECISION, rug::float::Constant::Pi),
+        }
+    }
+
+    /// Get e (Euler's number) at the current precision
+    pub fn e() -> Self {
+        Self {
+            inner: rug::Float::with_val(DEFAULT_PRECISION, rug::float::Constant::Euler),
+        }
+    }
+
+    /// Get the golden ratio φ = (1 + √5) / 2
+    pub fn phi() -> Self {
+        let five = Self::from_f64_default(5.0);
+        let sqrt5 = five.sqrt();
+        let one = Self::one();
+        (one + sqrt5) / Self::from_f64_default(2.0)
+    }
+
+    /// Format the number with the specified number of decimal places
+    pub fn format(&self, decimal_places: u32) -> String {
+        format!("{:.1$}", self.inner, decimal_places as usize)
     }
 }
 

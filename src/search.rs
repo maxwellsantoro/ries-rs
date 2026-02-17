@@ -7,7 +7,9 @@ use crate::pool::TopKPool;
 use crate::profile::UserConstant;
 use crate::thresholds::{
     ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
-    BASE_SEARCH_RADIUS_FACTOR, MAX_SEARCH_RADIUS_FACTOR, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
+    BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_DERIVATIVE, DEGENERATE_TEST_THRESHOLD,
+    EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR, NEWTON_DIVERGENCE_THRESHOLD,
+    NEWTON_FINAL_TOLERANCE, NEWTON_TOLERANCE, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
 };
 use std::time::{Duration, Instant};
 
@@ -117,7 +119,7 @@ impl Match {
         let lhs_str = self.lhs.expr.to_infix();
         let rhs_str = self.rhs.expr.to_infix();
 
-        let error_str = if self.error.abs() < 1e-14 {
+        let error_str = if self.error.abs() < EXACT_MATCH_TOLERANCE {
             "('exact' match)".to_string()
         } else {
             let sign = if self.error >= 0.0 { "+" } else { "-" };
@@ -260,11 +262,13 @@ impl TieredExprDatabase {
     }
 
     /// Get count for a specific tier
+    #[allow(dead_code)]
     pub fn tier_count(&self, tier: ComplexityTier) -> usize {
         self.tiers[tier as usize].len()
     }
 
     /// Find expressions in a specific tier within the value range [low, high]
+    #[allow(dead_code)]
     pub fn range_in_tier(&self, tier: ComplexityTier, low: f64, high: f64) -> &[EvaluatedExpr] {
         let tier_vec = &self.tiers[tier as usize];
         let start = tier_vec.partition_point(|e| e.value < low);
@@ -389,7 +393,7 @@ fn calculate_adaptive_search_radius(
     let pool_factor = 1.0 - ADAPTIVE_POOL_FULLNESS_SCALE * pool_fraction;
 
     // Exact match factor: if we have good matches, be very selective
-    let exact_factor = if best_error < 1e-10 {
+    let exact_factor = if best_error < NEWTON_FINAL_TOLERANCE {
         ADAPTIVE_EXACT_MATCH_FACTOR
     } else {
         1.0
@@ -483,7 +487,7 @@ impl ExprDatabase {
 
             // Skip degenerate expressions: contain x but derivative is 0
             // These are trivial identities like 1^x=1, x/x=1, log_x(x)=1
-            if lhs.derivative.abs() < 1e-10 {
+            if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
                 // To distinguish true repeated roots from degenerate expressions,
                 // evaluate at a different x value. Degenerate expressions have
                 // derivative 0 everywhere; true repeated roots only at specific x.
@@ -494,8 +498,8 @@ impl ExprDatabase {
                 {
                     // Check both: derivative still ~0, AND value unchanged
                     // This catches x*(1/x)=1 type expressions
-                    let value_unchanged = (test_result.value - lhs.value).abs() < 1e-10;
-                    let deriv_still_zero = test_result.derivative.abs() < 1e-10;
+                    let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+                    let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
                     if deriv_still_zero || value_unchanged {
                         // Degenerate expression - skip
                         continue;
@@ -547,7 +551,7 @@ impl ExprDatabase {
 
                 // Skip if coarse estimate won't pass threshold
                 // Use strict gate to avoid expensive Newton calls for marginal candidates
-                let is_potentially_exact = coarse_error < 1e-10;
+                let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
                 if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
                     continue;
                 }
@@ -564,7 +568,7 @@ impl ExprDatabase {
                 ) {
                     stats.newton_success += 1;
                     let refined_error = refined_x - config.target;
-                    let is_exact = refined_error.abs() < 1e-14;
+                    let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
 
                     // Check if this is acceptable
                     if pool.would_accept(refined_error.abs(), is_exact) {
@@ -642,7 +646,7 @@ fn newton_raphson_with_constants(
     use crate::eval::evaluate_fast_with_constants_and_functions;
 
     let mut x = initial_x;
-    let tolerance = 1e-15;
+    let tolerance = NEWTON_TOLERANCE;
 
     for _ in 0..max_iterations {
         let result =
@@ -651,7 +655,7 @@ fn newton_raphson_with_constants(
         let f = result.value - rhs_value;
         let df = result.derivative;
 
-        if df.abs() < 1e-100 {
+        if df.abs() < DEGENERATE_DERIVATIVE {
             return None; // Derivative too small
         }
 
@@ -663,7 +667,7 @@ fn newton_raphson_with_constants(
         }
 
         // Check for divergence
-        if x.abs() > 1e100 || x.is_nan() {
+        if x.abs() > NEWTON_DIVERGENCE_THRESHOLD || x.is_nan() {
             return None;
         }
     }
@@ -671,7 +675,7 @@ fn newton_raphson_with_constants(
     // Check final result
     let result =
         evaluate_fast_with_constants_and_functions(lhs, x, user_constants, user_functions).ok()?;
-    if (result.value - rhs_value).abs() < 1e-10 {
+    if (result.value - rhs_value).abs() < NEWTON_FINAL_TOLERANCE {
         Some(x)
     } else {
         None
@@ -863,13 +867,13 @@ pub fn search_streaming(
         }
 
         // Skip degenerate expressions
-        if lhs.derivative.abs() < 1e-10 {
+        if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
             let test_x = target + std::f64::consts::E;
             if let Ok(test_result) =
                 crate::eval::evaluate_with_constants(&lhs.expr, test_x, &search_config.user_constants)
             {
-                let value_unchanged = (test_result.value - lhs.value).abs() < 1e-10;
-                let deriv_still_zero = test_result.derivative.abs() < 1e-10;
+                let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+                let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
                 if deriv_still_zero || value_unchanged {
                     continue;
                 }
@@ -1233,7 +1237,7 @@ fn test_xx_match_directly() {
         let f = result.value - pi_sq.value;
         let df = result.derivative;
         println!("  NR iter {}: x={:.10}, f={:.10}, df={:.6}", i, x, f, df);
-        if df.abs() < 1e-100 {
+        if df.abs() < DEGENERATE_DERIVATIVE {
             println!("  Derivative too small!");
             break;
         }

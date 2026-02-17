@@ -456,7 +456,9 @@ fn eval_constant_with_user(sym: Symbol, x: f64, user_constants: &[UserConstant])
                     StackEntry::constant(0.0, NumType::Transcendental)
                 })
         }
-        _ => unreachable!("Not a constant: {:?}", sym),
+        // This should never happen if the caller correctly filters by seft()
+        // But return a safe default instead of panicking
+        _ => StackEntry::constant(0.0, NumType::Transcendental),
     }
 }
 
@@ -651,15 +653,18 @@ fn eval_unary(sym: Symbol, a: StackEntry) -> Result<StackEntry, EvalError> {
         }
 
         // User functions are handled at the main evaluation loop level, not here
-        // If we reach this point, it's a bug
+        // If we reach this point, return an error
         UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 | UserFunction4
         | UserFunction5 | UserFunction6 | UserFunction7 | UserFunction8 | UserFunction9
         | UserFunction10 | UserFunction11 | UserFunction12 | UserFunction13 | UserFunction14
         | UserFunction15 => {
-            unreachable!("User functions should be handled at evaluation loop level")
+            // This indicates a bug in the evaluation loop - user functions should be
+            // handled before calling eval_unary
+            return Err(EvalError::Invalid);
         }
 
-        _ => unreachable!("Not a unary operator: {:?}", sym),
+        // Non-unary symbols should never be passed to this function
+        _ => return Err(EvalError::Invalid),
     };
 
     Ok(StackEntry::new(val, deriv, num_type))
@@ -791,7 +796,9 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             (val, deriv, NumType::Transcendental)
         }
 
-        _ => unreachable!("Not a binary operator: {:?}", sym),
+
+        // Non-binary symbols should never be passed to this function
+        _ => return Err(EvalError::Invalid),
     };
 
     Ok(StackEntry::new(val, deriv, num_type))
