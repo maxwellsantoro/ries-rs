@@ -5,10 +5,18 @@
 mod eval;
 mod expr;
 mod gen;
+mod metrics;
+mod pool;
+mod profile;
+mod report;
 mod search;
 mod symbol;
+mod udf;
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
+use profile::Profile;
+use report::{Report, ReportConfig};
+use std::path::PathBuf;
 use std::time::Instant;
 
 /// Find algebraic equations given their solution
@@ -18,8 +26,8 @@ use std::time::Instant;
 #[command(version = "0.1.0")]
 #[command(about = "Find algebraic equations given their solution", long_about = None)]
 struct Args {
-    /// Target value to find equations for
-    target: f64,
+    /// Target value to find equations for (optional if using --eval-expression)
+    target: Option<f64>,
 
     /// Search level (each increment ≈ 10x more equations)
     /// Level 0 ≈ 89M equations, Level 2 ≈ 11B, Level 5 ≈ 15T
@@ -46,6 +54,23 @@ struct Args {
     #[arg(short = 'S', long)]
     only_symbols: Option<String>,
 
+    /// Operator count limits (e.g., "-O+-" = one each of + and -)
+    /// Format: each character is a symbol, prefix with number for count (e.g., "-O2+-" = two + and one -)
+    #[arg(short = 'O', long)]
+    op_limits: Option<String>,
+
+    /// Only use these symbols on RHS (right-hand side)
+    #[arg(long = "S-RHS")]
+    only_symbols_rhs: Option<String>,
+
+    /// Exclude these symbols on RHS
+    #[arg(long = "N-RHS")]
+    exclude_rhs: Option<String>,
+
+    /// Custom symbol weights (e.g., ":W:20" sets Lambert W weight to 20)
+    #[arg(long)]
+    symbol_weights: Option<String>,
+
     /// Restrict to algebraic solutions
     #[arg(short = 'a', long)]
     algebraic: bool,
@@ -65,26 +90,345 @@ struct Args {
     /// Use parallel search (default: true)
     #[arg(long, default_value = "true")]
     parallel: bool,
+
+    /// Use report mode with categorized output (default: true)
+    /// Shows top matches in each category: exact, best, elegant, interesting, stable
+    #[arg(long, default_value_t = true, action = ArgAction::Set)]
+    report: bool,
+
+    /// Classic/sniper mode: single list sorted by complexity (like original RIES)
+    /// Implies --stop-at-exact and aggressive early exit for speed
+    #[arg(long)]
+    classic: bool,
+
+    /// Output format for expressions
+    /// Options: default, pretty (Unicode), mathematica, sympy
+    #[arg(short = 'F', long, default_value = "default")]
+    format: String,
+
+    /// Number of matches per category in report mode
+    #[arg(short = 'k', long = "top-k", default_value = "8")]
+    top_k: usize,
+
+    /// Exclude stability category from the report
+    #[arg(long)]
+    no_stable: bool,
+
+    /// Show detailed search statistics
+    #[arg(long)]
+    stats: bool,
+
+    /// Stop search when an exact match is found
+    #[arg(long)]
+    stop_at_exact: bool,
+
+    /// Stop search when error goes below this threshold
+    #[arg(long)]
+    stop_below: Option<f64>,
+
+    /// Load profile file for custom constants and symbol settings
+    #[arg(short = 'p', long)]
+    profile: Option<PathBuf>,
+
+    /// Include additional profile file (can be used multiple times)
+    #[arg(long)]
+    include: Vec<PathBuf>,
+
+    /// Add a user-defined constant
+    /// Format: "weight:name:description:value"
+    /// Example: -X "4:gamma:Euler's constant:0.5772156649"
+    #[arg(short = 'X', long = "user-constant")]
+    user_constant: Vec<String>,
+
+    /// Define a custom operation/function
+    /// Format: "weight:name:description:formula"
+    /// Formula uses postfix notation with | for dup and @ for swap
+    /// Example: --define "4:sinh:hyperbolic sine:E|r-2/"
+    #[arg(long)]
+    define: Vec<String>,
+
+    /// Maximum acceptable error for matches (default: 1.0)
+    #[arg(long)]
+    max_match_distance: Option<f64>,
+
+    /// Use one-sided mode: only generate RHS expressions, compare directly to target
+    #[arg(long)]
+    one_sided: bool,
+
+    /// Skip Newton-Raphson refinement of matches
+    #[arg(long)]
+    no_refinement: bool,
+
+    /// Evaluate an expression at a given x value and exit
+    /// Example: --eval-expression "xq" --at 2.5
+    #[arg(long)]
+    eval_expression: Option<String>,
+
+    /// X value for --eval-expression
+    #[arg(long)]
+    at: Option<f64>,
+
+    /// Maximum Newton-Raphson iterations for root refinement (default: 15)
+    #[arg(long, default_value = "15")]
+    newton_iterations: usize,
+
+    /// Threshold for pruning LHS expressions with near-zero values (default: 1e-4)
+    #[arg(long)]
+    zero_threshold: Option<f64>,
+}
+
+/// Parse a user constant from CLI argument
+/// Format: "weight:name:description:value"
+fn parse_user_constant_from_cli(profile: &mut Profile, spec: &str) -> Result<(), String> {
+    use profile::UserConstant;
+    use symbol::NumType;
+
+    let parts: Vec<&str> = spec.split(':').collect();
+    if parts.len() != 4 {
+        return Err(format!("Expected 4 colon-separated parts, got {}", parts.len()));
+    }
+
+    let weight: u16 = parts[0].parse()
+        .map_err(|_| format!("Invalid weight: {}", parts[0]))?;
+
+    let name = parts[1].to_string();
+    if name.is_empty() {
+        return Err("Constant name cannot be empty".to_string());
+    }
+
+    let description = parts[2].to_string();
+
+    let value: f64 = parts[3].parse()
+        .map_err(|_| format!("Invalid value: {}", parts[3]))?;
+
+    // Determine numeric type based on value characteristics
+    let num_type = if value.fract() == 0.0 && value.abs() < 1e10 {
+        NumType::Integer
+    } else {
+        NumType::Transcendental
+    };
+
+    profile.constants.push(UserConstant {
+        weight,
+        name,
+        description,
+        value,
+        num_type,
+    });
+
+    Ok(())
+}
+
+/// Parse a user-defined function from CLI argument
+/// Format: "weight:name:description:formula"
+fn parse_user_function_from_cli(profile: &mut Profile, spec: &str) -> Result<(), String> {
+    let udf = udf::UserFunction::parse(spec)?;
+    profile.functions.push(udf);
+    Ok(())
+}
+
+/// Build a GenConfig from CLI options
+fn build_gen_config(
+    max_lhs_complexity: u16,
+    max_rhs_complexity: u16,
+    min_type: symbol::NumType,
+    exclude: Option<&str>,
+    only_symbols: Option<&str>,
+    exclude_rhs: Option<&str>,
+    only_symbols_rhs: Option<&str>,
+    op_limits: Option<&str>,
+    user_constants: Vec<profile::UserConstant>,
+    user_functions: Vec<udf::UserFunction>,
+) -> gen::GenConfig {
+    let mut config = gen::GenConfig::default();
+    config.max_lhs_complexity = max_lhs_complexity;
+    config.max_rhs_complexity = max_rhs_complexity;
+    config.min_num_type = min_type;
+    config.user_constants = user_constants.clone();
+    config.user_functions = user_functions.clone();
+
+    // Helper to filter symbols
+    fn filter_symbols(
+        symbols: &[symbol::Symbol],
+        allowed: Option<&std::collections::HashSet<u8>>,
+        excluded: Option<&std::collections::HashSet<u8>>,
+    ) -> Vec<symbol::Symbol> {
+        let mut result: Vec<symbol::Symbol> = symbols.to_vec();
+
+        if let Some(allow_set) = allowed {
+            result.retain(|s| allow_set.contains(&(*s as u8)));
+        }
+
+        if let Some(excl_set) = excluded {
+            result.retain(|s| !excl_set.contains(&(*s as u8)));
+        }
+
+        result
+    }
+
+    // Parse symbol sets
+    let allowed: Option<std::collections::HashSet<u8>> = only_symbols.map(|s| s.bytes().collect());
+    let excluded: Option<std::collections::HashSet<u8>> = exclude.map(|s| s.bytes().collect());
+    // RHS-specific filtering (for future use when GenConfig supports separate RHS symbols)
+    let _allowed_rhs: Option<std::collections::HashSet<u8>> = only_symbols_rhs.map(|s| s.bytes().collect());
+    let _excluded_rhs: Option<std::collections::HashSet<u8>> = exclude_rhs.map(|s| s.bytes().collect());
+
+    // Parse operator limits (simplified - just filter to allowed operators)
+    let op_limit_allowed: Option<std::collections::HashSet<u8>> = op_limits.map(|s| {
+        let mut set = std::collections::HashSet::new();
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            // Check for numeric prefix (e.g., "2+" means two + signs)
+            // For now we just track which operators are allowed, not the count
+            if chars[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < chars.len() {
+                set.insert(chars[i] as u8);
+                i += 1;
+            }
+        }
+        set
+    });
+
+    // Apply LHS symbol filtering
+    config.constants = filter_symbols(symbol::Symbol::constants(), allowed.as_ref(), excluded.as_ref());
+    config.unary_ops = filter_symbols(symbol::Symbol::unary_ops(), allowed.as_ref(), excluded.as_ref());
+    config.binary_ops = filter_symbols(symbol::Symbol::binary_ops(), allowed.as_ref(), excluded.as_ref());
+
+    // Apply operator limits if specified
+    if let Some(ref op_allowed) = op_limit_allowed {
+        config.unary_ops.retain(|s| op_allowed.contains(&(*s as u8)));
+        config.binary_ops.retain(|s| op_allowed.contains(&(*s as u8)));
+    }
+
+    // Add user constant symbols to the constants pool
+    // Map each user constant to its corresponding symbol (UserConstant0, UserConstant1, etc.)
+    for (idx, _uc) in user_constants.iter().enumerate() {
+        if idx < 16 {
+            if let Some(sym) = symbol::Symbol::from_byte(128 + idx as u8) {
+                // Only add if not excluded
+                let is_excluded = excluded.as_ref().map_or(false, |excl| excl.contains(&(128 + idx as u8)));
+                if !is_excluded {
+                    config.constants.push(sym);
+                }
+            }
+        }
+    }
+
+    // Add user function symbols to the unary_ops pool
+    // Map each user function to its corresponding symbol (UserFunction0, UserFunction1, etc.)
+    for (idx, _uf) in user_functions.iter().enumerate() {
+        if idx < 16 {
+            if let Some(sym) = symbol::Symbol::from_byte(144 + idx as u8) {
+                // Only add if not excluded
+                let is_excluded = excluded.as_ref().map_or(false, |excl| excl.contains(&(144 + idx as u8)));
+                if !is_excluded {
+                    config.unary_ops.push(sym);
+                }
+            }
+        }
+    }
+
+    // Note: RHS-specific filtering would require extending GenConfig
+    // For now, RHS uses the same symbols as LHS
+
+    config
+}
+
+/// Evaluate an expression string and return the result
+fn eval_expression(
+    expr_str: &str,
+    x: f64,
+    user_constants: &[profile::UserConstant],
+    user_functions: &[udf::UserFunction],
+) -> Result<eval::EvalResult, eval::EvalError> {
+    use expr::Expression;
+    let expr = Expression::parse(expr_str)
+        .ok_or(eval::EvalError::Invalid)?;
+    eval::evaluate_with_constants_and_functions(&expr, x, user_constants, user_functions)
 }
 
 fn main() {
     let args = Args::parse();
 
+    // Load profile early (needed for both --eval-expression and search modes)
+    let mut profile = Profile::load_from(args.profile.as_deref());
+
+    // Include additional profiles
+    for include_path in &args.include {
+        if let Ok(included) = Profile::from_file(include_path) {
+            profile = profile.merge(included);
+        }
+    }
+
+    // Parse user constants from CLI
+    for constant_spec in &args.user_constant {
+        if let Err(e) = parse_user_constant_from_cli(&mut profile, constant_spec) {
+            eprintln!("Warning: Failed to parse user constant '{}': {}", constant_spec, e);
+        }
+    }
+
+    // Parse user-defined functions from CLI
+    for func_spec in &args.define {
+        if let Err(e) = parse_user_function_from_cli(&mut profile, func_spec) {
+            eprintln!("Warning: Failed to parse user function '{}': {}", func_spec, e);
+        }
+    }
+
+    // Handle --eval-expression mode (evaluate and exit)
+    if let Some(expr_str) = &args.eval_expression {
+        let x = args.at.unwrap_or(1.0);
+        match eval_expression(expr_str, x, &profile.constants, &profile.functions) {
+            Ok(result) => {
+                println!("Expression: {}", expr_str);
+                println!("At x = {}", x);
+                println!("Value = {:.15}", result.value);
+                println!("Derivative = {:.15}", result.derivative);
+            }
+            Err(e) => {
+                eprintln!("Error evaluating expression: {:?}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    // Target is required when not using --eval-expression
+    let target = match args.target {
+        Some(t) => t,
+        None => {
+            eprintln!("Error: TARGET is required unless using --eval-expression");
+            std::process::exit(1);
+        }
+    };
+
     // Print header
     println!();
     println!(
         "   Your target value: T = {:<20}  ries-rs v0.1.0",
-        format_value(args.target)
+        format_value(target)
     );
     println!();
 
-    // Convert level to complexity limit
-    // Level 0 ≈ 50, Level 2 ≈ 75 (default), Level 5 ≈ 130
-    let base_complexity: f32 = 35.0;
-    let max_complexity = (base_complexity * (1.2_f32).powf(args.level + 2.0)) as u16;
+    // Convert level to complexity limits
+    // After weight reduction (symbols now ~2.3x cheaper), recalibrated:
+    // - Much lower base values to restore search space size
+    // - RHS slightly higher than LHS (constant eval is cheaper than Newton)
+    // Level 0: LHS 10, RHS 12 (minimal search)
+    // Level 3: LHS 22, RHS 24
+    // Level 5: LHS 30, RHS 32
+    // Level 7: LHS 38, RHS 40
+    // Level 11: LHS 54, RHS 56 (gem formula 24·√atan(1/2) - 6/e = 55)
+    let base_lhs: f32 = 10.0;
+    let base_rhs: f32 = 12.0;
+    let level_factor = 4.0 * args.level;
+    let max_lhs_complexity = (base_lhs + level_factor) as u16;
+    let max_rhs_complexity = (base_rhs + level_factor) as u16;
 
     // Determine numeric type restriction
-    let _min_type = if args.integer {
+    let min_type = if args.integer {
         symbol::NumType::Integer
     } else if args.rational {
         symbol::NumType::Rational
@@ -96,39 +440,122 @@ fn main() {
         symbol::NumType::Transcendental
     };
 
+    // Build generation config with CLI options
+    let gen_config = build_gen_config(
+        max_lhs_complexity,
+        max_rhs_complexity,
+        min_type,
+        args.exclude.as_deref(),
+        args.only_symbols.as_deref(),
+        args.exclude_rhs.as_deref(),
+        args.only_symbols_rhs.as_deref(),
+        args.op_limits.as_deref(),
+        profile.constants,    // Pass user constants from profile
+        profile.functions,    // Pass user functions from profile
+    );
+
+    // Determine pool size based on mode
+    let use_report = args.report && !args.classic;
+    let effective_max_matches = if use_report {
+        args.max_matches.max(args.top_k * 10)
+    } else {
+        args.max_matches
+    };
+    // Use 10x oversampling for report mode (reduced from 25x with stricter Newton gate)
+    let pool_size = if use_report {
+        effective_max_matches * 10
+    } else {
+        effective_max_matches
+    };
+
+    // Classic mode = "sniper mode": stop early like original RIES
+    // In classic mode, enable stop_at_exact by default unless user explicitly disabled it
+    let stop_at_exact = if args.classic && !args.stop_at_exact {
+        // Classic mode defaults to early exit on exact match
+        true
+    } else {
+        args.stop_at_exact
+    };
+
+    // In classic mode without explicit stop_below, use a tight threshold
+    let stop_below = if args.classic && args.stop_below.is_none() {
+        // Stop when we get a very good match (relative to target magnitude)
+        Some(1e-10_f64.max(target.abs() * 1e-12))
+    } else {
+        args.stop_below
+    };
+
     let start = Instant::now();
 
-    // Perform search
+    // Perform search with optional stats collection and early exit
     #[cfg(feature = "parallel")]
-    let matches = if args.parallel {
-        search::search_parallel(args.target, max_complexity, args.max_matches)
+    let (matches, stats) = if args.parallel {
+        search::search_parallel_with_stats_and_options(
+            target,
+            &gen_config,
+            pool_size,
+            stop_at_exact,
+            stop_below,
+        )
     } else {
-        search::search(args.target, max_complexity, args.max_matches)
+        search::search_with_stats_and_options(
+            target,
+            &gen_config,
+            pool_size,
+            stop_at_exact,
+            stop_below,
+        )
     };
 
     #[cfg(not(feature = "parallel"))]
-    let matches = search::search(args.target, max_complexity, args.max_matches);
+    let (matches, stats) = search::search_with_stats_and_options(
+        target,
+        &gen_config,
+        pool_size,
+        stop_at_exact,
+        stop_below,
+    );
 
     let elapsed = start.elapsed();
+
+    // Print expression counts (always shown)
+    println!(
+        "Generated {} LHS and {} RHS expressions",
+        stats.lhs_count, stats.rhs_count
+    );
 
     // Display matches
     if matches.is_empty() {
         println!("   No matches found.");
-    } else {
-        for m in &matches {
+    } else if !use_report {
+        // Classic mode: single list sorted by complexity
+        let output_format = parse_format(&args.format);
+        for m in matches.iter().take(effective_max_matches) {
             if args.absolute {
-                print_match_absolute(m, args.solve);
+                print_match_absolute(m, args.solve, output_format);
             } else {
-                print_match_relative(m, args.solve);
+                print_match_relative(m, args.solve, output_format);
             }
         }
-    }
 
-    // Print footer
-    println!();
-    if matches.len() >= args.max_matches {
-        let next_level = (args.level + 1.0) as i32;
-        println!("                  (for more results, use the option '-l{}')", next_level);
+        // Print footer
+        println!();
+        if matches.len() >= effective_max_matches {
+            let next_level = (args.level + 1.0) as i32;
+            println!("                  (for more results, use the option '-l{}')", next_level);
+        }
+    } else {
+        // Report mode: categorized output
+        let mut report_config = ReportConfig::default()
+            .with_top_k(args.top_k)
+            .with_target(target);
+
+        if args.no_stable {
+            report_config = report_config.without_stable();
+        }
+
+        let report = Report::generate(matches, target, &report_config);
+        report.print(args.absolute, args.solve);
     }
 
     println!();
@@ -136,6 +563,11 @@ fn main() {
         "  Search completed in {:.3}s",
         elapsed.as_secs_f64()
     );
+
+    // Print detailed stats if requested
+    if args.stats {
+        stats.print();
+    }
 }
 
 fn format_value(v: f64) -> String {
@@ -146,9 +578,19 @@ fn format_value(v: f64) -> String {
     }
 }
 
-fn print_match_relative(m: &search::Match, solve: bool) {
-    let lhs_str = m.lhs.expr.to_infix();
-    let rhs_str = m.rhs.expr.to_infix();
+/// Parse output format from string
+fn parse_format(s: &str) -> expr::OutputFormat {
+    match s.to_lowercase().as_str() {
+        "pretty" | "unicode" => expr::OutputFormat::Pretty,
+        "mathematica" | "math" | "mma" => expr::OutputFormat::Mathematica,
+        "sympy" | "python" => expr::OutputFormat::SymPy,
+        _ => expr::OutputFormat::Default,
+    }
+}
+
+fn print_match_relative(m: &search::Match, solve: bool, format: expr::OutputFormat) {
+    let lhs_str = m.lhs.expr.to_infix_with_format(format);
+    let rhs_str = m.rhs.expr.to_infix_with_format(format);
 
     let error_str = if m.error.abs() < 1e-14 {
         "('exact' match)".to_string()
@@ -171,9 +613,9 @@ fn print_match_relative(m: &search::Match, solve: bool) {
     }
 }
 
-fn print_match_absolute(m: &search::Match, solve: bool) {
-    let lhs_str = m.lhs.expr.to_infix();
-    let rhs_str = m.rhs.expr.to_infix();
+fn print_match_absolute(m: &search::Match, solve: bool, format: expr::OutputFormat) {
+    let lhs_str = m.lhs.expr.to_infix_with_format(format);
+    let rhs_str = m.rhs.expr.to_infix_with_format(format);
 
     if solve {
         println!(

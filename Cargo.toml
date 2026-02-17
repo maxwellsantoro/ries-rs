@@ -7,6 +7,14 @@ description = "Find algebraic equations given their solution - Rust implementati
 license = "GPL-3.0-or-later"
 repository = "https://github.com/clsn/ries"
 
+[lib]
+name = "ries_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ries-rs"
+path = "src/main.rs"
+
 [features]
 default = ["parallel"]
 parallel = ["rayon"]
@@ -15,6 +23,9 @@ highprec = ["rug"]
 [dependencies]
 # CLI
 clap = { version = "4.5", features = ["derive"] }
+
+# Directories (for profile loading)
+dirs = "5.0"
 
 # Parallelization
 rayon = { version = "1.10", optional = true }
