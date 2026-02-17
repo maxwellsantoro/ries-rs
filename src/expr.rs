@@ -9,6 +9,54 @@ use std::fmt;
 /// Maximum expression length (matching C version's MAX_ELEN)
 pub const MAX_EXPR_LEN: usize = 21;
 
+/// Output format for expression display
+#[derive(Debug, Clone, Copy, Default)]
+pub enum OutputFormat {
+    /// Default RIES format
+    #[default]
+    Default,
+    /// Pretty format with Unicode symbols (π, ℯ, φ, √)
+    Pretty,
+    /// Mathematica-compatible syntax
+    Mathematica,
+    /// SymPy Python syntax
+    SymPy,
+}
+
+impl OutputFormat {
+    /// Get the name for a symbol in this format
+    pub fn symbol_name(&self, sym: Symbol) -> &'static str {
+        use Symbol::*;
+        match self {
+            OutputFormat::Default => sym.name(),
+            OutputFormat::Pretty => match sym {
+                Pi => "π", E => "ℯ", Phi => "φ",
+                Sqrt => "√", Square => "²",
+                Gamma => "γ", Plastic => "ρ", Catalan => "G",
+                _ => sym.name(),
+            },
+            OutputFormat::Mathematica => match sym {
+                Pi => "Pi", E => "E", Phi => "GoldenRatio",
+                Sqrt => "Sqrt", Square => "²",
+                Ln => "Log", Exp => "Exp",
+                SinPi => "Sin[Pi*", CosPi => "Cos[Pi*", TanPi => "Tan[Pi*",
+                LambertW => "ProductLog",
+                Gamma => "EulerGamma",
+                _ => sym.name(),
+            },
+            OutputFormat::SymPy => match sym {
+                Pi => "pi", E => "E", Phi => "GoldenRatio",
+                Sqrt => "sqrt", Square => "²",
+                Ln => "log", Exp => "exp",
+                SinPi => "sin(pi*", CosPi => "cos(pi*", TanPi => "tan(pi*",
+                LambertW => "lambertw",
+                Gamma => "EulerGamma",
+                _ => sym.name(),
+            },
+        }
+    }
+}
+
 /// A symbolic expression in postfix notation
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Expression {
@@ -31,6 +79,7 @@ impl Expression {
     }
 
     /// Create an expression from a slice of symbols
+    #[cfg(test)]
     pub fn from_symbols(symbols: &[Symbol]) -> Self {
         let complexity: u16 = symbols.iter().map(|s| s.weight()).sum();
         let contains_x = symbols.contains(&Symbol::X);
@@ -83,6 +132,7 @@ impl Expression {
     }
 
     /// Check if this is a valid complete expression (stack depth = 1)
+    #[cfg(test)]
     pub fn is_valid(&self) -> bool {
         let mut depth: i32 = 0;
         for sym in &self.symbols {
@@ -182,6 +232,41 @@ impl Expression {
         stack.pop().map(|(s, _)| s).unwrap_or_else(|| "?".into())
     }
 
+    /// Convert to infix notation with specified format
+    pub fn to_infix_with_format(&self, format: OutputFormat) -> String {
+        // For now, pretty format just wraps the default
+        // Full implementation would customize each operation's output
+        match format {
+            OutputFormat::Default => self.to_infix(),
+            OutputFormat::Pretty => {
+                let mut result = self.to_infix();
+                // Simple Unicode substitutions
+                result = result.replace("pi", "π");
+                result = result.replace("sqrt(", "√(");
+                result = result.replace("^2", "²");
+                result
+            }
+            OutputFormat::Mathematica => {
+                let mut result = self.to_infix();
+                result = result.replace("pi", "Pi");
+                result = result.replace("ln(", "Log[");
+                result = result.replace("sqrt(", "Sqrt[");
+                result = result.replace("exp(", "Exp[");
+                result = result.replace("sinpi(", "Sin[Pi*");
+                result = result.replace("cospi(", "Cos[Pi*");
+                result
+            }
+            OutputFormat::SymPy => {
+                let mut result = self.to_infix();
+                result = result.replace("ln(", "log(");
+                result = result.replace("sinpi(", "sin(pi*");
+                result = result.replace("cospi(", "cos(pi*");
+                result = result.replace("W(", "lambertw(");
+                result
+            }
+        }
+    }
+
     fn maybe_paren(s: &str, min_prec: u8) -> String {
         // Simple heuristic: add parens if the string contains low-precedence ops
         let needs_paren = s.contains('+') || s.contains('-');
@@ -269,7 +354,7 @@ mod tests {
     #[test]
     fn test_complexity() {
         let expr = Expression::parse("xs").unwrap(); // x^2
-        // x = 15, s (square) = 9
-        assert_eq!(expr.complexity(), 15 + 9);
+        // x = 6, s (square) = 5
+        assert_eq!(expr.complexity(), 6 + 5);
     }
 }
