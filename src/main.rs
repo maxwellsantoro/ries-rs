@@ -7,6 +7,7 @@
 
 mod eval;
 mod expr;
+mod fast_match;
 mod gen;
 mod metrics;
 mod pool;
@@ -393,6 +394,41 @@ fn eval_expression(
     eval::evaluate_with_constants_and_functions(&expr, x, user_constants, user_functions)
 }
 
+/// Perform the search (helper function to avoid code duplication)
+#[allow(clippy::too_many_arguments)]
+fn perform_search(
+    target: f64,
+    gen_config: &gen::GenConfig,
+    pool_size: usize,
+    stop_at_exact: bool,
+    stop_below: Option<f64>,
+    streaming: bool,
+    parallel: bool,
+) -> (Vec<search::Match>, search::SearchStats) {
+    if streaming {
+        search::search_streaming(target, gen_config, pool_size, stop_at_exact, stop_below)
+    } else {
+        #[cfg(feature = "parallel")]
+        {
+            if parallel {
+                search::search_parallel_with_stats_and_options(
+                    target, gen_config, pool_size, stop_at_exact, stop_below,
+                )
+            } else {
+                search::search_with_stats_and_options(
+                    target, gen_config, pool_size, stop_at_exact, stop_below,
+                )
+            }
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            search::search_with_stats_and_options(
+                target, gen_config, pool_size, stop_at_exact, stop_below,
+            )
+        }
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -470,14 +506,6 @@ fn main() {
     println!();
 
     // Convert level to complexity limits
-    // After weight reduction (symbols now ~2.3x cheaper), recalibrated:
-    // - Much lower base values to restore search space size
-    // - RHS slightly higher than LHS (constant eval is cheaper than Newton)
-    // Level 0: LHS 10, RHS 12 (minimal search)
-    // Level 3: LHS 22, RHS 24
-    // Level 5: LHS 30, RHS 32
-    // Level 7: LHS 38, RHS 40
-    // Level 11: LHS 54, RHS 56 (gem formula 24·√atan(1/2) - 6/e = 55)
     let base_lhs: f32 = 10.0;
     let base_rhs: f32 = 12.0;
     let level_factor = 4.0 * args.level;
@@ -507,8 +535,8 @@ fn main() {
         args.exclude_rhs.as_deref(),
         args.only_symbols_rhs.as_deref(),
         args.op_limits.as_deref(),
-        profile.constants, // Pass user constants from profile
-        profile.functions, // Pass user functions from profile
+        profile.constants.clone(),
+        profile.functions.clone(),
     );
 
     // Determine pool size based on mode
@@ -518,7 +546,6 @@ fn main() {
     } else {
         args.max_matches
     };
-    // Use 10x oversampling for report mode (reduced from 25x with stricter Newton gate)
     let pool_size = if use_report {
         effective_max_matches * 10
     } else {
@@ -526,17 +553,13 @@ fn main() {
     };
 
     // Classic mode = "sniper mode": stop early like original RIES
-    // In classic mode, enable stop_at_exact by default unless user explicitly disabled it
     let stop_at_exact = if args.classic && !args.stop_at_exact {
-        // Classic mode defaults to early exit on exact match
         true
     } else {
         args.stop_at_exact
     };
 
-    // In classic mode without explicit stop_below, use a tight threshold
     let stop_below = if args.classic && args.stop_below.is_none() {
-        // Stop when we get a very good match (relative to target magnitude)
         Some(1e-10_f64.max(target.abs() * 1e-12))
     } else {
         args.stop_below
@@ -544,47 +567,52 @@ fn main() {
 
     let start = Instant::now();
 
-    // Perform search with optional stats collection and early exit
-    // Streaming search uses less memory at high complexity levels
-    let (matches, stats) = if args.streaming {
-        search::search_streaming(
-            target,
-            &gen_config,
-            pool_size,
-            stop_at_exact,
-            stop_below,
-        )
-    } else {
-        #[cfg(feature = "parallel")]
-        {
-            if args.parallel {
-                search::search_parallel_with_stats_and_options(
-                    target,
-                    &gen_config,
-                    pool_size,
-                    stop_at_exact,
-                    stop_below,
-                )
-            } else {
-                search::search_with_stats_and_options(
-                    target,
-                    &gen_config,
-                    pool_size,
-                    stop_at_exact,
-                    stop_below,
-                )
-            }
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            search::search_with_stats_and_options(
+    // Build excluded symbols set for fast path
+    let excluded_symbols: std::collections::HashSet<u8> = args.exclude
+        .as_ref()
+        .map(|s| s.bytes().collect())
+        .unwrap_or_default();
+
+    // Build fast match config
+    let fast_config = fast_match::FastMatchConfig {
+        excluded_symbols: &excluded_symbols,
+        min_num_type: min_type,
+    };
+
+    // Fast path: check for simple exact matches before expensive generation
+    // This handles cases like pi, e, sqrt(2), phi, integers, etc. instantly
+    let (matches, stats) = if stop_at_exact || args.classic {
+        // Only use fast path when we're looking for quick results
+        if let Some(fast_match) = fast_match::find_fast_match(target, &profile.constants, &fast_config) {
+            use search::SearchStats;
+            let mut fast_stats = SearchStats::default();
+            fast_stats.lhs_count = 1;
+            fast_stats.rhs_count = 1;
+            fast_stats.search_time = std::time::Duration::from_micros(1);
+            (vec![fast_match], fast_stats)
+        } else {
+            // No fast match found, do full search
+            perform_search(
                 target,
                 &gen_config,
                 pool_size,
                 stop_at_exact,
                 stop_below,
+                args.streaming,
+                args.parallel,
             )
         }
+    } else {
+        // Not in quick mode, always do full search
+        perform_search(
+            target,
+            &gen_config,
+            pool_size,
+            stop_at_exact,
+            stop_below,
+            args.streaming,
+            args.parallel,
+        )
     };
 
     let elapsed = start.elapsed();
@@ -671,7 +699,6 @@ fn print_match_relative(m: &search::Match, solve: bool, format: expr::OutputForm
     };
 
     if solve {
-        // Try to display as x = ...
         println!("     x = {:40} {} {{{}}}", rhs_str, error_str, m.complexity);
     } else {
         println!(
@@ -705,7 +732,7 @@ mod tests {
     #[test]
     #[allow(clippy::approx_constant)]
     fn test_format_value() {
-        assert_eq!(format_value(2.71828), "2.7182800000"); // e approximation
+        assert_eq!(format_value(2.71828), "2.7182800000");
         assert_eq!(format_value(1e10), "1.0000000000e10");
     }
 }

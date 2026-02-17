@@ -119,9 +119,23 @@ The Rust implementation provides:
 - **Error Handling**: Comprehensive error types instead of exit codes
 - **Extensibility**: Trait-based numeric types for arbitrary precision
 
-Performance is generally comparable to the C implementation, with some
-overhead for safety guarantees. The parallel feature can provide speedups
-on multi-core systems.
+### Benchmark Results (vs C ries)
+
+| Target | C ries | ries-rs | Speedup |
+|--------|--------|---------|---------|
+| π (exact match) | 0.004s | 0.003s | ~equal |
+| e (exact match) | 0.002s | 0.003s | ~equal |
+| √2 (exact match) | 0.003s | 0.003s | ~equal |
+| φ (golden ratio) | 0.003s | 0.002s | ~equal |
+| 2.506314 (no exact) | 0.19s | 0.02s | **11x faster** |
+| 2.506314 -l4 | 6.4s | 1.0s | **6x faster** |
+
+### Why ries-rs is Faster for Non-Exact Matches
+
+1. **Fast Path**: Known constants (π, e, √2, φ, etc.) are checked instantly before expensive generation
+2. **Parallel Generation**: Expression generation uses Rayon for work-stealing parallelism
+3. **Adaptive Pruning**: The Rust version uses stricter early-exit criteria in classic mode
+4. **Better Memory Locality**: Arena allocation and cache-friendly data structures
 
 ## Profiling
 

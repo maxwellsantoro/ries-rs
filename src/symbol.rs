@@ -389,6 +389,43 @@ impl Symbol {
         }
     }
 
+    /// Get the inherent numeric type of this symbol (for constants)
+    /// Returns Transcendental for operators (since they can produce any type)
+    pub const fn inherent_type(self) -> NumType {
+        use NumType::*;
+        use Symbol::*;
+
+        match self {
+            // Integer constants
+            One | Two | Three | Four | Five | Six | Seven | Eight | Nine => Integer,
+
+            // Transcendental constants
+            Pi | E => Transcendental,
+
+            // Algebraic constant
+            Phi => Algebraic,
+
+            // New constants
+            Gamma => Transcendental,
+            Plastic => Algebraic,
+            Apery => Transcendental,
+            Catalan => Transcendental,
+
+            // Variable
+            X => Transcendental,
+
+            // User constants - assume transcendental (most general)
+            UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 | UserConstant4
+            | UserConstant5 | UserConstant6 | UserConstant7 | UserConstant8 | UserConstant9
+            | UserConstant10 | UserConstant11 | UserConstant12 | UserConstant13
+            | UserConstant14 | UserConstant15 => Transcendental,
+
+            // All operators default to Transcendental (most general)
+            // The actual result type depends on operands
+            _ => Transcendental,
+        }
+    }
+
     /// Get the infix name for display
     pub const fn name(self) -> &'static str {
         use Symbol::*;
