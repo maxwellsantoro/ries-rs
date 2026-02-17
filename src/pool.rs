@@ -74,7 +74,7 @@ impl SignatureKey {
 #[derive(Clone)]
 struct PoolEntry {
     m: Match,
-    rank_key: (u16, i64), // (complexity, error_bits) - lower is better
+    rank_key: (u32, i64), // (complexity, error_bits) - lower is better
 }
 
 impl PoolEntry {
@@ -265,7 +265,7 @@ mod tests {
     use crate::expr::{EvaluatedExpr, Expression};
     use crate::symbol::NumType;
 
-    fn make_match(lhs: &str, rhs: &str, error: f64, complexity: u16) -> Match {
+    fn make_match(lhs: &str, rhs: &str, error: f64, complexity: u32) -> Match {
         let lhs_expr = Expression::parse(lhs).unwrap();
         let rhs_expr = Expression::parse(rhs).unwrap();
         Match {

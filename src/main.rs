@@ -196,7 +196,7 @@ fn parse_user_constant_from_cli(profile: &mut Profile, spec: &str) -> Result<(),
         ));
     }
 
-    let weight: u16 = parts[0]
+    let weight: u32 = parts[0]
         .parse()
         .map_err(|_| format!("Invalid weight: {}", parts[0]))?;
 
@@ -239,8 +239,8 @@ fn parse_user_function_from_cli(profile: &mut Profile, spec: &str) -> Result<(),
 
 /// Build a GenConfig from CLI options
 fn build_gen_config(
-    max_lhs_complexity: u16,
-    max_rhs_complexity: u16,
+    max_lhs_complexity: u32,
+    max_rhs_complexity: u32,
     min_type: symbol::NumType,
     exclude: Option<&str>,
     only_symbols: Option<&str>,
@@ -469,8 +469,8 @@ fn main() {
     let base_lhs: f32 = 10.0;
     let base_rhs: f32 = 12.0;
     let level_factor = 4.0 * args.level;
-    let max_lhs_complexity = (base_lhs + level_factor) as u16;
-    let max_rhs_complexity = (base_rhs + level_factor) as u16;
+    let max_lhs_complexity = (base_lhs + level_factor) as u32;
+    let max_rhs_complexity = (base_rhs + level_factor) as u32;
 
     // Determine numeric type restriction
     let min_type = if args.integer {

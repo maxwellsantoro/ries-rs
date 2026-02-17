@@ -40,6 +40,29 @@
 //! ries-rs 1.41421356 -a
 //! ```
 //!
+//! ## API Levels
+//!
+//! The library provides three API levels:
+//!
+//! ### High-Level API
+//!
+//! Simple functions for common use cases:
+//! - [`search()`] - Find equations for a target value
+//!
+//! ### Mid-Level API
+//!
+//! Configuration and control structures:
+//! - [`GenConfig`](gen::GenConfig) - Configure expression generation
+//! - [`SearchConfig`](search::SearchConfig) - Configure search behavior
+//! - [`Match`](search::Match) - A matched equation
+//!
+//! ### Low-Level API
+//!
+//! Building blocks for custom implementations:
+//! - [`Expression`](expr::Expression) - Symbolic expression representation
+//! - [`Symbol`](symbol::Symbol) - Individual symbols (constants, operators)
+//! - [`evaluate()`](eval::evaluate) - Evaluate expressions with derivatives
+//!
 //! ## Modules
 //!
 //! - [`eval`] - Expression evaluation with automatic differentiation
@@ -47,11 +70,12 @@
 //! - [`gen`] - Expression generation
 //! - [`metrics`] - Match scoring and categorization
 //! - [`pool`] - Bounded priority pool for match collection
+//! - [`precision`] - Precision abstraction for numeric types
 //! - [`profile`] - Profile file support for configuration
 //! - [`report`] - Categorized match output
-//! - [`precision`] - Precision abstraction for numeric types
 //! - [`search`] - Search algorithms and matching
 //! - [`symbol`] - Symbol definitions and type system
+//! - [`thresholds`] - Named threshold constants
 //! - [`udf`] - User-defined functions
 
 pub mod eval;
@@ -64,9 +88,39 @@ pub mod profile;
 pub mod report;
 pub mod search;
 pub mod symbol;
+pub mod thresholds;
 pub mod udf;
 
-pub use expr::OutputFormat;
+// =============================================================================
+// Type Aliases
+// =============================================================================
+
+/// Type alias for complexity scores
+///
+/// Complexity scores measure how "simple" an expression is.
+/// Lower values indicate simpler expressions that will be shown first.
+///
+/// Uses `u32` to allow for very long expressions without overflow risk,
+/// though practical expressions typically have complexity < 500.
+pub type Complexity = u32;
+
+// =============================================================================
+// Re-exports for convenience
+// =============================================================================
+
+// High-level API
+pub use search::search;
+
+// Common types
+pub use eval::{EvalError, EvalResult};
+pub use expr::{Expression, OutputFormat};
+pub use gen::GenConfig;
 pub use profile::{Profile, UserConstant};
 pub use search::{Match, SearchConfig, SearchStats};
+pub use symbol::{NumType, Symbol};
 pub use udf::UserFunction;
+
+// Threshold constants
+pub use thresholds::{
+    EXACT_MATCH_TOLERANCE, NEWTON_TOLERANCE, DEGENERATE_DERIVATIVE,
+};

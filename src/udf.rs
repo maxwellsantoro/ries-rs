@@ -10,15 +10,26 @@ use crate::symbol::{NumType, Symbol};
 #[derive(Clone, Debug)]
 pub struct UserFunction {
     /// Weight (complexity) of this function
+    ///
+    /// This field is part of the public API and is used when generating expressions
+    /// that include user-defined functions.
+    #[allow(dead_code)]
     pub weight: u16,
     /// Short name (single or few characters)
     pub name: String,
     /// Description (for display)
+    ///
+    /// This field is part of the public API for documentation and display purposes.
+    #[allow(dead_code)]
     pub description: String,
     /// The body of the function as a postfix expression
     /// Uses standard symbols plus special stack operations
     pub body: Vec<UdfOp>,
     /// Numeric type of result
+    ///
+    /// This field is part of the public API for type inference when combining
+    /// expressions that use user-defined functions.
+    #[allow(dead_code)]
     pub num_type: NumType,
 }
 
@@ -74,6 +85,10 @@ impl UserFunction {
 
     /// Get the stack effect of this function (pushed - popped)
     /// For a unary function, this should be 0 (pop 1, push 1)
+    ///
+    /// This method is part of the public API for library consumers who need
+    /// to validate user-defined functions before use.
+    #[allow(dead_code)]
     pub fn stack_effect(&self) -> i32 {
         calculate_stack_effect(&self.body)
     }

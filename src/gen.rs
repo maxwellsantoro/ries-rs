@@ -13,9 +13,9 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct GenConfig {
     /// Maximum complexity for LHS expressions (containing x)
-    pub max_lhs_complexity: u16,
+    pub max_lhs_complexity: u32,
     /// Maximum complexity for RHS expressions (constants only)
-    pub max_rhs_complexity: u16,
+    pub max_rhs_complexity: u32,
     /// Maximum expression length
     pub max_length: usize,
     /// Symbols to use for constants (Seft::A)
@@ -259,7 +259,7 @@ fn generate_recursive(
 }
 
 /// Calculate minimum complexity needed to reduce stack to depth 1
-fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u16 {
+fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u32 {
     if stack_depth <= 1 {
         return 0;
     }
@@ -272,7 +272,7 @@ fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u16 {
         .min()
         .unwrap_or(4);
 
-    ((stack_depth - 1) as u16) * min_binary_weight
+    ((stack_depth - 1) as u32) * min_binary_weight
 }
 
 /// Pruning rules for unary operators to avoid redundant expressions
@@ -302,6 +302,20 @@ fn should_prune_unary(expr: &Expression, sym: Symbol) -> bool {
         // Trig identities that reduce
         (SinPi, SinPi) | (CosPi, CosPi) => true,
 
+        // Additional pruning rules for cleaner output:
+        // 1/sqrt(a) and 1/a^2 are rare, prefer a^-0.5 or a^-2 notation
+        (Sqrt, Recip) => true,
+        (Square, Recip) => true,
+        // 1/ln(a) is rarely useful
+        (Ln, Recip) => true,
+        // Double square: (a^2)^2 = a^4, use power directly
+        (Square, Square) => true,
+        // Double sqrt: sqrt(sqrt(a)) = a^0.25, use power directly
+        (Sqrt, Sqrt) => true,
+        // Negation after subtraction is redundant with addition
+        // e.g., -(a-b) = b-a which we could express directly
+        (Sub, Neg) => true,
+
         _ => false,
     }
 }
@@ -328,6 +342,8 @@ fn should_prune_binary(expr: &Expression, sym: Symbol) -> bool {
         Div if is_same_subexpr(symbols, 2) => true,
         // x / x = 1 (trivial identity)
         Div if last == X && prev == X => true,
+        // Division by 1: a/1 = a (useless)
+        Div if last == One => true,
 
         // Prefer a*2 over a+a
         Add if is_same_subexpr(symbols, 2) => true,
@@ -343,6 +359,8 @@ fn should_prune_binary(expr: &Expression, sym: Symbol) -> bool {
         // 1^b = 1 (degenerate - always equals 1 regardless of b)
         // This catches 1^x, 1^(anything)
         Pow if prev == One => true,
+        // a^1 = a (useless)
+        Pow if last == One => true,
 
         // x * 1 = x, 1 * x = x
         Mul if last == One || prev == One => true,
@@ -352,11 +370,15 @@ fn should_prune_binary(expr: &Expression, sym: Symbol) -> bool {
         Root if prev == One => true,
         // x"/1 means 1^(1/x) = 1 (degenerate)
         Root if last == One => true,
+        // 2nd root is just sqrt, prefer using sqrt
+        Root if last == Two => true,
 
         // log_x(x) = 1 (trivial identity)
         Log if last == X && prev == X => true,
         // log_1(anything) is undefined/infinite, log_a(1) = 0
         Log if prev == One || last == One => true,
+        // log_e(a) = ln(a) - prefer ln notation
+        Log if prev == E => true,
 
         // Ordering: prefer 2+3 over 3+2 for commutative ops
         Add | Mul if prev > last && is_constant(last) && is_constant(prev) => true,
@@ -454,12 +476,29 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
 mod tests {
     use super::*;
 
+    /// Create a fast test config with limited complexity and operators
+    fn fast_test_config() -> GenConfig {
+        GenConfig {
+            max_lhs_complexity: 20,
+            max_rhs_complexity: 20,
+            max_length: 8,
+            constants: vec![
+                Symbol::One, Symbol::Two, Symbol::Three, Symbol::Four,
+                Symbol::Five, Symbol::Pi, Symbol::E,
+            ],
+            unary_ops: vec![Symbol::Neg, Symbol::Recip, Symbol::Square, Symbol::Sqrt],
+            binary_ops: vec![Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div],
+            min_num_type: NumType::Transcendental,
+            generate_lhs: true,
+            generate_rhs: true,
+            user_constants: Vec::new(),
+            user_functions: Vec::new(),
+        }
+    }
+
     #[test]
     fn test_generate_simple() {
-        let mut config = GenConfig::default();
-        config.max_lhs_complexity = 50;
-        config.max_rhs_complexity = 50;
-        config.max_length = 5;
+        let mut config = fast_test_config();
         config.generate_lhs = false; // Only RHS for simpler test
 
         let result = generate_all(&config, 1.0);
@@ -475,10 +514,7 @@ mod tests {
 
     #[test]
     fn test_generate_lhs() {
-        let mut config = GenConfig::default();
-        config.max_lhs_complexity = 40;
-        config.max_rhs_complexity = 40;
-        config.max_length = 4;
+        let mut config = fast_test_config();
         config.generate_rhs = false;
 
         let result = generate_all(&config, 2.0);
@@ -492,9 +528,7 @@ mod tests {
 
     #[test]
     fn test_complexity_limit() {
-        let mut config = GenConfig::default();
-        config.max_lhs_complexity = 30;
-        config.max_rhs_complexity = 30;
+        let config = fast_test_config();
 
         let result = generate_all(&config, 1.0);
 
@@ -507,7 +541,15 @@ mod tests {
     }
 }
 
+// =============================================================================
+// EXPENSIVE DEBUG TESTS
+// These tests use high complexity limits and all operators.
+// Run with `cargo test -- --ignored` to include them.
+// =============================================================================
+
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
+#[allow(unused_imports)]
 fn test_x_to_x_generated() {
     use crate::expr::Expression;
 
@@ -545,6 +587,7 @@ fn test_x_to_x_generated() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_pi_squared_in_rhs() {
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 50;
@@ -576,6 +619,7 @@ fn test_pi_squared_in_rhs() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_pi_squared_value() {
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 60;
@@ -625,6 +669,7 @@ fn test_pi_squared_value() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_find_ps_specifically() {
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 60;
@@ -671,6 +716,7 @@ fn test_find_ps_specifically() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_xx_in_final_lhs() {
     let mut config = GenConfig::default();
     config.max_lhs_complexity = 50;

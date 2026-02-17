@@ -162,12 +162,77 @@ impl Symbol {
 
     /// Get the default complexity weight of this symbol
     ///
-    /// Weights are calibrated to match original RIES behavior:
-    /// - Small integers are cheap (they're "free" building blocks)
-    /// - Transcendental constants cost more
-    /// - Operations have modest cost
+    /// Complexity weights determine how "simple" an expression is, affecting
+    /// which equations RIES presents first. Lower complexity = simpler expression.
+    ///
+    /// # Calibration Methodology
+    ///
+    /// Weights are calibrated to match original RIES behavior while ensuring
+    /// intuitive simplicity ordering:
+    ///
+    /// ## Constants
+    /// - **Small integers (1-9)**: Range from 3-6, with smaller digits cheaper
+    ///   - Rationale: Single digits are fundamental building blocks
+    ///   - `1` and `2` are cheapest (3) as they appear in most simple equations
+    ///   - Larger digits cost more as they're less "fundamental"
+    ///
+    /// - **Transcendental constants (π, e)**: Weight 8
+    ///   - Higher than integers as they require special notation
+    ///   - Same weight as they're equally "fundamental" in mathematics
+    ///
+    /// - **Algebraic constants (φ, ρ)**: Weight 10
+    ///   - Higher than π/e as they're less commonly used
+    ///   - Plastic constant (ρ) is algebraic (root of x³ = x + 1)
+    ///
+    /// - **Special constants (γ, ζ(3), G)**: Weight 10-12
+    ///   - Euler-Mascheroni γ and Catalan's G: 10
+    ///   - Apéry's constant ζ(3): 12 (higher due to obscurity)
+    ///
+    /// ## Unary Operators
+    /// - **Negation (-)**: Weight 4 - simplest unary operation
+    /// - **Reciprocal (1/x)**: Weight 5 - slightly more complex
+    /// - **Square (x²)**: Weight 5 - very common, moderate cost
+    /// - **Square root (√)**: Weight 6 - inverse of square
+    /// - **Logarithm (ln)**: Weight 8 - transcendental operation
+    /// - **Exponential (e^x)**: Weight 8 - inverse of ln, transcendental
+    /// - **Trigonometric (sin(πx), cos(πx))**: Weight 9-10 - periodic complexity
+    /// - **Lambert W**: Weight 12 - most complex, rarely used
+    ///
+    /// ## Binary Operators
+    /// - **Addition/Subtraction (+, -)**: Weight 3 - simplest operations
+    /// - **Multiplication (*)**: Weight 3 - fundamental arithmetic
+    /// - **Division (/)**: Weight 4 - slightly more complex than multiply
+    /// - **Power (^)**: Weight 5 - exponentiation
+    /// - **Root (ᵃ√b)**: Weight 6 - inverse of power, more notation
+    /// - **Logarithm base (log_a b)**: Weight 7 - two transcendental ops
+    /// - **Atan2**: Weight 7 - two-argument inverse trig
+    ///
+    /// # Example Weight Calculations
+    ///
+    /// ```text
+    /// Expression    Postfix    Weight Calculation          Total
+    /// x = 2         x2=        6(x) + 3(2)                 9
+    /// x² = 4        xs4=       6(x) + 5(s) + 4(4)          15
+    /// 2x = 5        2x*5=      3(2) + 6(x) + 3(*) + 5(5)   17
+    /// e^x = π       xEep       6(x) + 8(E) + 8(p)          22
+    /// x^x = π²      xx^ps      6+6+5+8+5                   30
+    /// ```
+    ///
+    /// # Design Philosophy
+    ///
+    /// The weight system follows these principles:
+    ///
+    /// 1. **Pedagogical value**: Simpler concepts have lower weights
+    /// 2. **Historical consistency**: Weights approximate original RIES behavior
+    /// 3. **Practical usage**: Commonly-used operations are cheaper
+    /// 4. **Composability**: Complex expressions = sum of symbol weights
+    ///
+    /// # See Also
+    ///
+    /// For a detailed explanation of the calibration process and rationale,
+    /// see `docs/COMPLEXITY.md` in the source repository.
     #[inline]
-    pub const fn weight(self) -> u16 {
+    pub const fn weight(self) -> u32 {
         use Symbol::*;
         match self {
             // Small integers are cheap - they're fundamental building blocks

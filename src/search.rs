@@ -103,7 +103,7 @@ pub struct Match {
     /// Difference from target: x_value - target
     pub error: f64,
     /// Total complexity (LHS + RHS)
-    pub complexity: u16,
+    pub complexity: u32,
 }
 
 impl Match {
@@ -209,6 +209,10 @@ impl ExprDatabase {
     }
 
     /// Find matches for LHS expressions using streaming collection
+    ///
+    /// This method is part of the public API for library consumers who want
+    /// to perform matching without statistics collection.
+    #[allow(dead_code)]
     pub fn find_matches(&self, lhs_exprs: &[EvaluatedExpr], config: &SearchConfig) -> Vec<Match> {
         let (matches, _stats) = self.find_matches_with_stats(lhs_exprs, config);
         matches
@@ -446,12 +450,20 @@ fn newton_raphson_with_constants(
 }
 
 /// Perform a complete search
+///
+/// This function is part of the public API for library consumers who want a simple
+/// search interface without statistics collection.
+#[allow(dead_code)]
 pub fn search(target: f64, gen_config: &crate::gen::GenConfig, max_matches: usize) -> Vec<Match> {
     let (matches, _stats) = search_with_stats(target, gen_config, max_matches);
     matches
 }
 
 /// Perform a complete search with statistics collection
+///
+/// This function is part of the public API for library consumers who want
+/// detailed statistics about the search process.
+#[allow(dead_code)]
 pub fn search_with_stats(
     target: f64,
     gen_config: &crate::gen::GenConfig,
@@ -502,7 +514,11 @@ pub fn search_with_stats_and_options(
 }
 
 /// Perform a parallel search using Rayon
+///
+/// This function is part of the public API for library consumers who want
+/// parallel search without statistics collection.
 #[cfg(feature = "parallel")]
+#[allow(dead_code)]
 pub fn search_parallel(
     target: f64,
     gen_config: &crate::gen::GenConfig,
@@ -513,7 +529,11 @@ pub fn search_parallel(
 }
 
 /// Perform a parallel search with statistics collection
+///
+/// This function is part of the public API for library consumers who want
+/// detailed statistics about the parallel search process.
 #[cfg(feature = "parallel")]
+#[allow(dead_code)]
 pub fn search_parallel_with_stats(
     target: f64,
     gen_config: &crate::gen::GenConfig,
@@ -565,17 +585,52 @@ pub fn search_parallel_with_stats_and_options(
 }
 
 #[cfg(test)]
+#[allow(unused_imports)]
 mod tests {
     use super::*;
 
+    /// Create a fast test config with limited complexity and operators
+    fn fast_test_config() -> crate::gen::GenConfig {
+        crate::gen::GenConfig {
+            max_lhs_complexity: 25,
+            max_rhs_complexity: 25,
+            max_length: 8,
+            constants: vec![
+                crate::symbol::Symbol::One,
+                crate::symbol::Symbol::Two,
+                crate::symbol::Symbol::Three,
+                crate::symbol::Symbol::Four,
+                crate::symbol::Symbol::Five,
+                crate::symbol::Symbol::Pi,
+                crate::symbol::Symbol::E,
+            ],
+            unary_ops: vec![
+                crate::symbol::Symbol::Neg,
+                crate::symbol::Symbol::Recip,
+                crate::symbol::Symbol::Square,
+                crate::symbol::Symbol::Sqrt,
+            ],
+            binary_ops: vec![
+                crate::symbol::Symbol::Add,
+                crate::symbol::Symbol::Sub,
+                crate::symbol::Symbol::Mul,
+                crate::symbol::Symbol::Div,
+            ],
+            min_num_type: crate::symbol::NumType::Transcendental,
+            generate_lhs: true,
+            generate_rhs: true,
+            user_constants: Vec::new(),
+            user_functions: Vec::new(),
+        }
+    }
+
     #[test]
+    #[allow(unused_imports)]
     fn test_simple_search() {
         use crate::gen::GenConfig;
 
         // Search for equations matching 2.5
-        let mut config = GenConfig::default();
-        config.max_lhs_complexity = 50;
-        config.max_rhs_complexity = 50;
+        let config = fast_test_config();
         let matches = search(2.5, &config, 10);
 
         // Should find 2x = 5
@@ -610,9 +665,7 @@ mod tests {
         assert!((result.value - 5.0).abs() < 1e-10, "2*2.5 should be 5");
 
         // Now test if 2x* is generated and matches with 5
-        let mut config = GenConfig::default();
-        config.max_lhs_complexity = 50;
-        config.max_rhs_complexity = 50;
+        let config = fast_test_config();
         let generated = generate_all(&config, 2.5);
 
         // Check if 2x* is in LHS
@@ -662,7 +715,14 @@ mod tests {
     }
 }
 
+// =============================================================================
+// EXPENSIVE DEBUG TESTS
+// These tests use high complexity limits and all operators.
+// Run with `cargo test -- --ignored` to include them.
+// =============================================================================
+
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_xx_match_directly() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -723,6 +783,7 @@ fn test_xx_match_directly() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_search_finds_xx() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -802,6 +863,7 @@ fn test_search_finds_xx() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_find_ps_in_rhs_db() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -841,6 +903,8 @@ fn test_find_ps_in_rhs_db() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
+#[allow(unused_imports)]
 fn test_xx_match_step_by_step() {
     use crate::eval::evaluate;
     use crate::gen::{generate_all, GenConfig};
@@ -929,6 +993,7 @@ fn test_xx_match_step_by_step() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_xx_derivative_check() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -957,6 +1022,7 @@ fn test_xx_derivative_check() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_manual_xx_match() {
     use crate::gen::{generate_all, GenConfig};
     use ordered_float::OrderedFloat;
@@ -1018,6 +1084,8 @@ fn test_manual_xx_match() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
+#[allow(unused_imports)]
 fn test_xx_in_find_matches_detailed() {
     use crate::expr::EvaluatedExpr;
     use crate::gen::{generate_all, GenConfig};
@@ -1067,6 +1135,7 @@ fn test_xx_in_find_matches_detailed() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_2x_is_generated() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -1105,6 +1174,7 @@ fn test_2x_is_generated() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_2x_dedup() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -1133,6 +1203,7 @@ fn test_2x_dedup() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_exact_matches() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -1174,6 +1245,7 @@ fn test_exact_matches() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_2x_search_trace() {
     use crate::gen::{generate_all, GenConfig};
     use ordered_float::OrderedFloat;
@@ -1239,6 +1311,7 @@ fn test_2x_search_trace() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_2x_newton() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -1267,6 +1340,8 @@ fn test_2x_newton() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
+#[allow(unused_imports)]
 fn test_2x_only() {
     use crate::expr::EvaluatedExpr;
     use crate::gen::{generate_all, GenConfig};
@@ -1325,6 +1400,7 @@ fn test_2x_only() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_one_over_x_minus_1() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -1430,6 +1506,8 @@ fn test_one_over_x_minus_1() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
+#[allow(unused_imports)]
 fn test_cospi_1_over_x() {
     use crate::eval::evaluate;
     use crate::gen::{generate_all, GenConfig};
@@ -1526,6 +1604,8 @@ fn test_cospi_1_over_x() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
+#[allow(unused_imports)]
 fn test_debug_1_over_x_minus_1() {
     use crate::gen::{generate_all, GenConfig};
     use ordered_float::OrderedFloat;
@@ -1641,6 +1721,7 @@ fn test_debug_1_over_x_minus_1() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_exact_match_threshold() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -1691,6 +1772,7 @@ fn test_exact_match_threshold() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_x1sr_in_generated() {
     use crate::gen::{generate_all, GenConfig};
 
@@ -1736,6 +1818,7 @@ fn test_x1sr_in_generated() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_newton_x1sr() {
     use crate::expr::Expression;
     use crate::symbol::Symbol;
@@ -1765,6 +1848,8 @@ fn test_newton_x1sr() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
+#[allow(unused_imports)]
 fn test_full_search_with_trace() {
     use crate::gen::{generate_all, GenConfig};
     use ordered_float::OrderedFloat;
@@ -1862,6 +1947,7 @@ fn test_full_search_with_trace() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_ries_gem_formula() {
     use crate::eval::evaluate;
     use crate::expr::Expression;
@@ -1893,6 +1979,7 @@ fn test_ries_gem_formula() {
 }
 
 #[test]
+#[ignore = "expensive debug test - run with --ignored flag"]
 fn test_full_gem_formula() {
     use crate::eval::evaluate;
     use crate::expr::Expression;

@@ -48,7 +48,7 @@ fn test_search_complexity_ordering() {
     let matches = search(2.5, &default_config(), 20);
 
     // Matches should be sorted by complexity
-    let complexities: Vec<u16> = matches.iter().map(|m| m.complexity).collect();
+    let complexities: Vec<u32> = matches.iter().map(|m| m.complexity).collect();
     let mut sorted = complexities.clone();
     sorted.sort();
     assert_eq!(complexities, sorted);
