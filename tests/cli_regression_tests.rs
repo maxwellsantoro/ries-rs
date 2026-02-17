@@ -690,3 +690,55 @@ fn test_level_flag_with_integer() {
         stdout
     );
 }
+
+#[test]
+fn test_i_flag_fallback_to_r() {
+    // Original: ries -i 2.5 -> warns and uses -r
+    let output = run_ries_raw(&["-i", "2.5", "--classic", "--report", "false", "-n", "1"]);
+    assert!(
+        output.status.success(),
+        "Should fallback to -r mode\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Check for warning in either stdout or stderr
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("Replacing -i with -r") || combined.contains("replacing -i with -r"),
+        "Should warn about fallback\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("2.5") || stdout.contains("2 x = 5"),
+        "Should find matches for 2.5\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_ie_integer_exact_mode() {
+    // --ie = integer exact mode (stops at first exact match)
+    let output = run_ries_raw(&["--ie", "3.0", "--classic", "--report", "false"]);
+    assert!(output.status.success(), "Should succeed with --ie flag");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should find x=3 as exact match and stop quickly
+    assert!(stdout.contains("3") && stdout.contains("('exact' match)"),
+            "Should find x=3 as exact match\n{}", stdout);
+}
+
+#[test]
+fn test_re_rational_exact_mode() {
+    // --re = rational exact mode (stops at first exact match)
+    let output = run_ries_raw(&["--re", "2.5", "--classic", "--report", "false"]);
+    assert!(output.status.success(), "Should succeed with --re flag");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should find 2x=5 or x=5/2 as exact match
+    assert!(stdout.contains("('exact' match)"),
+            "Should find exact match for 2.5\n{}", stdout);
+}
