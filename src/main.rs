@@ -2,6 +2,9 @@
 //!
 //! A Rust implementation of Robert Munafo's RIES program.
 
+// Allow field reassignment with default in test code - common pattern for config building
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+
 mod eval;
 mod expr;
 mod gen;
@@ -238,6 +241,8 @@ fn parse_user_function_from_cli(profile: &mut Profile, spec: &str) -> Result<(),
 }
 
 /// Build a GenConfig from CLI options
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::field_reassign_with_default)]
 fn build_gen_config(
     max_lhs_complexity: u32,
     max_rhs_complexity: u32,
@@ -339,7 +344,7 @@ fn build_gen_config(
                 // Only add if not excluded
                 let is_excluded = excluded
                     .as_ref()
-                    .map_or(false, |excl| excl.contains(&(128 + idx as u8)));
+                    .is_some_and(|excl| excl.contains(&(128 + idx as u8)));
                 if !is_excluded {
                     config.constants.push(sym);
                 }
@@ -355,7 +360,7 @@ fn build_gen_config(
                 // Only add if not excluded
                 let is_excluded = excluded
                     .as_ref()
-                    .map_or(false, |excl| excl.contains(&(144 + idx as u8)));
+                    .is_some_and(|excl| excl.contains(&(144 + idx as u8)));
                 if !is_excluded {
                     config.unary_ops.push(sym);
                 }
@@ -677,6 +682,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_format_value() {
         assert_eq!(format_value(2.71828), "2.7182800000"); // e approximation
         assert_eq!(format_value(1e10), "1.0000000000e10");

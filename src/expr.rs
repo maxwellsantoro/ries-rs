@@ -304,8 +304,8 @@ impl Expression {
                             let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
                             let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL, false, true);
                             // Omit * in some cases: 2x instead of 2*x
-                            if a_s.chars().last().map_or(false, |c| c.is_ascii_digit())
-                                && b_s.chars().next().map_or(false, |c| c.is_alphabetic())
+                            if a_s.chars().last().is_some_and(|c| c.is_ascii_digit())
+                                && b_s.chars().next().is_some_and(|c| c.is_alphabetic())
                             {
                                 (format!("{} {}", a_s, b_s), PREC_MUL)
                             } else {

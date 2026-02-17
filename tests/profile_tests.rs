@@ -1,5 +1,7 @@
 //! Integration tests for the profile module
 
+#![allow(clippy::field_reassign_with_default)]
+
 use ries_rs::profile::{Profile, UserConstant};
 use ries_rs::symbol::{NumType, Symbol};
 

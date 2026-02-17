@@ -334,8 +334,6 @@ impl Symbol {
             Neg | Add | Sub | Mul => {
                 if arg_types.iter().all(|t| *t == Integer) {
                     Integer
-                } else if arg_types.iter().all(|t| t.is_at_least(Rational)) {
-                    arg_types.iter().copied().fold(Integer, NumType::combine)
                 } else {
                     arg_types.iter().copied().fold(Integer, NumType::combine)
                 }

@@ -1,5 +1,7 @@
 //! Integration tests for full search functionality
 
+#![allow(clippy::field_reassign_with_default)]
+
 mod common;
 
 use ries_rs::gen::{generate_all, GenConfig};
