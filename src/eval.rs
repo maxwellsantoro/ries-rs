@@ -119,6 +119,7 @@ impl Default for EvalWorkspace {
 /// This is the hot-path version that avoids heap allocations.
 /// Use this in loops where `evaluate()` is called many times.
 #[inline]
+#[allow(dead_code)]
 pub fn evaluate_with_workspace(
     expr: &Expression,
     x: f64,
@@ -132,6 +133,7 @@ pub fn evaluate_with_workspace(
 /// This is the hot-path version that avoids heap allocations.
 /// The `user_constants` slice provides values for `UserConstant0..15` symbols.
 #[inline]
+#[allow(dead_code)]
 pub fn evaluate_with_workspace_and_constants(
     expr: &Expression,
     x: f64,
@@ -212,6 +214,7 @@ pub fn evaluate_with_workspace_and_constants_and_functions(
 ///
 /// Convenience wrapper that allocates a new workspace. For hot loops,
 /// prefer `evaluate_with_workspace()` with a reusable `EvalWorkspace`.
+#[allow(dead_code)]
 pub fn evaluate(expr: &Expression, x: f64) -> Result<EvalResult, EvalError> {
     evaluate_with_constants(expr, x, &[])
 }
@@ -247,6 +250,7 @@ pub fn evaluate_with_constants_and_functions(
 /// Note: This version does NOT support user constants. For user constants,
 /// use `evaluate_with_constants()` or `evaluate_with_workspace_and_constants()`.
 #[inline]
+#[allow(dead_code)]
 pub fn evaluate_fast(expr: &Expression, x: f64) -> Result<EvalResult, EvalError> {
     evaluate_fast_with_constants(expr, x, &[])
 }
@@ -256,6 +260,7 @@ pub fn evaluate_fast(expr: &Expression, x: f64) -> Result<EvalResult, EvalError>
 /// Note: This uses a global thread-local storage, so it's not safe to call recursively
 /// with different user_constants. For recursive calls, use `evaluate_with_workspace_and_constants`.
 #[inline]
+#[allow(dead_code)]
 pub fn evaluate_fast_with_constants(
     expr: &Expression,
     x: f64,

@@ -25,6 +25,7 @@ pub enum OutputFormat {
 
 impl OutputFormat {
     /// Get the name for a symbol in this format
+    #[allow(dead_code)]
     pub fn symbol_name(&self, sym: Symbol) -> &'static str {
         use Symbol::*;
         match self {
