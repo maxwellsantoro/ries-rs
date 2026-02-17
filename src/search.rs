@@ -5,6 +5,10 @@
 use crate::expr::EvaluatedExpr;
 use crate::pool::TopKPool;
 use crate::profile::UserConstant;
+use crate::thresholds::{
+    ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
+    BASE_SEARCH_RADIUS_FACTOR, MAX_SEARCH_RADIUS_FACTOR, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
+};
 use std::time::{Duration, Instant};
 
 /// Statistics collected during search
@@ -172,6 +176,231 @@ impl Default for SearchConfig {
 pub struct ExprDatabase {
     /// RHS expressions sorted by value (flat vector for cache locality)
     rhs_sorted: Vec<EvaluatedExpr>,
+}
+
+// =============================================================================
+// TIERED DATABASE FOR MULTI-LEVEL INDEXING
+// =============================================================================
+
+/// Complexity tier for tiered search
+///
+/// Lower tiers contain simpler expressions and are searched first.
+/// This allows early exit when good matches are found in simpler tiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ComplexityTier {
+    /// Tier 0: complexity 0-15 (simplest expressions)
+    Tier0,
+    /// Tier 1: complexity 16-25
+    Tier1,
+    /// Tier 2: complexity 26-35
+    Tier2,
+    /// Tier 3: complexity 36+ (most complex)
+    Tier3,
+}
+
+impl ComplexityTier {
+    /// Determine the tier for a given complexity value
+    #[inline]
+    pub fn from_complexity(complexity: u32) -> Self {
+        if complexity <= TIER_0_MAX {
+            ComplexityTier::Tier0
+        } else if complexity <= TIER_1_MAX {
+            ComplexityTier::Tier1
+        } else if complexity <= TIER_2_MAX {
+            ComplexityTier::Tier2
+        } else {
+            ComplexityTier::Tier3
+        }
+    }
+}
+
+/// Database with tiered storage for efficient priority-based searching
+///
+/// Expressions are organized by complexity tiers, allowing searches to
+/// process simpler expressions first and potentially skip higher tiers
+/// when good matches are found.
+pub struct TieredExprDatabase {
+    /// RHS expressions organized by tier, each sorted by value
+    tiers: [Vec<EvaluatedExpr>; 4],
+    /// Total count across all tiers
+    total_count: usize,
+}
+
+impl TieredExprDatabase {
+    /// Create a new empty tiered database
+    pub fn new() -> Self {
+        Self {
+            tiers: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            total_count: 0,
+        }
+    }
+
+    /// Insert an expression into the appropriate tier
+    pub fn insert(&mut self, expr: EvaluatedExpr) {
+        let tier = ComplexityTier::from_complexity(expr.expr.complexity());
+        let tier_idx = tier as usize;
+        self.tiers[tier_idx].push(expr);
+        self.total_count += 1;
+    }
+
+    /// Finalize the database by sorting each tier by value
+    pub fn finalize(&mut self) {
+        for tier in &mut self.tiers {
+            tier.sort_by(|a, b| {
+                a.value
+                    .partial_cmp(&b.value)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
+
+    /// Get total count of expressions across all tiers
+    pub fn total_count(&self) -> usize {
+        self.total_count
+    }
+
+    /// Get count for a specific tier
+    pub fn tier_count(&self, tier: ComplexityTier) -> usize {
+        self.tiers[tier as usize].len()
+    }
+
+    /// Find expressions in a specific tier within the value range [low, high]
+    pub fn range_in_tier(&self, tier: ComplexityTier, low: f64, high: f64) -> &[EvaluatedExpr] {
+        let tier_vec = &self.tiers[tier as usize];
+        let start = tier_vec.partition_point(|e| e.value < low);
+        let end = tier_vec.partition_point(|e| e.value <= high);
+        &tier_vec[start..end]
+    }
+
+    /// Create an iterator that yields expressions from all tiers in order
+    /// (Tier 0 first, then Tier 1, etc.) within a value range
+    pub fn iter_tiers_in_range(&self, low: f64, high: f64) -> TieredRangeIter<'_> {
+        TieredRangeIter::new(self, low, high)
+    }
+}
+
+impl Default for TieredExprDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Iterator over expressions in a value range, yielding from lower tiers first
+pub struct TieredRangeIter<'a> {
+    db: &'a TieredExprDatabase,
+    low: f64,
+    high: f64,
+    current_tier: usize,
+    current_start: usize,
+    current_end: usize,
+}
+
+impl<'a> TieredRangeIter<'a> {
+    fn new(db: &'a TieredExprDatabase, low: f64, high: f64) -> Self {
+        let mut iter = Self {
+            db,
+            low,
+            high,
+            current_tier: 0,
+            current_start: 0,
+            current_end: 0,
+        };
+        iter.find_next_nonempty_tier();
+        iter
+    }
+
+    /// Advance to the next tier with matching expressions
+    fn find_next_nonempty_tier(&mut self) {
+        while self.current_tier < 4 {
+            let tier_vec = &self.db.tiers[self.current_tier];
+            self.current_start = tier_vec.partition_point(|e| e.value < self.low);
+            self.current_end = tier_vec.partition_point(|e| e.value <= self.high);
+
+            if self.current_start < self.current_end {
+                // Found expressions in this tier
+                return;
+            }
+            self.current_tier += 1;
+        }
+    }
+}
+
+impl<'a> Iterator for TieredRangeIter<'a> {
+    type Item = &'a EvaluatedExpr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current_tier < 4 {
+            if self.current_start < self.current_end {
+                let expr = &self.db.tiers[self.current_tier][self.current_start];
+                self.current_start += 1;
+                return Some(expr);
+            }
+            self.current_tier += 1;
+            self.find_next_nonempty_tier();
+        }
+        None
+    }
+}
+
+// =============================================================================
+// ADAPTIVE SEARCH RADIUS
+// =============================================================================
+
+/// Calculate adaptive search radius based on multiple factors
+///
+/// The search radius determines how far from an LHS value we look for
+/// matching RHS expressions. A tighter radius means fewer candidates
+/// but faster search; a wider radius means more candidates but slower.
+///
+/// # Factors
+///
+/// 1. **Derivative magnitude**: Larger derivative = tighter radius (faster convergence)
+/// 2. **Complexity**: Higher complexity = tighter radius (prefer simpler matches)
+/// 3. **Pool fullness**: Fuller pool = tighter radius (be more selective)
+/// 4. **Best error found**: If we have exact matches, be very selective
+///
+/// # Returns
+///
+/// The search radius as an absolute value (not relative to derivative).
+#[inline]
+fn calculate_adaptive_search_radius(
+    derivative: f64,
+    complexity: u32,
+    pool_size: usize,
+    pool_capacity: usize,
+    best_error: f64,
+) -> f64 {
+    let deriv_abs = derivative.abs();
+
+    // Base radius: proportional to derivative
+    let base_radius = BASE_SEARCH_RADIUS_FACTOR * deriv_abs;
+
+    // Complexity factor: reduce radius for complex expressions
+    // normalized_complexity is roughly 0-1 for typical complexity ranges
+    let normalized_complexity = (complexity as f64) / 50.0;
+    let complexity_factor = 1.0 / (1.0 + ADAPTIVE_COMPLEXITY_SCALE * normalized_complexity);
+
+    // Pool fullness factor: reduce radius as pool fills up
+    let pool_fraction = if pool_capacity > 0 {
+        pool_size as f64 / pool_capacity as f64
+    } else {
+        0.0
+    };
+    let pool_factor = 1.0 - ADAPTIVE_POOL_FULLNESS_SCALE * pool_fraction;
+
+    // Exact match factor: if we have good matches, be very selective
+    let exact_factor = if best_error < 1e-10 {
+        ADAPTIVE_EXACT_MATCH_FACTOR
+    } else {
+        1.0
+    };
+
+    // Combined radius
+    let radius = base_radius * complexity_factor * pool_factor * exact_factor;
+
+    // Ensure we have a reasonable minimum and cap at maximum
+    let min_radius = 0.1 * deriv_abs; // At least 0.1 * derivative
+    radius.max(min_radius).min(MAX_SEARCH_RADIUS_FACTOR * deriv_abs)
 }
 
 impl ExprDatabase {
@@ -511,6 +740,242 @@ pub fn search_with_stats_and_options(
     stats.rhs_count = db.rhs_count();
 
     (matches, stats)
+}
+
+// =============================================================================
+// STREAMING SEARCH - Memory-efficient search for high complexity levels
+// =============================================================================
+
+/// Perform a streaming search that processes expressions as they're generated
+///
+/// This is the memory-efficient version of search that builds the RHS database
+/// incrementally. Instead of generating ALL expressions into memory first,
+/// it processes RHS expressions immediately and matches LHS expressions as
+/// they arrive.
+///
+/// # Memory Efficiency
+///
+/// - Traditional: O(expressions) memory - all expressions stored
+/// - Streaming: O(database) memory - only RHS database stored, LHS processed on-the-fly
+///
+/// # When to Use
+///
+/// Use streaming search when:
+/// - Complexity levels are high (L4+, where expressions count > 10M)
+/// - Memory is limited
+/// - You want to see results progressively
+///
+/// # Example
+///
+/// ```ignore
+/// let config = GenConfig::default();
+/// let (matches, stats) = search_streaming(2.5, &config, 100, false, None);
+/// ```
+pub fn search_streaming(
+    target: f64,
+    gen_config: &crate::gen::GenConfig,
+    max_matches: usize,
+    stop_at_exact: bool,
+    stop_below: Option<f64>,
+) -> (Vec<Match>, SearchStats) {
+    use crate::gen::{generate_streaming, StreamingCallbacks};
+    use std::collections::HashMap;
+
+    let gen_start = Instant::now();
+    let mut stats = SearchStats::new();
+
+    // Use target-scaled initial threshold like original RIES
+    let initial_max_error = 1.0_f64.max(target.abs() * 0.01).max(1e-12);
+
+    // Create bounded pool with configured capacity
+    let mut pool = TopKPool::new(max_matches, initial_max_error);
+
+    // Build RHS database first using streaming
+    let mut rhs_db = TieredExprDatabase::new();
+    let mut rhs_map: HashMap<i64, crate::expr::EvaluatedExpr> = HashMap::new();
+
+    // Collect LHS expressions to process later
+    let mut lhs_exprs: Vec<crate::expr::EvaluatedExpr> = Vec::new();
+
+    // First pass: collect all RHS and LHS via streaming
+    {
+        let mut callbacks = StreamingCallbacks {
+            on_rhs: &mut |expr| {
+                // Deduplicate by value, keeping simplest
+                let key = (expr.value * 1e8).round() as i64;
+                rhs_map
+                    .entry(key)
+                    .and_modify(|existing| {
+                        if expr.expr.complexity() < existing.expr.complexity() {
+                            *existing = expr.clone();
+                        }
+                    })
+                    .or_insert_with(|| expr.clone());
+                true
+            },
+            on_lhs: &mut |expr| {
+                lhs_exprs.push(expr.clone());
+                true
+            },
+        };
+
+        // Generate with streaming callbacks
+        generate_streaming(gen_config, target, &mut callbacks);
+    }
+
+    // Build the tiered database from deduplicated RHS
+    for expr in rhs_map.into_values() {
+        rhs_db.insert(expr);
+    }
+    rhs_db.finalize();
+
+    stats.rhs_count = rhs_db.total_count();
+    stats.lhs_count = lhs_exprs.len();
+    stats.gen_time = gen_start.elapsed();
+
+    // Now match LHS expressions against the RHS database
+    let search_start = Instant::now();
+
+    // Configure search
+    let search_config = SearchConfig {
+        target,
+        max_matches,
+        stop_at_exact,
+        stop_below,
+        user_constants: gen_config.user_constants.clone(),
+        ..Default::default()
+    };
+
+    // Sort LHS by complexity so simpler expressions are processed first
+    lhs_exprs.sort_by_key(|e| e.expr.complexity());
+
+    // Early exit tracking
+    let mut early_exit = false;
+
+    'outer: for lhs in &lhs_exprs {
+        if early_exit {
+            break;
+        }
+
+        // Skip LHS with value too close to 0
+        if lhs.value.abs() < search_config.zero_value_threshold {
+            continue;
+        }
+
+        // Skip degenerate expressions
+        if lhs.derivative.abs() < 1e-10 {
+            let test_x = target + std::f64::consts::E;
+            if let Ok(test_result) =
+                crate::eval::evaluate_with_constants(&lhs.expr, test_x, &search_config.user_constants)
+            {
+                let value_unchanged = (test_result.value - lhs.value).abs() < 1e-10;
+                let deriv_still_zero = test_result.derivative.abs() < 1e-10;
+                if deriv_still_zero || value_unchanged {
+                    continue;
+                }
+            }
+
+            // Check for value match
+            stats.lhs_tested += 1;
+            for rhs in rhs_db.iter_tiers_in_range(lhs.value - 0.01, lhs.value + 0.01) {
+                stats.candidates_tested += 1;
+                let val_diff = (lhs.value - rhs.value).abs();
+                if val_diff < 0.01 && pool.would_accept(0.0, true) {
+                    let m = Match {
+                        lhs: lhs.clone(),
+                        rhs: rhs.clone(),
+                        x_value: target,
+                        error: 0.0,
+                        complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    };
+                    pool.try_insert(m);
+                }
+            }
+            continue;
+        }
+
+        stats.lhs_tested += 1;
+
+        // Use adaptive search radius
+        let search_radius = calculate_adaptive_search_radius(
+            lhs.derivative,
+            lhs.expr.complexity(),
+            pool.len(),
+            max_matches,
+            pool.best_error,
+        );
+        let low = lhs.value - search_radius;
+        let high = lhs.value + search_radius;
+
+        // Search using tiered iterator (lower tiers first)
+        for rhs in rhs_db.iter_tiers_in_range(low, high) {
+            stats.candidates_tested += 1;
+
+            // Compute initial error estimate (coarse filter)
+            let val_diff = lhs.value - rhs.value;
+            let x_delta = -val_diff / lhs.derivative;
+            let coarse_error = x_delta.abs();
+
+            // Skip if coarse estimate won't pass threshold
+            let is_potentially_exact = coarse_error < 1e-10;
+            if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
+                continue;
+            }
+
+            // Refine with Newton-Raphson
+            stats.newton_calls += 1;
+            if let Some(refined_x) = newton_raphson_with_constants(
+                &lhs.expr,
+                rhs.value,
+                target,
+                search_config.newton_iterations,
+                &search_config.user_constants,
+                &search_config.user_functions,
+            ) {
+                stats.newton_success += 1;
+                let refined_error = refined_x - target;
+                let is_exact = refined_error.abs() < 1e-14;
+
+                // Check if this is acceptable
+                if pool.would_accept(refined_error.abs(), is_exact) {
+                    let m = Match {
+                        lhs: lhs.clone(),
+                        rhs: rhs.clone(),
+                        x_value: refined_x,
+                        error: refined_error,
+                        complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    };
+
+                    // Insert into pool
+                    pool.try_insert(m);
+
+                    // Check early exit conditions
+                    if stop_at_exact && is_exact {
+                        early_exit = true;
+                        break 'outer;
+                    }
+                    if let Some(threshold) = stop_below {
+                        if refined_error.abs() < threshold {
+                            early_exit = true;
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect pool stats
+    stats.pool_insertions = pool.stats.insertions;
+    stats.pool_rejections_error = pool.stats.rejections_error;
+    stats.pool_rejections_dedupe = pool.stats.rejections_dedupe;
+    stats.pool_evictions = pool.stats.evictions;
+    stats.pool_final_size = pool.len();
+    stats.pool_best_error = pool.best_error;
+    stats.search_time = search_start.elapsed();
+    stats.early_exit = early_exit;
+
+    (pool.into_sorted(), stats)
 }
 
 /// Perform a parallel search using Rayon

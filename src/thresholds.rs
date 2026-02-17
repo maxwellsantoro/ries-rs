@@ -151,6 +151,68 @@ pub const STRICT_GATE_FACTOR: f64 = 0.5;
 pub const STRICT_GATE_CAPACITY_FRACTION: f64 = 0.8;
 
 // =============================================================================
+// Adaptive Search Radius Constants
+// =============================================================================
+
+/// Base search radius factor (as fraction of derivative)
+///
+/// The minimum search radius is this fraction of the LHS derivative magnitude.
+/// This allows for approximately this much error in x before filtering.
+///
+/// Value: 0.5
+pub const BASE_SEARCH_RADIUS_FACTOR: f64 = 0.5;
+
+/// Maximum search radius factor (as fraction of derivative)
+///
+/// The search radius is capped at this multiple of the derivative to prevent
+/// searching too broadly when errors are large.
+///
+/// Value: 2.0
+pub const MAX_SEARCH_RADIUS_FACTOR: f64 = 2.0;
+
+/// Complexity scaling factor for adaptive radius
+///
+/// Higher complexity expressions get tighter search bounds.
+/// The radius is scaled by: 1.0 / (1.0 + COMPLEXITY_SCALE * normalized_complexity)
+///
+/// Value: 0.5
+pub const ADAPTIVE_COMPLEXITY_SCALE: f64 = 0.5;
+
+/// Pool fullness factor for adaptive radius
+///
+/// When the pool is fuller, we become more selective.
+/// The radius is scaled by: 1.0 - POOL_FULLNESS_SCALE * (pool_size / capacity)
+///
+/// Value: 0.3
+pub const ADAPTIVE_POOL_FULLNESS_SCALE: f64 = 0.3;
+
+/// Exact match bonus factor for adaptive radius
+///
+/// When exact matches have been found, we become much more selective.
+/// The radius is multiplied by this factor.
+///
+/// Value: 0.1
+pub const ADAPTIVE_EXACT_MATCH_FACTOR: f64 = 0.1;
+
+/// Complexity tier boundaries for tiered search
+///
+/// Tier 0: 0-15 (simplest expressions)
+/// Tier 1: 16-25 (moderate complexity)
+/// Tier 2: 26-35 (higher complexity)
+/// Tier 3: 36+ (highest complexity)
+pub const TIER_0_MAX: u32 = 15;
+pub const TIER_1_MAX: u32 = 25;
+pub const TIER_2_MAX: u32 = 35;
+
+/// Early exit threshold for tiered search
+///
+/// If we find matches with error below this threshold in a lower tier,
+/// we may skip searching higher tiers.
+///
+/// Value: 1e-8
+pub const TIER_EARLY_EXIT_ERROR: f64 = 1e-8;
+
+// =============================================================================
 // Quantization Thresholds
 // =============================================================================
 

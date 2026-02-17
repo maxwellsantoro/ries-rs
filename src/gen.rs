@@ -1,6 +1,17 @@
 //! Expression generation
 //!
 //! Generates valid postfix expressions by enumerating "forms" (stack effect patterns).
+//!
+//! # Streaming Architecture
+//!
+//! For high complexity levels, the traditional approach of generating ALL expressions
+//! into memory before matching can cause memory exhaustion. This module provides both:
+//!
+//! - **Batch generation**: `generate_all()` returns all expressions (backward compatible)
+//! - **Streaming generation**: `generate_streaming()` processes expressions via callbacks
+//!
+//! Streaming reduces memory from O(expressions) to O(depth) by processing expressions
+//! as they're generated rather than accumulating them.
 
 use crate::eval::evaluate_fast_with_constants_and_functions;
 use crate::expr::{EvaluatedExpr, Expression, MAX_EXPR_LEN};
@@ -8,6 +19,7 @@ use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::UserFunction;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Configuration for expression generation
 #[derive(Clone)]
@@ -60,6 +72,48 @@ pub struct GeneratedExprs {
     pub lhs: Vec<EvaluatedExpr>,
     /// RHS expressions (constants only)
     pub rhs: Vec<EvaluatedExpr>,
+}
+
+/// Callbacks for streaming expression generation
+///
+/// Using callbacks instead of accumulation allows processing expressions
+/// as they're generated, reducing memory from O(expressions) to O(depth).
+pub struct StreamingCallbacks<'a> {
+    /// Called for each RHS (constant-only) expression generated
+    /// Return false to stop generation early
+    pub on_rhs: &'a mut dyn FnMut(&EvaluatedExpr) -> bool,
+    /// Called for each LHS (contains x) expression generated
+    /// Return false to stop generation early
+    pub on_lhs: &'a mut dyn FnMut(&EvaluatedExpr) -> bool,
+}
+
+/// Early-exit signal for streaming generation
+///
+/// This is passed through the streaming callbacks to allow stopping
+/// generation when good matches are found.
+#[derive(Default)]
+pub struct EarlyExit(AtomicBool);
+
+impl EarlyExit {
+    /// Create a new early-exit signal
+    pub fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    /// Signal that generation should stop
+    pub fn signal(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    /// Check if early exit has been signaled
+    pub fn should_exit(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Reset the signal
+    pub fn reset(&self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
 }
 
 /// Quantize a value to reduce floating-point noise
@@ -129,6 +183,202 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
         lhs: lhs_map.into_values().collect(),
         rhs: rhs_map.into_values().collect(),
     }
+}
+
+/// Generate expressions with streaming callbacks for memory-efficient processing
+///
+/// This function is the foundation of the streaming architecture. Instead of
+/// accumulating all expressions in memory, it calls the provided callbacks
+/// for each generated expression, allowing immediate processing.
+///
+/// # Memory Efficiency
+///
+/// - Traditional: O(expressions) memory - all expressions stored before processing
+/// - Streaming: O(depth) memory - only the recursion stack is stored
+///
+/// # Early Exit
+///
+/// The callbacks can return `false` to signal early termination. This is useful
+/// when good matches have been found and additional expressions aren't needed.
+///
+/// # Deduplication
+///
+/// The caller is responsible for deduplication if needed. This allows flexibility
+/// in deduplication strategies (e.g., per-batch, per-tier, etc.).
+///
+/// # Example
+///
+/// ```ignore
+/// let mut rhs_count = 0;
+/// let mut lhs_count = 0;
+/// let callbacks = StreamingCallbacks {
+///     on_rhs: &mut |expr| {
+///         rhs_count += 1;
+///         process_rhs(expr);
+///         true // continue generation
+///     },
+///     on_lhs: &mut |expr| {
+///         lhs_count += 1;
+///         process_lhs(expr);
+///         true // continue generation
+///     },
+/// };
+/// generate_streaming(&config, target, callbacks);
+/// ```
+pub fn generate_streaming(config: &GenConfig, target: f64, callbacks: &mut StreamingCallbacks) {
+    generate_recursive_streaming(
+        config,
+        target,
+        &mut Expression::new(),
+        0, // current stack depth
+        callbacks,
+    );
+}
+
+/// Recursively generate expressions with streaming callbacks
+///
+/// This is the core streaming generation function. It mirrors `generate_recursive`
+/// but calls callbacks instead of accumulating expressions.
+fn generate_recursive_streaming(
+    config: &GenConfig,
+    target: f64,
+    current: &mut Expression,
+    stack_depth: usize,
+    callbacks: &mut StreamingCallbacks,
+) -> bool {
+    // Check if we have a complete expression
+    if stack_depth == 1 && !current.is_empty() {
+        // Try to evaluate it with user constants and functions support
+        if let Ok(result) = evaluate_fast_with_constants_and_functions(
+            current,
+            target,
+            &config.user_constants,
+            &config.user_functions,
+        ) {
+            // Skip expressions with extreme values (overflow-prone, unlikely useful)
+            if result.value.is_finite() && result.value.abs() <= 1e12 && result.num_type >= config.min_num_type {
+                let expr = current.clone();
+                let eval_expr =
+                    EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
+
+                if current.contains_x() {
+                    if config.generate_lhs && current.complexity() <= config.max_lhs_complexity {
+                        // Call the LHS callback; return false if it signals stop
+                        if !(callbacks.on_lhs)(&eval_expr) {
+                            return false;
+                        }
+                    }
+                } else if config.generate_rhs && current.complexity() <= config.max_rhs_complexity {
+                    // Call the RHS callback; return false if it signals stop
+                    if !(callbacks.on_rhs)(&eval_expr) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    // Check limits before recursing
+    if current.len() >= config.max_length {
+        return true;
+    }
+
+    // Use appropriate complexity limit based on whether expression contains x
+    let max_complexity = if current.contains_x() {
+        config.max_lhs_complexity
+    } else {
+        // For RHS-only paths, use RHS limit
+        // For paths that might still add x, use the max of both
+        std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
+    };
+
+    if current.complexity() >= max_complexity {
+        return true;
+    }
+
+    // Calculate minimum additional complexity needed to complete expression
+    let min_remaining = min_complexity_to_complete(stack_depth, config);
+    if current.complexity() + min_remaining > max_complexity {
+        return true;
+    }
+
+    // Try adding each possible symbol
+
+    // Constants (Seft::A) - always increase stack by 1
+    for &sym in &config.constants {
+        if current.complexity() + sym.weight() > max_complexity {
+            continue;
+        }
+
+        // Skip x if we only want RHS
+        if sym == Symbol::X && !config.generate_lhs {
+            continue;
+        }
+
+        current.push(sym);
+        if !generate_recursive_streaming(config, target, current, stack_depth + 1, callbacks) {
+            current.pop();
+            return false;
+        }
+        current.pop();
+    }
+
+    // Also add x for LHS generation
+    if config.generate_lhs && !config.constants.contains(&Symbol::X) {
+        let sym = Symbol::X;
+        if current.complexity() + sym.weight() <= max_complexity {
+            current.push(sym);
+            if !generate_recursive_streaming(config, target, current, stack_depth + 1, callbacks) {
+                current.pop();
+                return false;
+            }
+            current.pop();
+        }
+    }
+
+    // Unary operators (Seft::B) - need at least 1 on stack
+    if stack_depth >= 1 {
+        for &sym in &config.unary_ops {
+            if current.complexity() + sym.weight() > max_complexity {
+                continue;
+            }
+
+            // Apply pruning rules
+            if should_prune_unary(current, sym) {
+                continue;
+            }
+
+            current.push(sym);
+            if !generate_recursive_streaming(config, target, current, stack_depth, callbacks) {
+                current.pop();
+                return false;
+            }
+            current.pop();
+        }
+    }
+
+    // Binary operators (Seft::C) - need at least 2 on stack
+    if stack_depth >= 2 {
+        for &sym in &config.binary_ops {
+            if current.complexity() + sym.weight() > max_complexity {
+                continue;
+            }
+
+            // Apply pruning rules
+            if should_prune_binary(current, sym) {
+                continue;
+            }
+
+            current.push(sym);
+            if !generate_recursive_streaming(config, target, current, stack_depth - 1, callbacks) {
+                current.pop();
+                return false;
+            }
+            current.pop();
+        }
+    }
+
+    true
 }
 
 /// Recursively generate expressions
@@ -299,8 +549,6 @@ fn should_prune_unary(expr: &Expression, sym: Symbol) -> bool {
         (Exp, Ln) => true,
         // e^(ln(a)) = a
         (Ln, Exp) => true,
-        // Trig identities that reduce
-        (SinPi, SinPi) | (CosPi, CosPi) => true,
 
         // Additional pruning rules for cleaner output:
         // 1/sqrt(a) and 1/a^2 are rare, prefer a^-0.5 or a^-2 notation
@@ -315,6 +563,25 @@ fn should_prune_unary(expr: &Expression, sym: Symbol) -> bool {
         // Negation after subtraction is redundant with addition
         // e.g., -(a-b) = b-a which we could express directly
         (Sub, Neg) => true,
+
+        // ===== ENHANCED PRUNING RULES =====
+        // Trig reduction: asin(sin(pi*x)/pi) = x, similar for acos
+        // These are rarely useful and add many redundant expressions
+        (SinPi, SinPi) => true,
+        (CosPi, CosPi) => true,
+        // asin after sinpi is identity (mod periodicity)
+        // acos after cospi is identity (mod periodicity)
+        // These patterns are captured by double application above
+
+        // Exp grows too fast - double exp is almost never useful
+        (Exp, Exp) => true,
+
+        // LambertW after exp: W(e^a) = a, so W(e^x) = x
+        (Exp, LambertW) => true,
+
+        // LambertW on small values often doesn't converge usefully
+        // W of reciprocal is rarely needed
+        (Recip, LambertW) => true,
 
         _ => false,
     }
@@ -388,15 +655,161 @@ fn should_prune_binary(expr: &Expression, sym: Symbol) -> bool {
 }
 
 /// Check if the last n stack items are identical subexpressions
-fn is_same_subexpr(_symbols: &[Symbol], _n: usize) -> bool {
-    // Simplified check - would need more complex analysis
-    // For now, just check if last two symbols are the same constant
-    false // Conservative: don't prune
+///
+/// This uses a stack-based approach to identify subexpression boundaries.
+/// For postfix notation, we track the stack depth to find where each
+/// subexpression starts.
+fn is_same_subexpr(symbols: &[Symbol], n: usize) -> bool {
+    if symbols.len() < n * 2 || n < 2 {
+        return false;
+    }
+
+    // Find the boundaries of the last n subexpressions on the stack
+    // We need to trace backwards through the postfix to find where each
+    // complete subexpression starts
+
+    let mut stack_depths: Vec<usize> = Vec::with_capacity(symbols.len() + 1);
+    stack_depths.push(0); // Initial depth
+
+    for &sym in symbols {
+        let prev_depth = *stack_depths.last().unwrap();
+        let new_depth = match sym.seft() {
+            Seft::A => prev_depth + 1,
+            Seft::B => prev_depth, // pop 1, push 1
+            Seft::C => prev_depth - 1, // pop 2, push 1
+        };
+        stack_depths.push(new_depth);
+    }
+
+    let final_depth = *stack_depths.last().unwrap();
+    if final_depth < n {
+        return false;
+    }
+
+    // Find where each of the last n subexpressions starts
+    let mut subexpr_starts: Vec<usize> = Vec::with_capacity(n);
+    let mut target_depth = final_depth;
+
+    for i in (0..symbols.len()).rev() {
+        if stack_depths[i] == target_depth && stack_depths[i + 1] > target_depth {
+            subexpr_starts.push(i);
+            target_depth -= 1;
+            if subexpr_starts.len() == n {
+                break;
+            }
+        }
+    }
+
+    if subexpr_starts.len() != n {
+        return false;
+    }
+
+    // Check if all n subexpressions are identical
+    // For simplicity with n=2, compare the two subexpressions
+    if n == 2 && subexpr_starts.len() == 2 {
+        let start1 = subexpr_starts[1]; // Earlier subexpression
+        let start2 = subexpr_starts[0]; // Later subexpression
+        let end1 = start2; // End of first is start of second
+        let end2 = symbols.len(); // End of second is end of expression
+
+        // Compare the symbol slices
+        if end1 - start1 == end2 - start2 {
+            return symbols[start1..end1] == symbols[start2..end2];
+        }
+    }
+
+    false
 }
 
 /// Check if a symbol is a constant (no x)
 fn is_constant(sym: Symbol) -> bool {
     matches!(sym.seft(), Seft::A) && sym != Symbol::X
+}
+
+/// Range-based pruning: prune expressions that will produce extreme values
+///
+/// This checks if applying a unary operator to the current expression
+/// would produce values outside useful ranges, allowing early pruning
+/// before evaluation.
+#[allow(dead_code)]
+fn should_prune_by_range(_expr: &Expression, sym: Symbol, value: f64) -> bool {
+    use Symbol::*;
+
+    match sym {
+        // Sqrt of negative is invalid (returns NaN)
+        Sqrt if value < 0.0 => true,
+
+        // Ln of non-positive is invalid
+        Ln if value <= 0.0 => true,
+
+        // Exp of large values overflows
+        Exp if value > 700.0 => true, // e^700 ≈ 1e304, near f64 max
+        Exp if value < -700.0 => true, // e^-700 ≈ 0
+
+        // Reciprocal of near-zero produces huge values
+        Recip if value.abs() < 1e-100 => true,
+
+        // Square of large values overflows
+        Square if value.abs() > 1e150 => true,
+
+        // LambertW is only defined for x >= -1/e
+        LambertW if value < -0.36787944117144233 => true,
+
+        // SinPi/CosPi of extreme values loses precision
+        SinPi | CosPi if value.abs() > 1e15 => true,
+
+        _ => false,
+    }
+}
+
+/// Pattern-based pruning: prune expressions that match known redundant patterns
+///
+/// This catches higher-level patterns that span multiple operations,
+/// beyond simple operator pairs.
+#[allow(dead_code)]
+fn should_prune_pattern(expr: &Expression, _sym: Symbol) -> bool {
+    let symbols = expr.symbols();
+    if symbols.is_empty() {
+        return false;
+    }
+
+    // Check for patterns that indicate we're building something redundant
+    // with a simpler expression
+
+    // Count operator types - too many of one type is usually redundant
+    let mut unary_count = 0;
+    let mut last_unary = None;
+    let mut consecutive_unary = 0;
+
+    for &s in symbols {
+        match s.seft() {
+            Seft::B => {
+                unary_count += 1;
+                if last_unary == Some(s) {
+                    consecutive_unary += 1;
+                    // 3+ consecutive same unary ops is almost always redundant
+                    if consecutive_unary >= 2 {
+                        return true;
+                    }
+                } else {
+                    consecutive_unary = 0;
+                }
+                last_unary = Some(s);
+            }
+            _ => {
+                consecutive_unary = 0;
+                last_unary = None;
+            }
+        }
+    }
+
+    // Too many unary operators overall makes expressions hard to interpret
+    // and usually means there's a simpler equivalent
+    if unary_count > 4 {
+        return true;
+    }
+
+    false
 }
 
 /// Generate expressions in parallel using Rayon

@@ -10,10 +10,12 @@ mod expr;
 mod gen;
 mod metrics;
 mod pool;
+mod precision;
 mod profile;
 mod report;
 mod search;
 mod symbol;
+mod thresholds;
 mod udf;
 
 use clap::{ArgAction, Parser};
@@ -93,6 +95,11 @@ struct Args {
     /// Use parallel search (default: true)
     #[arg(long, default_value = "true")]
     parallel: bool,
+
+    /// Use streaming search for lower memory usage at high complexity levels
+    /// Streaming processes expressions on-the-fly instead of accumulating in memory
+    #[arg(long)]
+    streaming: bool,
 
     /// Use report mode with categorized output (default: true)
     /// Shows top matches in each category: exact, best, elegant, interesting, stable
@@ -538,9 +545,9 @@ fn main() {
     let start = Instant::now();
 
     // Perform search with optional stats collection and early exit
-    #[cfg(feature = "parallel")]
-    let (matches, stats) = if args.parallel {
-        search::search_parallel_with_stats_and_options(
+    // Streaming search uses less memory at high complexity levels
+    let (matches, stats) = if args.streaming {
+        search::search_streaming(
             target,
             &gen_config,
             pool_size,
@@ -548,23 +555,37 @@ fn main() {
             stop_below,
         )
     } else {
-        search::search_with_stats_and_options(
-            target,
-            &gen_config,
-            pool_size,
-            stop_at_exact,
-            stop_below,
-        )
+        #[cfg(feature = "parallel")]
+        {
+            if args.parallel {
+                search::search_parallel_with_stats_and_options(
+                    target,
+                    &gen_config,
+                    pool_size,
+                    stop_at_exact,
+                    stop_below,
+                )
+            } else {
+                search::search_with_stats_and_options(
+                    target,
+                    &gen_config,
+                    pool_size,
+                    stop_at_exact,
+                    stop_below,
+                )
+            }
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            search::search_with_stats_and_options(
+                target,
+                &gen_config,
+                pool_size,
+                stop_at_exact,
+                stop_below,
+            )
+        }
     };
-
-    #[cfg(not(feature = "parallel"))]
-    let (matches, stats) = search::search_with_stats_and_options(
-        target,
-        &gen_config,
-        pool_size,
-        stop_at_exact,
-        stop_below,
-    );
 
     let elapsed = start.elapsed();
 
