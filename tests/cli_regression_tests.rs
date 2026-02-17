@@ -652,3 +652,41 @@ fn test_p_flag_without_file_accepts_target() {
         stdout
     );
 }
+
+#[test]
+fn test_l_flag_liouvillian_mode() {
+    // Original: ries -l 2.5 -> Liouvillian mode, target 2.5
+    // Legacy semantics: "-l" with a float value and no explicit target means
+    // liouvillian mode + target value
+    let output = run_ries_raw(&["-l", "2.5", "--classic", "--report", "false", "-n", "1"]);
+    assert!(
+        output.status.success(),
+        "Should parse -l as liouvillian + target\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("2.5"),
+        "Should show target value 2.5\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_level_flag_with_integer() {
+    // For explicit level, use -l3 or --level 3 with a target
+    let output = run_ries_raw(&["--level", "1", "2.5", "--classic", "--report", "false", "-n", "1"]);
+    assert!(
+        output.status.success(),
+        "Should parse --level 1 with target 2.5\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("2.5"),
+        "Should show target value 2.5\n{}",
+        stdout
+    );
+}

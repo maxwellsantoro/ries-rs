@@ -39,8 +39,9 @@ struct Args {
 
     /// Search level (each increment ≈ 10x more equations)
     /// Level 0 ≈ 89M equations, Level 2 ≈ 11B, Level 5 ≈ 15T
+    /// Legacy: "-l 2.5" (with no explicit target) means Liouvillian mode + target 2.5
     #[arg(short = 'l', long, default_value = "2")]
-    level: f32,
+    level: String,
 
     /// Maximum number of matches to display
     #[arg(short = 'n', long = "max-matches", default_value = "16")]
@@ -949,6 +950,35 @@ fn main() {
             (None, args.target)
         };
 
+    // Handle -l legacy semantics: if level looks like a float and no target, treat as target + liouvillian
+    // Original ries: "-l 2.5" means liouvillian mode + target 2.5
+    // "-l3" or "--level 3" with an explicit target means level 3
+    let (level_value, liouvillian_override, final_target) =
+        if resolved_target.is_some() {
+            // Target was explicitly provided, use -l as level
+            let level = args.level.parse::<f32>().unwrap_or(2.0);
+            (level, None, resolved_target)
+        } else {
+            // No explicit target - check if "level" looks like a target (has decimal point)
+            if args.level.contains('.') {
+                // Legacy: -l 2.5 means liouvillian + target 2.5
+                if let Ok(target_val) = args.level.parse::<f64>() {
+                    (2.0, Some(true), Some(target_val))
+                } else {
+                    // Parse error, let it fail later with proper error
+                    let level = args.level.parse::<f32>().unwrap_or(2.0);
+                    (level, None, None)
+                }
+            } else {
+                // It's an integer level, but no target - still an error later
+                let level = args.level.parse::<f32>().unwrap_or(2.0);
+                (level, None, None)
+            }
+        };
+
+    // Use final_target instead of resolved_target from here on
+    let resolved_target = final_target;
+
     // Load profile early (needed for both --eval-expression and search modes)
     let mut profile = if let Some(profile_path) = profile_arg.as_deref() {
         match Profile::from_file(profile_path) {
@@ -1098,11 +1128,12 @@ fn main() {
     // Convert level to complexity limits
     let base_lhs: f32 = 10.0;
     let base_rhs: f32 = 12.0;
-    let level_factor = 4.0 * args.level;
+    let level_factor = 4.0 * level_value;
     let max_lhs_complexity = (base_lhs + level_factor) as u32;
     let max_rhs_complexity = (base_rhs + level_factor) as u32;
 
     // Determine numeric type restriction
+    // Check liouvillian_override first (from -l legacy semantics)
     let min_type = if args.integer {
         symbol::NumType::Integer
     } else if args.rational {
@@ -1111,7 +1142,7 @@ fn main() {
         symbol::NumType::Constructible
     } else if args.algebraic {
         symbol::NumType::Algebraic
-    } else if args.liouvillian {
+    } else if args.liouvillian || liouvillian_override.unwrap_or(false) {
         symbol::NumType::Liouvillian
     } else {
         symbol::NumType::Transcendental
@@ -1308,7 +1339,7 @@ fn main() {
         // Print footer
         println!();
         if matches.len() >= effective_max_matches {
-            let next_level = (args.level + 1.0) as i32;
+            let next_level = (level_value + 1.0) as i32;
             println!(
                 "                  (for more results, use the option '-l{}')",
                 next_level
