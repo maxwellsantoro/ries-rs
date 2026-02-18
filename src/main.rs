@@ -1547,8 +1547,13 @@ fn main() {
         report.print(args.absolute, args.solve && !args.no_solve);
     }
 
-    println!();
-    println!("  Search completed in {:.3}s", elapsed.as_secs_f64());
+    // Print footer - verbose or standard
+    if args.verbose {
+        print_footer(&stats, elapsed);
+    } else {
+        println!();
+        println!("  Search completed in {:.3}s", elapsed.as_secs_f64());
+    }
 
     // Print detailed stats if requested
     if diagnostics.show_stats {
@@ -1569,6 +1574,16 @@ fn print_header(target: f64, level: i32) {
     println!("  Target: {}", target);
     println!("  Level: {}", level);
     println!();
+}
+
+fn print_footer(stats: &search::SearchStats, elapsed: std::time::Duration) {
+    println!();
+    println!("  === Summary ===");
+    let total_tested = stats.lhs_tested.saturating_add(stats.candidates_tested);
+    println!("  Total expressions tested: {}", total_tested);
+    println!("  LHS expressions: {}", stats.lhs_count);
+    println!("  RHS expressions: {}", stats.rhs_count);
+    println!("  Search time: {:.3}s", elapsed.as_secs_f64());
 }
 
 /// Parse output format from string
