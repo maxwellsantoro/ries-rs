@@ -1,5 +1,7 @@
 # Full Parity Implementation Design
 
+> Historical planning document: paths, repository metadata, and license snippets in this file reflect its drafting date and may be outdated. Current source-of-truth is `Cargo.toml`, `README.md`, and `src/`.
+
 
 **Goal:** Achieve full parity between ries-rs and original RIES across output formatting, diagnostics, algorithm options, and search quality.
 

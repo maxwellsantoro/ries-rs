@@ -1,5 +1,7 @@
 # P0 CLI Parity Fixes Implementation Plan
 
+> Historical planning document: paths, repository metadata, and license snippets in this file reflect its drafting date and may be outdated. Current source-of-truth is `Cargo.toml`, `README.md`, and `src/`.
+
 
 **Goal:** Fix critical P0 CLI compatibility issues: `-s` solve-for-x correctness, `-p` profile parsing, `-l`/`-i`/`-ie`/`-re`/`-S`/`-E` legacy semantics.
 

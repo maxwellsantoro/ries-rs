@@ -28,6 +28,7 @@ This project compares behavior against two historical references:
 In this repository, parity and compatibility tracking is documented in:
 
 - `PARITY_REMAINING_REPORT.md`
+- `docs/README.md`
 
 ## Compatibility Snapshot
 
@@ -127,16 +128,23 @@ ries-rs --define "6:sinh:hyperbolic sine:E|r-2/" --classic 3.6268604078
 
 ### Side-by-side output check
 
-Use the included comparison script (expects the original binary at the path used in the script):
+Use the included comparison script:
 
 ```bash
 ./tests/compare_with_original.sh 2.5063 2 6
+
+# Or set the original binary path explicitly
+RIES_ORIGINAL_BIN=/path/to/ries ./tests/compare_with_original.sh 2.5063 2 6
+
+# Or pass original binary as arg 4
+./tests/compare_with_original.sh 2.5063 2 6 /path/to/ries
 ```
 
 Arguments:
 - target value
 - level
 - max matches
+- optional: path to original `ries` binary (or use `RIES_ORIGINAL_BIN`)
 
 ### Explicit classic-mode parity checks
 
@@ -177,41 +185,43 @@ RIES uses postfix (Reverse Polish) notation:
 ### Constants
 | Symbol | Value | Weight |
 |--------|-------|--------|
-| `1`-`9` | Integers 1-9 | 4-7 |
+| `1`-`9` | Integers 1-9 | 3-6 |
 | `p` | π (pi) | 8 |
 | `e` | e (Euler's number) | 8 |
-| `f` | φ (golden ratio) | 9 |
-| `g` | γ (Euler-Mascheroni) | 8 |
-| `P` | ρ (plastic constant) | 9 |
-| `z` | ζ(3) (Apéry's constant) | 9 |
-| `G` | G (Catalan's constant) | 9 |
-| `x` | Variable | 2 |
+| `f` | φ (golden ratio) | 10 |
+| `g` | γ (Euler-Mascheroni) | 10 |
+| `P` | ρ (plastic constant) | 10 |
+| `z` | ζ(3) (Apéry's constant) | 12 |
+| `G` | G (Catalan's constant) | 10 |
+| `x` | Variable | 6 |
 
 ### Unary Operators
 | Symbol | Operation | Weight |
 |--------|-----------|--------|
-| `n` | Negate (-) | 2 |
-| `r` | Reciprocal (1/x) | 4 |
-| `s` | Square (x²) | 3 |
-| `q` | Square root (√x) | 4 |
-| `l` | Natural log (ln) | 6 |
-| `E` | Exponential (eˣ) | 6 |
-| `S` | sin(πx) | 7 |
-| `C` | cos(πx) | 7 |
-| `T` | tan(πx) | 7 |
+| `n` | Negate (-) | 4 |
+| `r` | Reciprocal (1/x) | 5 |
+| `s` | Square (x²) | 5 |
+| `q` | Square root (√x) | 6 |
+| `l` | Natural log (ln) | 8 |
+| `E` | Exponential (eˣ) | 8 |
+| `S` | sin(πx) | 9 |
+| `C` | cos(πx) | 9 |
+| `T` | tan(πx) | 10 |
 | `W` | Lambert W | 12 |
 
 ### Binary Operators
 | Symbol | Operation | Weight |
 |--------|-----------|--------|
-| `+` | Addition | 4 |
-| `-` | Subtraction | 4 |
-| `*` | Multiplication | 4 |
+| `+` | Addition | 3 |
+| `-` | Subtraction | 3 |
+| `*` | Multiplication | 3 |
 | `/` | Division | 4 |
-| `^` | Power | 7 |
-| `v` | Nth root | 7 |
+| `^` | Power | 5 |
+| `v` | Nth root | 6 |
 | `L` | Log base | 7 |
 | `A` | atan2 | 7 |
+
+Authoritative source for current weights: `src/symbol.rs`.
 
 ## How It Works
 
@@ -224,30 +234,22 @@ RIES uses postfix (Reverse Polish) notation:
 
 ## Command Line Options
 
+The exhaustive, authoritative option list is the CLI help:
+
+```bash
+ries-rs --help
 ```
-Options:
-  -l, --level <LEVEL>        Search level (default: 2)
-  -n, --max-matches <N>      Maximum matches to display (default: 16)
-  -x, --absolute             Show absolute x values
-  -s, --solve                Solve for x form
-  -N, --exclude <SYMS>       Exclude symbols
-  -S, --only-symbols <SYMS>  Only use these symbols
-  -a, --algebraic            Algebraic solutions only
-  -r, --rational             Rational solutions only
-  -i, --integer              Integer solutions only
-  --classic                  Classic/sniper mode (like original RIES)
-  --parity-ranking           Use parity-style ranking (default in --classic)
-  --complexity-ranking       Force complexity-first ranking
-  --parallel                 Use parallel search (default: true)
-  --streaming                Low memory mode
-  --no-slow-messages         Suppress compatibility warnings
-  -F, --format <FORMAT>      Output format: default, pretty, sympy, mathematica
-  -k, --top-k <N>            Matches per category in report mode (default: 8)
-  --stop-at-exact            Stop when exact match found
-  -X, --user-constant <SPEC> Add user constant
-  --define <SPEC>            Define user function
-  -p, --profile <FILE>       Load profile file
-```
+
+High-value option groups:
+
+- Search and output: `-l/--level`, `-n/--max-matches`, `--classic`, `--report`, `--streaming`, `--parallel`, `-F/--format`, `-k/--top-k`
+- Ranking: `--parity-ranking`, `--complexity-ranking`
+- Legacy/compatibility semantics: `-p`, `-S`, `-E`, `-i`, `-l`, `--ie`, `--re`, `-s`, `--no-solve-for-x`
+- Match controls: `--max-match-distance`, `--min-match-distance`, `--match-all-digits`, `--derivative-margin`, `--stop-at-exact`, `--stop-below`
+- Expression constraints: `--rational-exponents`, `--any-exponents`, `--rational-trig-args`, `--any-trig-args`, `--max-trig-cycles`, `--any-subexpressions`
+- Canonicalization and filtering: `--canon-reduction`, `--canon-simplify`, `--no-canon-simplify`, `--numeric-anagram`, `--min-equate-value`, `--max-equate-value`
+- Diagnostics/verbosity: `-D[...]`, `--show-work`, `--stats`, `--verbose`, `--no-slow-messages`
+- Profiles and extension points: `--profile`, `--include`, `-X/--user-constant`, `--define`, `--symbol-weights`, `--symbol-names`
 
 ## Installation
 
@@ -268,7 +270,7 @@ cargo install --path .
 
 ## License
 
-MIT License. Based on Robert Munafo's original RIES program.
+MIT License. See `LICENSE`.
 
 ## References
 

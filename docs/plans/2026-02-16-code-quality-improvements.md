@@ -1,5 +1,7 @@
 # RIES-RS Code Quality Improvements Implementation Plan
 
+> Historical planning document: paths, repository metadata, and license snippets in this file reflect its drafting date and may be outdated. Current source-of-truth is `Cargo.toml`, `README.md`, and `src/`.
+
 
 **Goal:** Eliminate warnings, reorganize tests, add documentation, enable CI/CD, and lay groundwork for high-precision mode.
 
