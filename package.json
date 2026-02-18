@@ -2,18 +2,28 @@
   "name": "ries-rs",
   "version": "0.1.0",
   "description": "Find algebraic equations given their solution - WASM build",
-  "main": "ries_rs.js",
-  "types": "ries_rs.d.ts",
+  "main": "pkg-node/ries_rs.js",
+  "module": "pkg-bundler/ries_rs.js",
+  "types": "pkg/ries_rs.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/ries_rs.d.ts",
+      "import": "./pkg-bundler/ries_rs.js",
+      "require": "./pkg-node/ries_rs.js",
+      "default": "./pkg/ries_rs.js"
+    }
+  },
   "files": [
-    "ries_rs.js",
-    "ries_rs.d.ts",
-    "ries_rs_bg.wasm",
-    "ries_rs_bg.js"
+    "pkg",
+    "pkg-node",
+    "pkg-bundler"
   ],
   "scripts": {
     "build": "wasm-pack build --target web --out-dir pkg -- --features wasm",
     "build:node": "wasm-pack build --target nodejs --out-dir pkg-node -- --features wasm",
     "build:bundler": "wasm-pack build --target bundler --out-dir pkg-bundler -- --features wasm",
+    "build:all": "npm run build && npm run build:node && npm run build:bundler",
+    "prepack": "npm run build:all",
     "test": "wasm-pack test --node -- --features wasm"
   },
   "keywords": [
