@@ -82,6 +82,23 @@ fn parse_match_lines(stdout: &str) -> Vec<String> {
         .collect()
 }
 
+fn parse_first_total_levels(stdout: &str) -> Option<usize> {
+    stdout.lines().find_map(|line| {
+        if !line.contains("levels]") {
+            return None;
+        }
+        let bracket_start = line.find('[')?;
+        let bracket_end = line[bracket_start + 1..].find(']')? + bracket_start + 1;
+        let bracket_content = line[bracket_start + 1..bracket_end].trim();
+        if !bracket_content.contains('/') || !bracket_content.contains("levels") {
+            return None;
+        }
+        let levels_part = bracket_content.split_whitespace().next()?;
+        let total = levels_part.split('/').nth(1)?;
+        total.trim().parse::<usize>().ok()
+    })
+}
+
 fn unique_tmp_path(stem: &str) -> std::path::PathBuf {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

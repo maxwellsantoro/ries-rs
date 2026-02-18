@@ -2100,6 +2100,7 @@ fn main() {
         } else {
             stability::StabilityConfig::default()
         };
+        let tolerance_factors = config.tolerance_factors.clone();
         let mut analyzer = stability::StabilityAnalyzer::new(config);
 
         // Add the base matches
@@ -2109,7 +2110,7 @@ fn main() {
         let base_error = search_config.max_error;
         let use_parallel = !args.deterministic && args.parallel;
 
-        for factor in &[0.1, 0.01, 0.001] {
+        for factor in tolerance_factors.into_iter().skip(1) {
             let mut tighter_config = search_config.clone();
             tighter_config.max_error = base_error * factor;
 

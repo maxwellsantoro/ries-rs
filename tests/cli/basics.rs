@@ -258,6 +258,52 @@ fn test_list_options_outputs_known_flags() {
 }
 
 #[test]
+fn test_stability_thorough_uses_configured_level_count() {
+    let (default_stdout, _stderr) = run_ries(&[
+        "2.5",
+        "--classic",
+        "--report",
+        "false",
+        "--stability-check",
+        "-l",
+        "0",
+        "-n",
+        "1",
+    ]);
+    let default_levels = parse_first_total_levels(&default_stdout)
+        .expect("expected stability report with level count for default config");
+    assert_eq!(
+        default_levels, 5,
+        "default stability config should run 5 levels\n{}",
+        default_stdout
+    );
+
+    let (thorough_stdout, _stderr) = run_ries(&[
+        "2.5",
+        "--classic",
+        "--report",
+        "false",
+        "--stability-check",
+        "--stability-thorough",
+        "-l",
+        "0",
+        "-n",
+        "1",
+    ]);
+    let thorough_levels = parse_first_total_levels(&thorough_stdout)
+        .expect("expected stability report with level count for thorough config");
+    assert_eq!(
+        thorough_levels, 8,
+        "thorough stability config should run 8 levels\n{}",
+        thorough_stdout
+    );
+    assert!(
+        thorough_levels > default_levels,
+        "thorough mode should evaluate more levels"
+    );
+}
+
+#[test]
 fn test_enable_reenables_symbol_after_exclude() {
     let (stdout_no_enable, _stderr) = run_ries(&["2.5", "--report", "false", "-n", "1", "-N", "+"]);
     let (lhs_no, rhs_no) =
