@@ -765,3 +765,15 @@ fn test_e_bare_enable_all() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("2.5"), "Should show target value\n{}", stdout);
 }
+
+#[test]
+fn test_f1_condensed_format_accepted() {
+    let (stdout, _stderr) = run_ries(&["2.5", "-F1", "--classic", "--report", "false", "-n", "1"]);
+    // -F1 should work as an alias for -F0 postfix compact
+    // Postfix compact for x = 5/2 would be "x52/" (no spaces)
+    assert!(
+        stdout.contains("52/") || stdout.contains("x52"),
+        "expected -F1 to produce postfix compact output (like -F0)\n{}",
+        stdout
+    );
+}
