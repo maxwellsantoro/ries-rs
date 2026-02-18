@@ -2,10 +2,54 @@
 //!
 //! Selects top-K matches per category and formats output.
 
+use crate::expr::{Expression, OutputFormat};
 use crate::metrics::{MatchMetrics, OperatorFrequency};
 use crate::pool::{LhsKey, SignatureKey};
 use crate::search::Match;
+use crate::symbol::Symbol;
 use std::collections::HashSet;
+
+/// Display format for expressions (matches main.rs DisplayFormat)
+#[derive(Debug, Clone, Copy)]
+pub enum DisplayFormat {
+    /// Infix with optional format variant
+    Infix(OutputFormat),
+    /// Compact postfix (like "52/")
+    PostfixCompact,
+    /// Verbose postfix (like "5 2 /")
+    PostfixVerbose,
+    /// Alias for PostfixCompact (-F1)
+    Condensed,
+}
+
+/// Format an expression for display using the specified format
+fn format_expression_for_display(expression: &Expression, format: DisplayFormat) -> String {
+    match format {
+        DisplayFormat::Infix(inner) => expression.to_infix_with_format(inner),
+        DisplayFormat::PostfixCompact | DisplayFormat::Condensed => expression.to_postfix(),
+        DisplayFormat::PostfixVerbose => expression
+            .symbols()
+            .iter()
+            .map(|sym| postfix_verbose_token(*sym))
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
+}
+
+fn postfix_verbose_token(sym: Symbol) -> String {
+    use Symbol;
+    match sym {
+        Symbol::Neg => "neg".to_string(),
+        Symbol::Recip => "recip".to_string(),
+        Symbol::Sqrt => "sqrt".to_string(),
+        Symbol::Square => "dup*".to_string(),
+        Symbol::Pow => "**".to_string(),
+        Symbol::Root => "root".to_string(),
+        Symbol::Log => "logn".to_string(),
+        Symbol::Exp => "exp".to_string(),
+        _ => sym.display_name(),
+    }
+}
 
 /// Report categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,7 +197,7 @@ impl Report {
     }
 
     /// Print the report to stdout
-    pub fn print(&self, absolute: bool, solve: bool) {
+    pub fn print(&self, absolute: bool, solve: bool, format: DisplayFormat) {
         for (category, matches) in &self.categories {
             if matches.is_empty() {
                 continue;
@@ -164,7 +208,7 @@ impl Report {
             println!();
 
             for mwm in matches {
-                print_match(&mwm.m, &mwm.metrics, self.target, absolute, solve);
+                print_match(&mwm.m, &mwm.metrics, self.target, absolute, solve, format);
             }
         }
     }
@@ -322,9 +366,16 @@ impl Clone for MatchWithMetrics {
 }
 
 /// Print a single match
-fn print_match(m: &Match, metrics: &MatchMetrics, _target: f64, absolute: bool, solve: bool) {
-    let lhs_str = m.lhs.expr.to_infix();
-    let rhs_str = m.rhs.expr.to_infix();
+fn print_match(
+    m: &Match,
+    metrics: &MatchMetrics,
+    _target: f64,
+    absolute: bool,
+    solve: bool,
+    format: DisplayFormat,
+) {
+    let lhs_str = format_expression_for_display(&m.lhs.expr, format);
+    let rhs_str = format_expression_for_display(&m.rhs.expr, format);
 
     let error_str = if metrics.is_exact {
         "('exact' match)".to_string()
