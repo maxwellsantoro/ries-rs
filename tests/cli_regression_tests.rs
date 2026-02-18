@@ -783,3 +783,11 @@ fn test_verbose_output_shows_target() {
     let (stdout, _stderr) = run_ries(&["2.5", "--verbose", "--report", "false", "--max-matches", "1"]);
     assert!(stdout.contains("Target:") || stdout.contains("target"), "expected --verbose to show target in header\n{}", stdout);
 }
+
+#[test]
+fn test_verbose_output_shows_total_equations() {
+    let (stdout, _stderr) = run_ries(&["2.5", "--verbose", "--report", "false", "--max-matches", "1"]);
+    // Should show total equations tested or similar summary info
+    let lower = stdout.to_lowercase();
+    assert!(lower.contains("total") || lower.contains("equations") || lower.contains("summary"), "expected --verbose to show summary with total/equations in footer\n{}", stdout);
+}
