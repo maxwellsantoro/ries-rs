@@ -1381,13 +1381,7 @@ fn main() {
 
     // Classic mode = "sniper mode": stop early like original RIES
     // Also stop at exact for --ie/--re exact modes
-    let stop_at_exact = if args.classic && !args.stop_at_exact {
-        true
-    } else if exact_mode {
-        true
-    } else {
-        args.stop_at_exact
-    };
+    let stop_at_exact = args.classic || exact_mode || args.stop_at_exact;
 
     let stop_below = if args.classic && args.stop_below.is_none() {
         Some(1e-10_f64.max(target.abs() * 1e-12))
