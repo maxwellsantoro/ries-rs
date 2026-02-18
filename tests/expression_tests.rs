@@ -80,3 +80,25 @@ fn test_output_formats() {
         .to_infix_with_format(OutputFormat::Mathematica)
         .contains("Pi"));
 }
+
+#[test]
+fn test_user_function_infix_does_not_panic() {
+    let expr = Expression::parse("xH").unwrap(); // H maps to UserFunction0
+    assert_eq!(expr.to_infix(), "f0(x)");
+}
+
+#[test]
+fn test_mathematica_format_has_balanced_brackets() {
+    use ries_rs::expr::OutputFormat;
+
+    let expr = Expression::parse("pq").unwrap(); // sqrt(pi)
+    let formatted = expr.to_infix_with_format(OutputFormat::Mathematica);
+
+    let open = formatted.chars().filter(|c| *c == '[').count();
+    let close = formatted.chars().filter(|c| *c == ']').count();
+    assert_eq!(
+        open, close,
+        "Unbalanced Mathematica brackets: {}",
+        formatted
+    );
+}

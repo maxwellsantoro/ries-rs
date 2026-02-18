@@ -35,6 +35,7 @@
 //!
 //! High-precision mode is intended for research and verification, not
 //! interactive use.
+#![allow(dead_code)]
 
 use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Neg, Sub};

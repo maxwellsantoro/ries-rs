@@ -2,7 +2,9 @@
 //!
 //! Symbols represent constants, variables, and operators in postfix notation.
 
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::{OnceLock, RwLock};
 
 /// Stack effect type - how many values a symbol pops and pushes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -138,6 +140,37 @@ pub enum Symbol {
     Atan2 = b'A',
 }
 
+fn weight_overrides() -> &'static RwLock<HashMap<Symbol, u32>> {
+    static OVERRIDES: OnceLock<RwLock<HashMap<Symbol, u32>>> = OnceLock::new();
+    OVERRIDES.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn name_overrides() -> &'static RwLock<HashMap<Symbol, String>> {
+    static OVERRIDES: OnceLock<RwLock<HashMap<Symbol, String>>> = OnceLock::new();
+    OVERRIDES.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Set global symbol weight overrides.
+///
+/// Overrides apply process-wide and affect complexity scoring anywhere `Symbol::weight()`
+/// is used. This is primarily intended for CLI/profile customization.
+pub fn set_weight_overrides(overrides: HashMap<Symbol, u32>) {
+    if let Ok(mut guard) = weight_overrides().write() {
+        *guard = overrides;
+    }
+}
+
+/// Set global symbol display-name overrides.
+///
+/// Overrides apply process-wide and affect expression formatting in CLI output.
+/// This is used for profile directives like `--symbol-names` and user-defined
+/// constant/function names.
+pub fn set_name_overrides(overrides: HashMap<Symbol, String>) {
+    if let Ok(mut guard) = name_overrides().write() {
+        *guard = overrides;
+    }
+}
+
 impl Symbol {
     /// Get the stack effect type of this symbol
     #[inline]
@@ -232,7 +265,17 @@ impl Symbol {
     /// For a detailed explanation of the calibration process and rationale,
     /// see `docs/COMPLEXITY.md` in the source repository.
     #[inline]
-    pub const fn weight(self) -> u32 {
+    pub fn weight(self) -> u32 {
+        if let Ok(guard) = weight_overrides().read() {
+            if let Some(&w) = guard.get(&self) {
+                return w;
+            }
+        }
+        self.default_weight()
+    }
+
+    #[inline]
+    const fn default_weight(self) -> u32 {
         use Symbol::*;
         match self {
             // Small integers are cheap - they're fundamental building blocks
@@ -500,6 +543,16 @@ impl Symbol {
             UserFunction14 => "f14",
             UserFunction15 => "f15",
         }
+    }
+
+    /// Get the display name for this symbol, applying runtime overrides.
+    pub fn display_name(self) -> String {
+        if let Ok(guard) = name_overrides().read() {
+            if let Some(name) = guard.get(&self) {
+                return name.clone();
+            }
+        }
+        self.name().to_string()
     }
 
     /// Parse a symbol from its byte representation
