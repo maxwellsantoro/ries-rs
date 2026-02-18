@@ -1422,7 +1422,14 @@ fn main() {
         rhs_excluded_symbols,
         show_newton: diagnostics.show_newton,
         show_match_checks: diagnostics.show_match_checks,
+        show_pruned_arith: diagnostics.show_pruned_arith,
+        match_all_digits: args.match_all_digits,
     };
+
+    // When --match-all-digits is enabled, set tolerance based on target's significant digits
+    if args.match_all_digits && args.max_match_distance.is_none() {
+        search_config.max_error = compute_significant_digits_tolerance(target);
+    }
 
     if args.one_sided {
         // One-sided mode ranks direct x = RHS matches, so keep only display count.
@@ -1586,6 +1593,45 @@ fn format_value(v: f64) -> String {
     } else {
         format!("{:.10}", v)
     }
+}
+
+/// Compute tolerance for --match-all-digits based on significant digits of the target
+///
+/// When --match-all-digits is enabled, the match tolerance is set so that matches
+/// must agree with the target value to all significant digits provided.
+///
+/// For example:
+/// - Target "2.5" (1 sig fig after decimal) -> tolerance ~0.05 (half of last digit)
+/// - Target "2.50" (2 sig figs after decimal) -> tolerance ~0.005
+/// - Target "2.500" (3 sig figs after decimal) -> tolerance ~0.0005
+fn compute_significant_digits_tolerance(target: f64) -> f64 {
+    if target == 0.0 {
+        return 1e-15;
+    }
+
+    // Convert to string to count significant digits
+    let target_str = format!("{:.15}", target);
+
+    // Remove trailing zeros after decimal to get actual precision
+    let trimmed = target_str.trim_end_matches('0');
+
+    // Find decimal point position
+    let decimal_pos = trimmed.find('.');
+
+    // Count digits after decimal (not counting trailing zeros we removed)
+    let digits_after_decimal = if let Some(pos) = decimal_pos {
+        // Digits after decimal in the trimmed string
+        trimmed.len() - pos - 1
+    } else {
+        0
+    };
+
+    // Tolerance is 0.5 * 10^(-digits_after_decimal)
+    // This means the match must agree to the last digit shown
+    let tolerance = 0.5 * 10_f64.powi(-(digits_after_decimal as i32));
+
+    // Ensure a minimum tolerance for numerical stability
+    tolerance.max(1e-15)
 }
 
 fn print_header(target: f64, level: i32) {

@@ -827,3 +827,24 @@ fn test_diagnostic_n_shows_newton_iterations() {
         stderr
     );
 }
+
+#[test]
+fn test_diagnostic_a_recognized() {
+    let (stdout, stderr) = run_ries(&["2.5", "-DA", "--report", "false", "--max-matches", "1"]);
+    // -DA should not warn about unsupported channel
+    assert!(!stderr.to_lowercase().contains("unsupported"));
+}
+
+#[test]
+fn test_match_all_digits_option_accepted() {
+    // Just verify the option is accepted and doesn't crash
+    let (stdout, _) = run_ries(&["2.5", "--match-all-digits", "--report", "false", "--max-matches", "1"]);
+    assert!(stdout.contains("x"));
+}
+
+#[test]
+fn test_derivative_margin_option_accepted() {
+    // Just verify the option is accepted and doesn't crash
+    let (stdout, _) = run_ries(&["2.5", "--derivative-margin", "1e-10", "--report", "false", "--max-matches", "1"]);
+    assert!(stdout.contains("x"));
+}
