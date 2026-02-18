@@ -90,9 +90,11 @@ pub mod metrics;
 pub mod pool;
 #[cfg(feature = "highprec")]
 pub mod precision;
+pub mod presets;
 pub mod profile;
 pub mod report;
 pub mod search;
+pub mod stability;
 pub mod symbol;
 pub mod thresholds;
 pub mod udf;

@@ -551,7 +551,7 @@ impl fmt::Debug for Expression {
 }
 
 /// An evaluated expression with its numeric value
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EvaluatedExpr {
     /// The symbolic expression
     pub expr: Expression,
