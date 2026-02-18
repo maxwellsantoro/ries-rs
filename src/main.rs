@@ -881,6 +881,7 @@ enum DisplayFormat {
     Infix(expr::OutputFormat),
     PostfixCompact,
     PostfixVerbose,
+    Condensed, // -F1 alias for PostfixCompact
 }
 
 #[derive(Debug, Default)]
@@ -1558,6 +1559,7 @@ fn format_value(v: f64) -> String {
 fn parse_display_format(s: &str) -> DisplayFormat {
     match s.to_lowercase().as_str() {
         "0" => DisplayFormat::PostfixCompact,
+        "1" => DisplayFormat::Condensed, // alias for PostfixCompact
         "3" => DisplayFormat::PostfixVerbose,
         "pretty" | "unicode" => DisplayFormat::Infix(expr::OutputFormat::Pretty),
         "mathematica" | "math" | "mma" => DisplayFormat::Infix(expr::OutputFormat::Mathematica),
@@ -1618,7 +1620,7 @@ fn format_expression_for_display(
                 infix
             }
         }
-        DisplayFormat::PostfixCompact => expression.to_postfix(),
+        DisplayFormat::PostfixCompact | DisplayFormat::Condensed => expression.to_postfix(),
         DisplayFormat::PostfixVerbose => expression
             .symbols()
             .iter()
