@@ -26,6 +26,7 @@ default = ["parallel"]
 parallel = ["rayon"]
 highprec = ["rug"]
 python = ["pyo3"]
+wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen"]
 
 [dependencies]
 # CLI
@@ -42,6 +43,11 @@ rug = { version = "1.24", optional = true }
 
 # Python bindings (optional)
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+
+# WASM bindings (optional)
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
 
 # Utilities
 ordered-float = "4.2"

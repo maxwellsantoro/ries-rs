@@ -95,6 +95,8 @@ pub mod presets;
 pub mod profile;
 #[cfg(feature = "python")]
 mod python;
+#[cfg(feature = "wasm")]
+mod wasm;
 pub mod report;
 pub mod search;
 pub mod stability;
