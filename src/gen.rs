@@ -55,6 +55,8 @@ pub struct GenConfig {
     pub user_constants: Vec<UserConstant>,
     /// User-defined functions (for evaluation during generation)
     pub user_functions: Vec<UserFunction>,
+    /// Show pruned arithmetic diagnostic output (-DA)
+    pub show_pruned_arith: bool,
 }
 
 impl Default for GenConfig {
@@ -76,6 +78,7 @@ impl Default for GenConfig {
             generate_rhs: true,
             user_constants: Vec::new(),
             user_functions: Vec::new(),
+            show_pruned_arith: false,
         }
     }
 }
@@ -313,30 +316,42 @@ fn generate_recursive_streaming(
     // Check if we have a complete expression
     if stack_depth == 1 && !current.is_empty() {
         // Try to evaluate it with user constants and functions support
-        if let Ok(result) = evaluate_fast_with_constants_and_functions(
+        match evaluate_fast_with_constants_and_functions(
             current,
             target,
             &config.user_constants,
             &config.user_functions,
         ) {
-            // Skip expressions with extreme values (overflow-prone, unlikely useful)
-            if result.value.is_finite() && result.value.abs() <= 1e12 && result.num_type >= config.min_num_type {
-                let expr = current.clone();
-                let eval_expr =
-                    EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
+            Ok(result) => {
+                // Skip expressions with extreme values (overflow-prone, unlikely useful)
+                if result.value.is_finite() && result.value.abs() <= 1e12 && result.num_type >= config.min_num_type {
+                    let expr = current.clone();
+                    let eval_expr =
+                        EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
 
-                if current.contains_x() {
-                    if config.generate_lhs && current.complexity() <= config.max_lhs_complexity {
-                        // Call the LHS callback; return false if it signals stop
-                        if !(callbacks.on_lhs)(&eval_expr) {
+                    if current.contains_x() {
+                        if config.generate_lhs && current.complexity() <= config.max_lhs_complexity {
+                            // Call the LHS callback; return false if it signals stop
+                            if !(callbacks.on_lhs)(&eval_expr) {
+                                return false;
+                            }
+                        }
+                    } else if config.generate_rhs && current.complexity() <= config.max_rhs_complexity {
+                        // Call the RHS callback; return false if it signals stop
+                        if !(callbacks.on_rhs)(&eval_expr) {
                             return false;
                         }
                     }
-                } else if config.generate_rhs && current.complexity() <= config.max_rhs_complexity {
-                    // Call the RHS callback; return false if it signals stop
-                    if !(callbacks.on_rhs)(&eval_expr) {
-                        return false;
-                    }
+                }
+            }
+            Err(e) => {
+                // Expression was pruned due to arithmetic error
+                if config.show_pruned_arith {
+                    eprintln!(
+                        "  [pruned arith] expression=\"{}\" reason={:?}",
+                        current.to_postfix(),
+                        e
+                    );
                 }
             }
         }
@@ -468,27 +483,39 @@ fn generate_recursive(
     // Check if we have a complete expression
     if stack_depth == 1 && !current.is_empty() {
         // Try to evaluate it with user constants and functions support
-        if let Ok(result) = evaluate_fast_with_constants_and_functions(
+        match evaluate_fast_with_constants_and_functions(
             current,
             target,
             &config.user_constants,
             &config.user_functions,
         ) {
-            // Skip expressions with extreme values (overflow-prone, unlikely useful)
-            if !result.value.is_finite() || result.value.abs() > 1e12 {
-                // Skip infinite or very large values
-            } else if result.num_type >= config.min_num_type {
-                let expr = current.clone();
-                let eval_expr =
-                    EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
+            Ok(result) => {
+                // Skip expressions with extreme values (overflow-prone, unlikely useful)
+                if !result.value.is_finite() || result.value.abs() > 1e12 {
+                    // Skip infinite or very large values
+                } else if result.num_type >= config.min_num_type {
+                    let expr = current.clone();
+                    let eval_expr =
+                        EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
 
-                if current.contains_x() {
-                    if config.generate_lhs && current.complexity() <= config.max_lhs_complexity {
-                        // Keep all LHS expressions; derivative≈0 cases handled in search
-                        lhs_out.push(eval_expr);
+                    if current.contains_x() {
+                        if config.generate_lhs && current.complexity() <= config.max_lhs_complexity {
+                            // Keep all LHS expressions; derivative≈0 cases handled in search
+                            lhs_out.push(eval_expr);
+                        }
+                    } else if config.generate_rhs && current.complexity() <= config.max_rhs_complexity {
+                        rhs_out.push(eval_expr);
                     }
-                } else if config.generate_rhs && current.complexity() <= config.max_rhs_complexity {
-                    rhs_out.push(eval_expr);
+                }
+            }
+            Err(e) => {
+                // Expression was pruned due to arithmetic error
+                if config.show_pruned_arith {
+                    eprintln!(
+                        "  [pruned arith] expression=\"{}\" reason={:?}",
+                        current.to_postfix(),
+                        e
+                    );
                 }
             }
         }
@@ -1008,6 +1035,7 @@ mod tests {
             generate_rhs: true,
             user_constants: Vec::new(),
             user_functions: Vec::new(),
+            show_pruned_arith: false,
         }
     }
 
