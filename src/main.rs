@@ -9,6 +9,7 @@ mod eval;
 mod expr;
 mod fast_match;
 mod gen;
+mod manifest;
 mod metrics;
 mod pool;
 #[cfg(feature = "highprec")]
@@ -21,6 +22,7 @@ mod thresholds;
 mod udf;
 
 use clap::{ArgAction, Parser};
+use manifest::{MatchInfo, RunManifest, SearchConfigInfo};
 use profile::Profile;
 use report::{Report, ReportConfig};
 use std::path::PathBuf;
@@ -134,6 +136,11 @@ struct Args {
     /// Use parallel search (default: true)
     #[arg(long, default_value = "true")]
     parallel: bool,
+
+    /// Force deterministic output (disables parallelism, uses stable sorting)
+    /// Required for reproducible results in academic papers
+    #[arg(long)]
+    deterministic: bool,
 
     /// Use streaming search for lower memory usage at high complexity levels
     /// Streaming processes expressions on-the-fly instead of accumulating in memory
@@ -359,6 +366,11 @@ struct Args {
     /// Show verbose output with header and footer details
     #[arg(long)]
     verbose: bool,
+
+    /// Emit a run manifest JSON file for reproducibility
+    /// Contains full configuration and results for academic verification
+    #[arg(long, value_name = "FILE")]
+    emit_manifest: Option<PathBuf>,
 }
 
 /// Parse a user constant from CLI argument
@@ -2004,26 +2016,37 @@ fn main() {
             (vec![fast_match], fast_stats)
         } else {
             // No fast match found, do full search
+            // Deterministic mode disables parallelism for reproducible results
+            let use_parallel = !args.deterministic && args.parallel;
             perform_search(
                 &gen_config,
                 &search_config,
                 use_streaming,
-                args.parallel,
+                use_parallel,
                 args.one_sided,
             )
         }
     } else {
         // Not in quick mode, always do full search
+        // Deterministic mode disables parallelism for reproducible results
+        let use_parallel = !args.deterministic && args.parallel;
         perform_search(
             &gen_config,
             &search_config,
             use_streaming,
-            args.parallel,
+            use_parallel,
             args.one_sided,
         )
     };
 
     let mut matches = matches;
+
+    // Deterministic mode: apply stable sorting to ensure reproducible order
+    // This handles any remaining non-determinism from pool ordering
+    if args.deterministic {
+        matches.sort_by(|a, b| pool::compare_matches(a, b, ranking_mode));
+    }
+
     if args.min_equate_value.is_some() || args.max_equate_value.is_some() {
         matches.retain(|m| match_in_equate_bounds(m, args.min_equate_value, args.max_equate_value));
     }
@@ -2088,6 +2111,13 @@ fn main() {
     // Display matches
     // Parse the output format once for both classic and report modes
     let output_format = parse_display_format(&args.format);
+
+    // Capture matches for manifest before Report::generate consumes them
+    let manifest_matches: Vec<search::Match> = if args.emit_manifest.is_some() {
+        matches.clone()
+    } else {
+        Vec::new()
+    };
 
     if matches.is_empty() {
         println!("   No matches found.");
@@ -2159,6 +2189,107 @@ fn main() {
     if diagnostics.show_stats {
         stats.print();
     }
+
+    // Emit manifest if requested
+    if let Some(manifest_path) = &args.emit_manifest {
+        let manifest = build_manifest(
+            target,
+            level_value,
+            max_lhs_complexity,
+            max_rhs_complexity,
+            args.deterministic,
+            args.parallel,
+            search_config.max_error,
+            effective_max_matches,
+            ranking_mode,
+            &profile.constants,
+            &args.exclude,
+            &args.only_symbols,
+            &manifest_matches,
+        );
+
+        match manifest.to_json() {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(manifest_path, json) {
+                    eprintln!("Error writing manifest: {}", e);
+                } else if !args.no_slow_messages {
+                    eprintln!("Manifest written to {}", manifest_path.display());
+                }
+            }
+            Err(e) => {
+                eprintln!("Error serializing manifest: {}", e);
+            }
+        }
+    }
+}
+
+/// Build a manifest from the search results
+#[allow(clippy::too_many_arguments)]
+fn build_manifest(
+    target: f64,
+    level: f32,
+    max_lhs_complexity: u32,
+    max_rhs_complexity: u32,
+    deterministic: bool,
+    parallel: bool,
+    max_error: f64,
+    max_matches: usize,
+    ranking_mode: pool::RankingMode,
+    user_constants: &[profile::UserConstant],
+    excluded_symbols: &Option<String>,
+    allowed_symbols: &Option<String>,
+    matches: &[search::Match],
+) -> RunManifest {
+    let config = SearchConfigInfo {
+        target,
+        level,
+        max_lhs_complexity,
+        max_rhs_complexity,
+        deterministic,
+        parallel: !deterministic && parallel,
+        max_error,
+        max_matches,
+        ranking_mode: match ranking_mode {
+            pool::RankingMode::Complexity => "complexity".to_string(),
+            pool::RankingMode::Parity => "parity".to_string(),
+        },
+        user_constants: user_constants
+            .iter()
+            .map(|uc| manifest::UserConstantInfo {
+                name: uc.name.clone(),
+                value: uc.value,
+                description: uc.description.clone(),
+            })
+            .collect(),
+        excluded_symbols: excluded_symbols
+            .as_ref()
+            .map(|s| s.chars().map(|c| c.to_string()).collect())
+            .unwrap_or_default(),
+        allowed_symbols: allowed_symbols
+            .as_ref()
+            .map(|s| s.chars().map(|c| c.to_string()).collect()),
+    };
+
+    let results: Vec<MatchInfo> = matches
+        .iter()
+        .take(max_matches)
+        .map(|m| {
+            let stability = crate::metrics::MatchMetrics::from_match(m, None).stability;
+            MatchInfo {
+                lhs_postfix: m.lhs.expr.to_postfix(),
+                rhs_postfix: m.rhs.expr.to_postfix(),
+                lhs_infix: m.lhs.expr.to_infix(),
+                rhs_infix: m.rhs.expr.to_infix(),
+                error: m.error.abs(),
+                is_exact: m.error.abs() < thresholds::EXACT_MATCH_TOLERANCE,
+                complexity: m.complexity,
+                x_value: m.x_value,
+                stability: Some(stability),
+            }
+        })
+        .collect();
+
+    RunManifest::new(config, results)
 }
 
 fn format_value(v: f64) -> String {

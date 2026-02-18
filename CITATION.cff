@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: "If you use ries-rs in your research, please cite it as below."
+title: "ries-rs"
+version: 0.1.0
+# doi: 10.5281/zenodo.XXXXXXX  # Add after Zenodo release
+date-released: 2026-02-18
+url: "https://github.com/maxwellsantoro/ries-rs"
+authors:
+  - given-names: RIES
+    family-names: Contributors
+repository-code: "https://github.com/maxwellsantoro/ries-rs"
+license: MIT
+keywords:
+  - inverse-symbolic-calculator
+  - constant-recognition
+  - mathematical-software
+  - equation-solver
+  - algebraic-equations
+  - numerical-methods
+abstract: |
+  ries-rs is a Rust implementation of Robert Munafo's RIES (RILYBOT Inverse
+  Equation Solver) program. Given a numeric target value, it searches for
+  algebraic equations that have the target as a solution. Features include
+  parallel search, automatic differentiation for Newton-Raphson refinement,
+  user-defined constants and functions, multiple output formats, and
+  reproducible deterministic mode for research applications.
+references:
+  - type: software
+    title: "RIES: Find Algebraic Equations, Given Their Solution"
+    authors:
+      - family-names: Munafo
+        given-names: Robert
+    url: "https://mrob.com/pub/ries/"
+  - type: article
+    title: "Computing with No Machine Constants, Only Constructive Axioms"
+    authors:
+      - family-names: Stoutemyer
+        given-names: David R.
+    year: 2024
+    journal: "arXiv preprint arXiv:2402.03304"
