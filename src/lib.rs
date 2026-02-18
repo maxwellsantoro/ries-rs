@@ -85,6 +85,7 @@ pub mod eval;
 pub mod expr;
 pub mod fast_match;
 pub mod gen;
+pub mod manifest;
 pub mod metrics;
 pub mod pool;
 #[cfg(feature = "highprec")]
@@ -134,3 +135,6 @@ pub use thresholds::{DEGENERATE_DERIVATIVE, EXACT_MATCH_TOLERANCE, NEWTON_TOLERA
 // High-precision types (when feature is enabled)
 #[cfg(feature = "highprec")]
 pub use precision::{HighPrec, RiesFloat, DEFAULT_PRECISION};
+
+// Manifest types for reproducibility
+pub use manifest::{MatchInfo, RunManifest, SearchConfigInfo};

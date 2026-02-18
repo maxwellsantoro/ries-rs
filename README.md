@@ -268,6 +268,28 @@ The binary will be at `target/release/ries-rs`.
 cargo install --path .
 ```
 
+## How to Cite
+
+If you use ries-rs in academic work, please cite it using the following BibTeX:
+
+```bibtex
+@software{ries-rs2026,
+  author       = {RIES Contributors},
+  title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
+  year         = {2026},
+  version      = {0.1.0},
+  url          = {https://github.com/maxwellsantoro/ries-rs},
+  license      = {MIT},
+  note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}
+}
+```
+
+For reproducibility in publications, use `--deterministic` and `--emit-manifest` flags:
+
+```bash
+ries-rs --deterministic --emit-manifest manifest.json 3.141592653589793
+```
+
 ## License
 
 MIT License. See `LICENSE`.
@@ -277,3 +299,4 @@ MIT License. See `LICENSE`.
 - [Original RIES](https://mrob.com/pub/ries/) by Robert Munafo
 - [RIES Documentation](https://mrob.com/pub/ries/ries.html)
 - [clsn/ries fork](https://github.com/clsn/ries)
+- Stoutemyer, D.R. (2024). "Computing with No Machine Constants, Only Constructive Axioms". arXiv:2402.03304
