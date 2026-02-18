@@ -33,6 +33,8 @@ pub fn test_search_config(target: f64) -> SearchConfig {
         show_newton: false,
         show_match_checks: false,
         show_pruned_arith: false,
+        show_pruned_range: false,
+        show_db_adds: false,
         match_all_digits: false,
         derivative_margin: ries_rs::thresholds::DEGENERATE_DERIVATIVE,
     }

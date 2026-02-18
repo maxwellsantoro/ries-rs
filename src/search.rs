@@ -169,6 +169,10 @@ pub struct SearchConfig {
     /// Show pruned arithmetic diagnostic output (-DA)
     #[allow(dead_code)]
     pub show_pruned_arith: bool,
+    /// Show pruned range/zero diagnostic output (-DB)
+    pub show_pruned_range: bool,
+    /// Show database adds diagnostic output (-DG)
+    pub show_db_adds: bool,
     /// When true, matches must match all significant digits of the target
     /// (tolerance is computed in main.rs and passed as max_error)
     #[allow(dead_code)]
@@ -196,6 +200,8 @@ impl Default for SearchConfig {
             show_newton: false,
             show_match_checks: false,
             show_pruned_arith: false,
+            show_pruned_range: false,
+            show_db_adds: false,
             match_all_digits: false,
             derivative_margin: DEGENERATE_DERIVATIVE,
         }
@@ -516,7 +522,11 @@ impl ExprDatabase {
         let initial_max_error = config.max_error.max(1e-12);
 
         // Create bounded pool with configured capacity
-        let mut pool = TopKPool::new(config.max_matches, initial_max_error);
+        let mut pool = TopKPool::new_with_diagnostics(
+            config.max_matches,
+            initial_max_error,
+            config.show_db_adds,
+        );
 
         // Sort LHS by complexity so simpler expressions are processed first
         let mut sorted_lhs: Vec<_> = lhs_exprs.iter().collect();
@@ -534,6 +544,13 @@ impl ExprDatabase {
             // trivial matches (like cospi(2.5)=0 matching many RHS near 0)
             // Original RIES: "Prune zero subexpressions"
             if lhs.value.abs() < config.zero_value_threshold {
+                if config.show_pruned_range {
+                    eprintln!(
+                        "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",
+                        lhs.value,
+                        lhs.expr.to_infix()
+                    );
+                }
                 continue;
             }
 
@@ -941,7 +958,11 @@ pub fn search_streaming_with_config(
     let initial_max_error = search_config.max_error.max(1e-12);
 
     // Create bounded pool with configured capacity
-    let mut pool = TopKPool::new(search_config.max_matches, initial_max_error);
+    let mut pool = TopKPool::new_with_diagnostics(
+        search_config.max_matches,
+        initial_max_error,
+        search_config.show_db_adds,
+    );
 
     // Build RHS database first using streaming
     let mut rhs_db = TieredExprDatabase::new();
@@ -1002,6 +1023,13 @@ pub fn search_streaming_with_config(
 
         // Skip LHS with value too close to 0
         if lhs.value.abs() < search_config.zero_value_threshold {
+            if search_config.show_pruned_range {
+                eprintln!(
+                    "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",
+                    lhs.value,
+                    lhs.expr.to_infix()
+                );
+            }
             continue;
         }
 
@@ -1195,7 +1223,11 @@ pub fn search_one_sided_with_stats_and_config(
 
     let search_start = Instant::now();
     let initial_max_error = config.max_error.max(1e-12);
-    let mut pool = TopKPool::new(config.max_matches, initial_max_error);
+    let mut pool = TopKPool::new_with_diagnostics(
+        config.max_matches,
+        initial_max_error,
+        config.show_db_adds,
+    );
     let mut stats = SearchStats::new();
     let mut early_exit = false;
 

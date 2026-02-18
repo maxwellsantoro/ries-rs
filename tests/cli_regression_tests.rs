@@ -848,3 +848,36 @@ fn test_derivative_margin_option_accepted() {
     let (stdout, _) = run_ries(&["2.5", "--derivative-margin", "1e-10", "--report", "false", "--max-matches", "1"]);
     assert!(stdout.contains("x"));
 }
+
+#[test]
+fn test_diagnostic_g_recognized() {
+    let (stdout, stderr) = run_ries(&["2.5", "-DG", "--report", "false", "--max-matches", "1"]);
+    // -DG should not warn about unsupported channel
+    let combined = format!("{}{}", stdout, stderr).to_lowercase();
+    assert!(
+        !combined.contains("unsupported") && !combined.contains("not implemented"),
+        "expected -DG to be recognized as valid diagnostic channel, but got:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_diagnostic_g_shows_db_add_output() {
+    let (stdout, stderr) = run_ries(&["2.5", "-DG", "--report", "false", "--max-matches", "1"]);
+    // -DG should output database add information to stderr
+    let output = format!("{}{}", stdout, stderr).to_lowercase();
+    assert!(
+        output.contains("db add") || output.contains("insert") || output.contains("pool"),
+        "expected -DG to show database add diagnostic output\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_diagnostic_b_recognized() {
+    let (_stdout, stderr) = run_ries(&["2.5", "-DB", "--report", "false", "--max-matches", "1"]);
+    // -DB should not warn about unsupported channel
+    assert!(!stderr.to_lowercase().contains("unsupported"));
+}

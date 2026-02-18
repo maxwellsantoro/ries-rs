@@ -162,10 +162,13 @@ pub struct TopKPool {
     pub accept_error: f64,
     /// Statistics
     pub stats: PoolStats,
+    /// Show diagnostic output for database adds (-DG)
+    show_db_adds: bool,
 }
 
 impl TopKPool {
     /// Create a new pool with given capacity
+    #[allow(dead_code)]
     pub fn new(capacity: usize, initial_max_error: f64) -> Self {
         Self {
             capacity,
@@ -175,6 +178,21 @@ impl TopKPool {
             best_error: initial_max_error,
             accept_error: initial_max_error,
             stats: PoolStats::default(),
+            show_db_adds: false,
+        }
+    }
+
+    /// Create a new pool with diagnostic options
+    pub fn new_with_diagnostics(capacity: usize, initial_max_error: f64, show_db_adds: bool) -> Self {
+        Self {
+            capacity,
+            heap: BinaryHeap::with_capacity(capacity + 1),
+            seen_eqn: HashSet::new(),
+            seen_lhs: HashSet::new(),
+            best_error: initial_max_error,
+            accept_error: initial_max_error,
+            stats: PoolStats::default(),
+            show_db_adds,
         }
     }
 
@@ -201,6 +219,18 @@ impl TopKPool {
         let entry = PoolEntry::new(m);
         self.seen_eqn.insert(eqn_key);
         self.seen_lhs.insert(LhsKey::from_match(&entry.m));
+
+        // Diagnostic output for -DG (before moving entry into heap)
+        if self.show_db_adds {
+            eprintln!(
+                "  [db add] lhs={:?} rhs={:?} error={:.6e} complexity={}",
+                entry.m.lhs.expr.to_postfix(),
+                entry.m.rhs.expr.to_postfix(),
+                entry.m.error,
+                entry.m.complexity
+            );
+        }
+
         self.heap.push(entry);
         self.stats.insertions += 1;
 
