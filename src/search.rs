@@ -1399,6 +1399,7 @@ mod tests {
             generate_rhs: true,
             user_constants: Vec::new(),
             user_functions: Vec::new(),
+            show_pruned_arith: false,
         }
     }
 

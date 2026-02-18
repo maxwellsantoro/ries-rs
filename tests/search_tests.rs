@@ -45,6 +45,7 @@ fn fast_config() -> GenConfig {
         generate_rhs: true,
         user_constants: Vec::new(),
         user_functions: Vec::new(),
+        show_pruned_arith: false,
     }
 }
 
@@ -399,6 +400,7 @@ fn test_user_function_in_search() {
         generate_rhs: true,
         user_constants: vec![uc],
         user_functions: vec![udf],
+        show_pruned_arith: false,
     };
 
     let (matches, _stats) = search_with_stats_and_options(2.0, &config, 50, false, None);

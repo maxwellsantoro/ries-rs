@@ -698,6 +698,7 @@ fn build_gen_config(
     op_limits_rhs: Option<&str>,
     user_constants: Vec<profile::UserConstant>,
     user_functions: Vec<udf::UserFunction>,
+    show_pruned_arith: bool,
 ) -> Result<gen::GenConfig, String> {
     let mut config = gen::GenConfig::default();
     config.max_lhs_complexity = max_lhs_complexity;
@@ -705,6 +706,7 @@ fn build_gen_config(
     config.min_num_type = min_type;
     config.user_constants = user_constants.clone();
     config.user_functions = user_functions.clone();
+    config.show_pruned_arith = show_pruned_arith;
 
     // Helper to filter symbols
     fn filter_symbols(
@@ -1355,6 +1357,7 @@ fn main() {
         args.op_limits_rhs.as_deref(),
         profile.constants.clone(),
         profile.functions.clone(),
+        diagnostics.show_pruned_arith,
     ) {
         Ok(config) => config,
         Err(e) => {
@@ -1424,6 +1427,7 @@ fn main() {
         show_match_checks: diagnostics.show_match_checks,
         show_pruned_arith: diagnostics.show_pruned_arith,
         match_all_digits: args.match_all_digits,
+        derivative_margin: args.derivative_margin.unwrap_or(thresholds::DEGENERATE_DERIVATIVE),
     };
 
     // When --match-all-digits is enabled, set tolerance based on target's significant digits
