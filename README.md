@@ -417,6 +417,118 @@ simplest = sorted(results, key=lambda m: m.complexity)[:10]
 - Make sure `parallel=True` (default)
 - For batch processing, reuse results rather than calling search multiple times
 
+### WebAssembly (WASM) Bindings
+
+The WASM bindings allow using ries-rs from JavaScript/TypeScript in browsers and Node.js:
+
+```bash
+# Install wasm-pack
+cargo install wasm-pack
+
+# Build for web browsers
+npm run build
+
+# Or build for different targets:
+npm run build:bundler  # For bundlers (webpack, vite, etc.)
+npm run build:node     # For Node.js
+```
+
+#### JavaScript/TypeScript Usage
+
+```javascript
+import init, { search, WasmMatch, listPresets, version } from 'ries-rs';
+
+// Initialize the WASM module
+await init();
+
+// Simple search
+const results = search(3.1415926535);
+for (const m of results) {
+  console.log(`${m.lhs} = ${m.rhs} (error: ${m.error.toExponential(2)})`);
+}
+
+// With options
+const results = search(1.618033988, {
+  level: 3,
+  maxMatches: 20,
+  preset: 'physics'
+});
+
+// Access match properties
+for (const m of results) {
+  console.log(m.lhs);         // "x"
+  console.log(m.rhs);         // "phi+1"
+  console.log(m.x_value);     // 1.618033988...
+  console.log(m.error);       // 5.55e-10
+  console.log(m.complexity);  // 16
+  console.log(m.is_exact);    // true
+  console.log(m.to_string()); // "x = phi+1  [error: 5.55e-10] {16}"
+  console.log(m.to_json());   // JSON object
+}
+
+// List presets
+const presets = listPresets();
+console.log(presets); // {analytic-nt: "...", physics: "...", ...}
+
+// Get version
+console.log(version()); // "0.1.0"
+```
+
+#### WasmMatch Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `lhs` | string | Left-hand side expression (contains x) |
+| `rhs` | string | Right-hand side expression (constants only) |
+| `lhs_postfix` | string | Postfix representation of LHS |
+| `rhs_postfix` | string | Postfix representation of RHS |
+| `x_value` | number | Solved value of x |
+| `error` | number | Error (x_value - target) |
+| `complexity` | number | Complexity score (lower = simpler) |
+| `is_exact` | boolean | True if error < 1e-12 |
+
+#### SearchOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `level` | number | 2 | Search depth (0-5) |
+| `maxMatches` | number | 16 | Maximum matches to return |
+| `preset` | string | null | Domain preset name |
+
+#### Browser Example
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <script type="module">
+    import init, { search } from './pkg/ries_rs.js';
+
+    async function run() {
+      await init();
+
+      const results = search(3.14159, { level: 2, maxMatches: 5 });
+      for (const m of results) {
+        document.body.innerHTML += `<p>${m.to_string()}</p>`;
+      }
+    }
+
+    run();
+  </script>
+</head>
+<body></body>
+</html>
+```
+
+#### Node.js Example
+
+```javascript
+const { search, listPresets } = require('ries-rs');
+
+const results = search(2.718281828, { level: 3 });
+console.log(`Found ${results.length} matches`);
+```
+
 ## How to Cite
 
 If you use ries-rs in academic work, please cite it using the following BibTeX:
