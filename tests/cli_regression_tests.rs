@@ -755,3 +755,13 @@ fn test_s_bare_symbol_table() {
     assert!(stdout.contains("Explicit values") || stdout.contains("description"),
             "Should show symbol table header\n{}", stdout);
 }
+
+#[test]
+fn test_e_bare_enable_all() {
+    // -E without argument should enable all symbols and treat next arg as target
+    // Original ries: "ries -E 2.5" means "enable all and search for 2.5"
+    let output = run_ries_raw(&["-E", "2.5", "--classic", "--report", "false", "-n", "1"]);
+    assert!(output.status.success(), "Should succeed with bare -E: {:?}", output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("2.5"), "Should show target value\n{}", stdout);
+}

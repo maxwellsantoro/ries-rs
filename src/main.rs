@@ -63,8 +63,8 @@ struct Args {
     #[arg(short = 'N', long)]
     exclude: Option<String>,
 
-    /// Re-enable symbols disabled by exclude/only options
-    #[arg(short = 'E', long = "enable")]
+    /// Re-enable symbols disabled by exclude/only options, or enable all if no argument
+    #[arg(short = 'E', long = "enable", num_args = 0..=1, default_missing_value = "all")]
     enable: Option<String>,
 
     /// Only use these symbols, or print symbol table if no argument
@@ -659,12 +659,17 @@ fn parse_symbol_sets(
         exclude_symbols.map(|s| s.bytes().collect());
 
     if let Some(enabled) = enable_symbols {
-        for b in enabled.bytes() {
-            if let Some(excl) = excluded.as_mut() {
-                excl.remove(&b);
-            }
-            if let Some(allow) = allowed.as_mut() {
-                allow.insert(b);
+        if enabled == "all" {
+            // Special value "all" clears all exclusions
+            excluded = None;
+        } else {
+            for b in enabled.bytes() {
+                if let Some(excl) = excluded.as_mut() {
+                    excl.remove(&b);
+                }
+                if let Some(allow) = allowed.as_mut() {
+                    allow.insert(b);
+                }
             }
         }
     }
@@ -1076,6 +1081,27 @@ fn main() {
             (None, args.target)
         };
 
+    // Handle -E legacy semantics: if enable looks like a number and no target, treat as target
+    // Original ries behavior: "ries -E 2.5" means "enable all and search for 2.5"
+    let (enable_arg, resolved_target) =
+        if let Some(ref enable_str) = args.enable {
+            if resolved_target.is_none() {
+                // Check if enable argument looks like a target (numeric)
+                if let Ok(val) = enable_str.parse::<f64>() {
+                    // It's a number, treat as target and use "all" for enable
+                    (Some("all".to_string()), Some(val))
+                } else {
+                    // Not a number, use as enable string
+                    (args.enable.clone(), resolved_target)
+                }
+            } else {
+                // Both -E and target provided, use both normally
+                (args.enable.clone(), resolved_target)
+            }
+        } else {
+            (None, resolved_target)
+        };
+
     // Handle -l legacy semantics: if level looks like a float and no target, treat as target + liouvillian
     // Original ries: "-l 2.5" means liouvillian mode + target 2.5
     // "-l3" or "--level 3" with an explicit target means level 3
@@ -1298,7 +1324,7 @@ fn main() {
         max_rhs_complexity,
         min_type,
         args.exclude.as_deref(),
-        args.enable.as_deref(),
+        enable_arg.as_deref(),
         args.only_symbols.as_deref(),
         args.exclude_rhs.as_deref(),
         args.enable_rhs.as_deref(),
@@ -1347,7 +1373,7 @@ fn main() {
     let (allowed_effective, excluded_effective) = parse_symbol_sets(
         args.only_symbols.as_deref(),
         args.exclude.as_deref(),
-        args.enable.as_deref(),
+        enable_arg.as_deref(),
     );
     let (rhs_allowed_symbols, rhs_excluded_symbols) = parse_symbol_sets(
         args.only_symbols_rhs.as_deref(),
