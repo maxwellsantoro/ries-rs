@@ -99,10 +99,7 @@ pub struct MatchInfo {
 
 impl RunManifest {
     /// Create a new manifest with current timestamp
-    pub fn new(
-        config: SearchConfigInfo,
-        results: Vec<MatchInfo>,
-    ) -> Self {
+    pub fn new(config: SearchConfigInfo, results: Vec<MatchInfo>) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| {
@@ -147,23 +144,22 @@ impl PlatformInfo {
 /// Get git commit hash from build time
 fn get_git_hash() -> Option<String> {
     // Try to get from environment variable set during build
-    option_env!("GIT_HASH").map(|s| s.to_string())
-        .or_else(|| {
-            // Fallback: try to read from .git at runtime (for development)
-            #[cfg(debug_assertions)]
-            {
-                std::process::Command::new("git")
-                    .args(["rev-parse", "--short", "HEAD"])
-                    .output()
-                    .ok()
-                    .and_then(|o| String::from_utf8(o.stdout).ok())
-                    .map(|s| s.trim().to_string())
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                None
-            }
-        })
+    option_env!("GIT_HASH").map(|s| s.to_string()).or_else(|| {
+        // Fallback: try to read from .git at runtime (for development)
+        #[cfg(debug_assertions)]
+        {
+            std::process::Command::new("git")
+                .args(["rev-parse", "--short", "HEAD"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            None
+        }
+    })
 }
 
 /// Get rustc version

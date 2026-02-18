@@ -342,7 +342,7 @@ print(ries_rs.version())
 | `x_value` | float | Solved value of x |
 | `error` | float | Error (x_value - target) |
 | `complexity` | int | Complexity score (lower = simpler) |
-| `is_exact` | bool | True if error < 1e-12 |
+| `is_exact` | bool | True if error < 1e-14 |
 
 #### PyMatch Methods
 

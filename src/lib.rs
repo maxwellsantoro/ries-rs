@@ -91,10 +91,10 @@ pub mod metrics;
 pub mod pool;
 #[cfg(feature = "highprec")]
 pub mod precision;
-#[cfg(feature = "python")]
-mod python;
 pub mod presets;
 pub mod profile;
+#[cfg(feature = "python")]
+mod python;
 pub mod report;
 pub mod search;
 pub mod stability;

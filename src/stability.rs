@@ -89,7 +89,7 @@ impl Default for StabilityConfig {
         Self {
             // Run at 100%, 10%, 1%, 0.1%, 0.01% of base error tolerance
             tolerance_factors: vec![1.0, 0.1, 0.01, 0.001, 0.0001],
-            stable_threshold: 0.8,    // Appear at 80%+ of levels
+            stable_threshold: 0.8,   // Appear at 80%+ of levels
             moderate_threshold: 0.5, // Appear at 50-80% of levels
         }
     }
@@ -219,8 +219,7 @@ impl StabilityAnalyzer {
             return false;
         }
         // Only in first level
-        self.levels[0].contains_key(key)
-            && !self.levels.iter().skip(1).any(|l| l.contains_key(key))
+        self.levels[0].contains_key(key) && !self.levels.iter().skip(1).any(|l| l.contains_key(key))
     }
 }
 
@@ -328,7 +327,9 @@ mod tests {
         assert_eq!(results.len(), 2);
 
         // First match is stable (appears at 3/3 levels)
-        let stable = results.iter().find(|r| r.match_.lhs.expr.to_postfix() == "x");
+        let stable = results
+            .iter()
+            .find(|r| r.match_.lhs.expr.to_postfix() == "x");
         assert!(stable.is_some());
         assert_eq!(stable.unwrap().class, StabilityClass::Stable);
         assert_eq!(stable.unwrap().appearance_count, 3);

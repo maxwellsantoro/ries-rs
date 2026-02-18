@@ -54,7 +54,7 @@ use pyo3::types::PyDict;
 /// complexity : int
 ///     Complexity score (lower = simpler expression)
 /// is_exact : bool
-///     True if the match is within exact match tolerance (< 1e-12)
+///     True if the match is within exact match tolerance (< 1e-14)
 ///
 /// Examples
 /// --------
@@ -151,33 +151,59 @@ impl From<crate::search::Match> for PyMatch {
     }
 }
 
+fn apply_profile_overrides(profile: &crate::profile::Profile) {
+    use std::collections::HashMap;
+
+    let mut weight_overrides: HashMap<crate::symbol::Symbol, u32> = profile.symbol_weights.clone();
+    for (idx, user_constant) in profile.constants.iter().enumerate().take(16) {
+        if let Some(sym) = crate::symbol::Symbol::from_byte(128 + idx as u8) {
+            weight_overrides.insert(sym, user_constant.weight);
+        }
+    }
+    for (idx, user_function) in profile.functions.iter().enumerate().take(16) {
+        if let Some(sym) = crate::symbol::Symbol::from_byte(144 + idx as u8) {
+            weight_overrides.insert(sym, user_function.weight as u32);
+        }
+    }
+    crate::symbol::set_weight_overrides(weight_overrides);
+
+    let mut name_overrides: HashMap<crate::symbol::Symbol, String> = profile.symbol_names.clone();
+    for (idx, user_constant) in profile.constants.iter().enumerate().take(16) {
+        if let Some(sym) = crate::symbol::Symbol::from_byte(128 + idx as u8) {
+            name_overrides.insert(sym, user_constant.name.clone());
+        }
+    }
+    for (idx, user_function) in profile.functions.iter().enumerate().take(16) {
+        if let Some(sym) = crate::symbol::Symbol::from_byte(144 + idx as u8) {
+            name_overrides.insert(sym, user_function.name.clone());
+        }
+    }
+    crate::symbol::set_name_overrides(name_overrides);
+}
+
 /// Build a GenConfig from simple parameters
 fn build_gen_config(
     max_lhs_complexity: u32,
     max_rhs_complexity: u32,
-    _preset: Option<&str>,
+    profile: &crate::profile::Profile,
 ) -> crate::gen::GenConfig {
     use crate::symbol::{NumType, Symbol};
     use std::collections::HashMap;
 
-    // Start with default symbols
-    let constants: Vec<Symbol> = vec![
-        Symbol::One, Symbol::Two, Symbol::Three, Symbol::Four, Symbol::Five,
-        Symbol::Six, Symbol::Seven, Symbol::Eight, Symbol::Nine,
-        Symbol::Pi, Symbol::E, Symbol::Phi, Symbol::Gamma,
-        Symbol::Apery, Symbol::Catalan, Symbol::Plastic,
-    ];
+    let mut constants: Vec<Symbol> = Symbol::constants().to_vec();
+    let mut unary_ops: Vec<Symbol> = Symbol::unary_ops().to_vec();
+    let binary_ops: Vec<Symbol> = Symbol::binary_ops().to_vec();
 
-    let unary_ops: Vec<Symbol> = vec![
-        Symbol::Neg, Symbol::Recip, Symbol::Sqrt, Symbol::Square,
-        Symbol::Ln, Symbol::Exp,
-        Symbol::SinPi, Symbol::CosPi, Symbol::TanPi,
-        Symbol::LambertW,
-    ];
-
-    let binary_ops: Vec<Symbol> = vec![
-        Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div, Symbol::Pow
-    ];
+    for idx in 0..profile.constants.len().min(16) {
+        if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
+            constants.push(sym);
+        }
+    }
+    for idx in 0..profile.functions.len().min(16) {
+        if let Some(sym) = Symbol::from_byte(144 + idx as u8) {
+            unary_ops.push(sym);
+        }
+    }
 
     crate::gen::GenConfig {
         max_lhs_complexity,
@@ -194,8 +220,8 @@ fn build_gen_config(
         min_num_type: NumType::Transcendental,
         generate_lhs: true,
         generate_rhs: true,
-        user_constants: vec![],
-        user_functions: vec![],
+        user_constants: profile.constants.clone(),
+        user_functions: profile.functions.clone(),
         show_pruned_arith: false,
     }
 }
@@ -244,8 +270,20 @@ fn search(
     let max_lhs_complexity = base_lhs + level_factor;
     let max_rhs_complexity = base_rhs + level_factor;
 
+    let mut profile = crate::profile::Profile::new();
+    if let Some(preset_name) = preset {
+        let parsed = crate::presets::Preset::from_str(preset_name).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Unknown preset '{}'. Use list_presets() for available options.",
+                preset_name
+            ))
+        })?;
+        profile = profile.merge(parsed.to_profile());
+    }
+    apply_profile_overrides(&profile);
+
     // Build generation config
-    let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, preset);
+    let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, &profile);
 
     // Build search config
     let max_error = (target.abs() * 0.01).max(1e-12);
@@ -257,8 +295,8 @@ fn search(
         stop_below: None,
         zero_value_threshold: 1e-4,
         newton_iterations: 15,
-        user_constants: vec![],
-        user_functions: vec![],
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
         refine_with_newton: true,
         rhs_allowed_symbols: None,
         rhs_excluded_symbols: None,
@@ -274,7 +312,14 @@ fn search(
 
     // Perform search
     let (matches, _stats) = if parallel {
-        crate::search::search_parallel_with_stats_and_config(&gen_config, &search_config)
+        #[cfg(feature = "parallel")]
+        {
+            crate::search::search_parallel_with_stats_and_config(&gen_config, &search_config)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            crate::search::search_with_stats_and_config(&gen_config, &search_config)
+        }
     } else {
         crate::search::search_with_stats_and_config(&gen_config, &search_config)
     };
@@ -342,4 +387,37 @@ fn ries_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(list_presets, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_gen_config_includes_preset_user_constants() {
+        let profile =
+            crate::profile::Profile::new().merge(crate::presets::Preset::AnalyticNT.to_profile());
+        let config = build_gen_config(18, 20, &profile);
+
+        assert!(
+            !config.user_constants.is_empty(),
+            "preset profile constants should flow into GenConfig user_constants"
+        );
+        assert!(
+            config
+                .constants
+                .iter()
+                .any(|sym| *sym == crate::symbol::Symbol::UserConstant0),
+            "user constant symbol slots should be added to generation constants"
+        );
+    }
+
+    #[test]
+    fn test_search_rejects_unknown_preset() {
+        let result = search(3.14159, 2, 8, Some("does-not-exist"), false);
+        assert!(
+            result.is_err(),
+            "unknown preset should return a Python error"
+        );
+    }
 }
