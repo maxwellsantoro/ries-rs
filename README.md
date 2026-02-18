@@ -529,6 +529,36 @@ const results = search(2.718281828, { level: 3 });
 console.log(`Found ${results.length} matches`);
 ```
 
+### PSLQ Integer Relation Detection
+
+RIES-RS includes PSLQ (Partial Sums LQ) algorithm for finding integer relations:
+
+```bash
+# Find rational approximation for π
+ries-rs 3.141592653589793 --pslq
+# Output: 355 / 113 = 3.141592920353983  (error: 2.67e-7)
+
+# Use extended constant set (includes √3, √5, ln(3), etc.)
+ries-rs 2.718281828459045 --pslq --pslq-extended
+
+# Increase coefficient bounds for deeper search
+ries-rs 1.41421356 --pslq --pslq-max-coeff 10000
+```
+
+#### PSLQ Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--pslq` | off | Enable PSLQ integer relation detection |
+| `--pslq-extended` | off | Use extended constant set |
+| `--pslq-max-coeff` | 1000 | Maximum coefficient magnitude to search |
+
+#### What PSLQ Finds
+
+- **Rational approximations**: π ≈ 355/113, √2 ≈ 99/70
+- **Integer relations**: Finds a·x + b·π + c·e + ... ≈ 0 with small integers a, b, c
+- **Minimal polynomials**: Detects algebraic numbers by their defining polynomial
+
 ## How to Cite
 
 If you use ries-rs in academic work, please cite it using the following BibTeX:
