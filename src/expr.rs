@@ -161,6 +161,12 @@ impl Expression {
         self.contains_x
     }
 
+    /// Count occurrences of a symbol in this expression.
+    #[inline]
+    pub fn count_symbol(&self, sym: Symbol) -> u32 {
+        self.symbols.iter().filter(|&&s| s == sym).count() as u32
+    }
+
     /// Check if this is a valid complete expression (stack depth = 1)
     ///
     /// This method is part of the public API for external consumers who may want to
@@ -248,7 +254,13 @@ impl Expression {
         }
 
         /// Wrap in parentheses if needed
-        fn maybe_paren_prec(s: &str, prec: u8, parent_prec: u8, is_right_assoc: bool, is_right: bool) -> String {
+        fn maybe_paren_prec(
+            s: &str,
+            prec: u8,
+            parent_prec: u8,
+            is_right_assoc: bool,
+            is_right: bool,
+        ) -> String {
             if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
                 format!("({})", s)
             } else {
@@ -261,7 +273,7 @@ impl Expression {
         for &sym in &self.symbols {
             match sym.seft() {
                 Seft::A => {
-                    stack.push((sym.name().to_string(), PREC_ATOM));
+                    stack.push((sym.display_name(), PREC_ATOM));
                 }
                 Seft::B => {
                     let (arg, arg_prec) = stack.pop().unwrap_or(("?".into(), 0));
@@ -289,7 +301,23 @@ impl Expression {
                         Symbol::CosPi => format!("cospi({})", arg),
                         Symbol::TanPi => format!("tanpi({})", arg),
                         Symbol::LambertW => format!("W({})", arg),
-                        _ => unreachable!(),
+                        Symbol::UserFunction0
+                        | Symbol::UserFunction1
+                        | Symbol::UserFunction2
+                        | Symbol::UserFunction3
+                        | Symbol::UserFunction4
+                        | Symbol::UserFunction5
+                        | Symbol::UserFunction6
+                        | Symbol::UserFunction7
+                        | Symbol::UserFunction8
+                        | Symbol::UserFunction9
+                        | Symbol::UserFunction10
+                        | Symbol::UserFunction11
+                        | Symbol::UserFunction12
+                        | Symbol::UserFunction13
+                        | Symbol::UserFunction14
+                        | Symbol::UserFunction15 => format!("{}({})", sym.display_name(), arg),
+                        _ => "?".to_string(),
                     };
                     stack.push((result, PREC_ATOM)); // Function calls are atomic
                 }
@@ -348,8 +376,6 @@ impl Expression {
 
     /// Convert to infix notation with specified format
     pub fn to_infix_with_format(&self, format: OutputFormat) -> String {
-        // For now, pretty format just wraps the default
-        // Full implementation would customize each operation's output
         match format {
             OutputFormat::Default => self.to_infix(),
             OutputFormat::Pretty => {
@@ -360,25 +386,149 @@ impl Expression {
                 result = result.replace("^2", "²");
                 result
             }
-            OutputFormat::Mathematica => {
-                let mut result = self.to_infix();
-                result = result.replace("pi", "Pi");
-                result = result.replace("ln(", "Log[");
-                result = result.replace("sqrt(", "Sqrt[");
-                result = result.replace("exp(", "Exp[");
-                result = result.replace("sinpi(", "Sin[Pi*");
-                result = result.replace("cospi(", "Cos[Pi*");
-                result
-            }
-            OutputFormat::SymPy => {
-                let mut result = self.to_infix();
-                result = result.replace("ln(", "log(");
-                result = result.replace("sinpi(", "sin(pi*");
-                result = result.replace("cospi(", "cos(pi*");
-                result = result.replace("W(", "lambertw(");
-                result
+            OutputFormat::Mathematica => self.to_infix_mathematica(),
+            OutputFormat::SymPy => self.to_infix_sympy(),
+        }
+    }
+
+    fn to_infix_mathematica(&self) -> String {
+        let mut stack: Vec<String> = Vec::new();
+
+        for &sym in &self.symbols {
+            match sym.seft() {
+                Seft::A => {
+                    let s = match sym {
+                        Symbol::Pi => "Pi".to_string(),
+                        Symbol::E => "E".to_string(),
+                        Symbol::Phi => "GoldenRatio".to_string(),
+                        Symbol::Gamma => "EulerGamma".to_string(),
+                        _ => sym.display_name(),
+                    };
+                    stack.push(s);
+                }
+                Seft::B => {
+                    let arg = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let s = match sym {
+                        Symbol::Neg => format!("-({})", arg),
+                        Symbol::Recip => format!("1/({})", arg),
+                        Symbol::Sqrt => format!("Sqrt[{}]", arg),
+                        Symbol::Square => format!("({})^2", arg),
+                        Symbol::Ln => format!("Log[{}]", arg),
+                        Symbol::Exp => format!("Exp[{}]", arg),
+                        Symbol::SinPi => format!("Sin[Pi*({})]", arg),
+                        Symbol::CosPi => format!("Cos[Pi*({})]", arg),
+                        Symbol::TanPi => format!("Tan[Pi*({})]", arg),
+                        Symbol::LambertW => format!("ProductLog[{}]", arg),
+                        Symbol::UserFunction0
+                        | Symbol::UserFunction1
+                        | Symbol::UserFunction2
+                        | Symbol::UserFunction3
+                        | Symbol::UserFunction4
+                        | Symbol::UserFunction5
+                        | Symbol::UserFunction6
+                        | Symbol::UserFunction7
+                        | Symbol::UserFunction8
+                        | Symbol::UserFunction9
+                        | Symbol::UserFunction10
+                        | Symbol::UserFunction11
+                        | Symbol::UserFunction12
+                        | Symbol::UserFunction13
+                        | Symbol::UserFunction14
+                        | Symbol::UserFunction15 => format!("{}[{}]", sym.display_name(), arg),
+                        _ => "?".to_string(),
+                    };
+                    stack.push(s);
+                }
+                Seft::C => {
+                    let b = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let a = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let s = match sym {
+                        Symbol::Add => format!("({})+({})", a, b),
+                        Symbol::Sub => format!("({})-({})", a, b),
+                        Symbol::Mul => format!("({})*({})", a, b),
+                        Symbol::Div => format!("({})/({})", a, b),
+                        Symbol::Pow => format!("({})^({})", a, b),
+                        Symbol::Root => format!("({})^(1/({}))", b, a),
+                        Symbol::Log => format!("Log[{}, {}]", a, b),
+                        Symbol::Atan2 => format!("ArcTan[{}, {}]", b, a),
+                        _ => "?".to_string(),
+                    };
+                    stack.push(s);
+                }
             }
         }
+
+        stack.pop().unwrap_or_else(|| "?".to_string())
+    }
+
+    fn to_infix_sympy(&self) -> String {
+        let mut stack: Vec<String> = Vec::new();
+
+        for &sym in &self.symbols {
+            match sym.seft() {
+                Seft::A => {
+                    let s = match sym {
+                        Symbol::Pi => "pi".to_string(),
+                        Symbol::E => "E".to_string(),
+                        Symbol::Phi => "GoldenRatio".to_string(),
+                        Symbol::Gamma => "EulerGamma".to_string(),
+                        _ => sym.display_name(),
+                    };
+                    stack.push(s);
+                }
+                Seft::B => {
+                    let arg = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let s = match sym {
+                        Symbol::Neg => format!("-({})", arg),
+                        Symbol::Recip => format!("1/({})", arg),
+                        Symbol::Sqrt => format!("sqrt({})", arg),
+                        Symbol::Square => format!("({})**2", arg),
+                        Symbol::Ln => format!("log({})", arg),
+                        Symbol::Exp => format!("exp({})", arg),
+                        Symbol::SinPi => format!("sin(pi*({}))", arg),
+                        Symbol::CosPi => format!("cos(pi*({}))", arg),
+                        Symbol::TanPi => format!("tan(pi*({}))", arg),
+                        Symbol::LambertW => format!("lambertw({})", arg),
+                        Symbol::UserFunction0
+                        | Symbol::UserFunction1
+                        | Symbol::UserFunction2
+                        | Symbol::UserFunction3
+                        | Symbol::UserFunction4
+                        | Symbol::UserFunction5
+                        | Symbol::UserFunction6
+                        | Symbol::UserFunction7
+                        | Symbol::UserFunction8
+                        | Symbol::UserFunction9
+                        | Symbol::UserFunction10
+                        | Symbol::UserFunction11
+                        | Symbol::UserFunction12
+                        | Symbol::UserFunction13
+                        | Symbol::UserFunction14
+                        | Symbol::UserFunction15 => format!("{}({})", sym.display_name(), arg),
+                        _ => "?".to_string(),
+                    };
+                    stack.push(s);
+                }
+                Seft::C => {
+                    let b = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let a = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let s = match sym {
+                        Symbol::Add => format!("({})+({})", a, b),
+                        Symbol::Sub => format!("({})-({})", a, b),
+                        Symbol::Mul => format!("({})*({})", a, b),
+                        Symbol::Div => format!("({})/({})", a, b),
+                        Symbol::Pow => format!("({})**({})", a, b),
+                        Symbol::Root => format!("({})**(1/({}))", b, a),
+                        Symbol::Log => format!("log({}, {})", b, a),
+                        Symbol::Atan2 => format!("atan2({}, {})", a, b),
+                        _ => "?".to_string(),
+                    };
+                    stack.push(s);
+                }
+            }
+        }
+
+        stack.pop().unwrap_or_else(|| "?".to_string())
     }
 }
 

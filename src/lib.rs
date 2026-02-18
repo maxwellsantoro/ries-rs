@@ -125,13 +125,11 @@ pub use expr::{Expression, OutputFormat};
 pub use gen::GenConfig;
 pub use profile::{Profile, UserConstant};
 pub use search::{Match, SearchConfig, SearchStats};
-pub use symbol::{NumType, Symbol};
+pub use symbol::{set_weight_overrides, NumType, Symbol};
 pub use udf::UserFunction;
 
 // Threshold constants
-pub use thresholds::{
-    EXACT_MATCH_TOLERANCE, NEWTON_TOLERANCE, DEGENERATE_DERIVATIVE,
-};
+pub use thresholds::{DEGENERATE_DERIVATIVE, EXACT_MATCH_TOLERANCE, NEWTON_TOLERANCE};
 
 // High-precision types (when feature is enabled)
 #[cfg(feature = "highprec")]

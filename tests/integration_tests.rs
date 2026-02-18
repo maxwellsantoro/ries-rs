@@ -46,14 +46,30 @@ fn test_search_exact_matches() {
 }
 
 #[test]
-fn test_search_complexity_ordering() {
+fn test_search_closeness_ordering() {
     let matches = search(2.5, &default_config(), 20);
 
-    // Matches should be sorted by complexity
-    let complexities: Vec<u32> = matches.iter().map(|m| m.complexity).collect();
-    let mut sorted = complexities.clone();
-    sorted.sort();
-    assert_eq!(complexities, sorted);
+    // Exact matches should come first, then increasing error.
+    let mut seen_non_exact = false;
+    let mut last_error = 0.0_f64;
+    for m in &matches {
+        let err = m.error.abs();
+        let is_exact = err < 1e-14;
+        if !is_exact {
+            if !seen_non_exact {
+                seen_non_exact = true;
+                last_error = err;
+            } else {
+                assert!(err >= last_error, "non-exact errors should be non-decreasing");
+                last_error = err;
+            }
+        } else {
+            assert!(
+                !seen_non_exact,
+                "exact matches should not appear after non-exact matches"
+            );
+        }
+    }
 }
 
 #[test]

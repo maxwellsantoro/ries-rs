@@ -92,19 +92,21 @@ impl SignatureKey {
 }
 
 /// Wrapper for Match that implements ordering for the heap
-/// We want a min-heap by (complexity, error) so we reverse the ordering
+/// We want a min-heap by (exactness, error, complexity) so we reverse ordering.
 #[derive(Clone)]
 struct PoolEntry {
     m: Match,
-    rank_key: (u32, i64), // (complexity, error_bits) - lower is better
+    rank_key: (u8, i64, u32), // (exactness, error_bits, complexity) - lower is better
 }
 
 impl PoolEntry {
     fn new(m: Match) -> Self {
-        // Convert error to sortable integer (negative exponent first)
+        let is_exact = m.error.abs() < EXACT_MATCH_TOLERANCE;
+        let exactness_rank = if is_exact { 0 } else { 1 };
+        // Convert error to sortable integer.
         let error_bits = m.error.abs().to_bits() as i64;
         Self {
-            rank_key: (m.complexity, error_bits),
+            rank_key: (exactness_rank, error_bits, m.complexity),
             m,
         }
     }
@@ -126,7 +128,7 @@ impl PartialOrd for PoolEntry {
 
 impl Ord for PoolEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Keep worst (highest complexity/error) at the top for eviction
+        // Keep worst (least exact, largest error, largest complexity) at top for eviction.
         self.rank_key.cmp(&other.rank_key)
     }
 }
@@ -264,17 +266,31 @@ impl TopKPool {
         true
     }
 
-    /// Get all matches, sorted by (complexity, error)
+    /// Get all matches, sorted by (exactness, error, complexity)
     pub fn into_sorted(self) -> Vec<Match> {
         let mut matches: Vec<Match> = self.heap.into_iter().map(|e| e.m).collect();
         matches.sort_by(|a, b| {
-            a.complexity
-                .cmp(&b.complexity)
+            let a_exactness = if a.error.abs() < EXACT_MATCH_TOLERANCE {
+                0_u8
+            } else {
+                1_u8
+            };
+            let b_exactness = if b.error.abs() < EXACT_MATCH_TOLERANCE {
+                0_u8
+            } else {
+                1_u8
+            };
+
+            a_exactness
+                .cmp(&b_exactness)
                 .then_with(|| {
                     a.error
                         .abs()
                         .partial_cmp(&b.error.abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| {
+                    a.complexity.cmp(&b.complexity)
                 })
         });
         matches

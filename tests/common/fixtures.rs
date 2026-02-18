@@ -27,6 +27,9 @@ pub fn test_search_config(target: f64) -> SearchConfig {
         newton_iterations: 15,
         user_constants: Vec::new(),
         user_functions: Vec::new(),
+        refine_with_newton: true,
+        rhs_allowed_symbols: None,
+        rhs_excluded_symbols: None,
     }
 }
 

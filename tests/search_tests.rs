@@ -8,6 +8,8 @@ use ries_rs::gen::{generate_all, GenConfig};
 use ries_rs::profile::UserConstant;
 use ries_rs::search::{search_with_stats_and_options, ExprDatabase};
 use ries_rs::symbol::{NumType, Symbol};
+use ries_rs::udf::UserFunction;
+use std::collections::HashMap;
 
 mod common;
 
@@ -33,6 +35,11 @@ fn fast_config() -> GenConfig {
         ],
         unary_ops: vec![Symbol::Neg, Symbol::Recip, Symbol::Square, Symbol::Sqrt],
         binary_ops: vec![Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div],
+        rhs_constants: None,
+        rhs_unary_ops: None,
+        rhs_binary_ops: None,
+        symbol_max_counts: HashMap::new(),
+        rhs_symbol_max_counts: None,
         min_num_type: NumType::Transcendental,
         generate_lhs: true,
         generate_rhs: true,
@@ -83,6 +90,36 @@ fn test_complexity_limits() {
             rhs.expr.complexity() <= 25,
             "RHS complexity {} exceeds limit",
             rhs.expr.complexity()
+        );
+    }
+}
+
+/// Test -O semantics: per-expression symbol count limits.
+#[test]
+fn test_symbol_count_limits_are_enforced() {
+    let mut config = fast_config();
+    config.symbol_max_counts.insert(Symbol::X, 1);
+    config.symbol_max_counts.insert(Symbol::Add, 1);
+
+    let generated = generate_all(&config, 2.5);
+    for lhs in &generated.lhs {
+        let x_count = lhs
+            .expr
+            .symbols()
+            .iter()
+            .filter(|&&s| s == Symbol::X)
+            .count();
+        let add_count = lhs
+            .expr
+            .symbols()
+            .iter()
+            .filter(|&&s| s == Symbol::Add)
+            .count();
+        assert!(x_count <= 1, "expected at most one x in LHS, got {}", x_count);
+        assert!(
+            add_count <= 1,
+            "expected at most one + in LHS, got {}",
+            add_count
         );
     }
 }
@@ -330,5 +367,58 @@ fn test_multiple_user_constants() {
     assert!(
         has_value_2 || has_value_3,
         "Should have RHS with values from user constants or matching standard constants"
+    );
+}
+
+/// Regression test: user-defined functions must survive full search/refinement path
+#[test]
+fn test_user_function_in_search() {
+    let udf = UserFunction::parse("4:sinh:hyperbolic sine:E|r-2/").unwrap();
+    let uc = UserConstant {
+        weight: 4,
+        name: "sinh2".to_string(),
+        description: "sinh(2)".to_string(),
+        value: 3.626_860_407_847_019,
+        num_type: NumType::Transcendental,
+    };
+
+    let config = GenConfig {
+        max_lhs_complexity: 20,
+        max_rhs_complexity: 20,
+        max_length: 6,
+        constants: vec![Symbol::One, Symbol::UserConstant0],
+        unary_ops: vec![Symbol::UserFunction0],
+        binary_ops: vec![],
+        rhs_constants: None,
+        rhs_unary_ops: None,
+        rhs_binary_ops: None,
+        symbol_max_counts: HashMap::new(),
+        rhs_symbol_max_counts: None,
+        min_num_type: NumType::Transcendental,
+        generate_lhs: true,
+        generate_rhs: true,
+        user_constants: vec![uc],
+        user_functions: vec![udf],
+    };
+
+    let (matches, _stats) = search_with_stats_and_options(2.0, &config, 50, false, None);
+
+    let has_udf_match = matches.iter().any(|m| {
+        m.error.abs() < 1e-10
+            && m.lhs
+                .expr
+                .symbols()
+                .iter()
+                .any(|s| matches!(s, Symbol::UserFunction0))
+            && m.rhs
+                .expr
+                .symbols()
+                .iter()
+                .any(|s| matches!(s, Symbol::UserConstant0))
+    });
+
+    assert!(
+        has_udf_match,
+        "Should find an exact match using UserFunction0 and UserConstant0"
     );
 }

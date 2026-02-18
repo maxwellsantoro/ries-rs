@@ -439,7 +439,7 @@ fn eval_constant_with_user(sym: Symbol, x: f64, user_constants: &[UserConstant])
         Plastic => StackEntry::constant(constants::PLASTIC, NumType::Algebraic),
         Apery => StackEntry::constant(constants::APERY, NumType::Transcendental),
         Catalan => StackEntry::constant(constants::CATALAN, NumType::Transcendental),
-        X => StackEntry::new(x, 1.0, NumType::Transcendental), // dx/dx = 1
+        X => StackEntry::new(x, 1.0, NumType::Integer), // x can be any value, including integer
         // User constants - look up value from the user_constants slice
         UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 | UserConstant4
         | UserConstant5 | UserConstant6 | UserConstant7 | UserConstant8 | UserConstant9

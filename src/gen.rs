@@ -35,6 +35,16 @@ pub struct GenConfig {
     pub unary_ops: Vec<Symbol>,
     /// Symbols to use for binary ops (Seft::C)
     pub binary_ops: Vec<Symbol>,
+    /// Optional RHS-only constants override
+    pub rhs_constants: Option<Vec<Symbol>>,
+    /// Optional RHS-only unary ops override
+    pub rhs_unary_ops: Option<Vec<Symbol>>,
+    /// Optional RHS-only binary ops override
+    pub rhs_binary_ops: Option<Vec<Symbol>>,
+    /// Maximum per-expression symbol counts (for -O style limits)
+    pub symbol_max_counts: HashMap<Symbol, u32>,
+    /// Optional RHS-only symbol count limits (for --O-RHS)
+    pub rhs_symbol_max_counts: Option<HashMap<Symbol, u32>>,
     /// Minimum numeric type required
     pub min_num_type: NumType,
     /// Whether to generate LHS expressions (containing x)
@@ -56,6 +66,11 @@ impl Default for GenConfig {
             constants: Symbol::constants().to_vec(),
             unary_ops: Symbol::unary_ops().to_vec(),
             binary_ops: Symbol::binary_ops().to_vec(),
+            rhs_constants: None,
+            rhs_unary_ops: None,
+            rhs_binary_ops: None,
+            symbol_max_counts: HashMap::new(),
+            rhs_symbol_max_counts: None,
             min_num_type: NumType::Transcendental,
             generate_lhs: true,
             generate_rhs: true,
@@ -111,15 +126,41 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
     let mut lhs_raw = Vec::new();
     let mut rhs_raw = Vec::new();
 
-    // Generate expressions for each possible "form" (sequence of stack effects)
-    generate_recursive(
-        config,
-        target,
-        &mut Expression::new(),
-        0, // current stack depth
-        &mut lhs_raw,
-        &mut rhs_raw,
-    );
+    if config.generate_lhs && config.generate_rhs && has_rhs_symbol_overrides(config) {
+        // LHS pass with base symbol set.
+        let mut lhs_config = config.clone();
+        lhs_config.generate_lhs = true;
+        lhs_config.generate_rhs = false;
+        generate_recursive(
+            &lhs_config,
+            target,
+            &mut Expression::new(),
+            0,
+            &mut lhs_raw,
+            &mut rhs_raw,
+        );
+
+        // RHS pass with RHS-specific symbol overrides.
+        let rhs_config = rhs_only_config(config);
+        generate_recursive(
+            &rhs_config,
+            target,
+            &mut Expression::new(),
+            0,
+            &mut lhs_raw,
+            &mut rhs_raw,
+        );
+    } else {
+        // Generate expressions for each possible "form" (sequence of stack effects)
+        generate_recursive(
+            config,
+            target,
+            &mut Expression::new(),
+            0, // current stack depth
+            &mut lhs_raw,
+            &mut rhs_raw,
+        );
+    }
 
     // Deduplicate RHS by value, keeping simplest expression for each value
     let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
@@ -196,13 +237,66 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
 /// generate_streaming(&config, target, callbacks);
 /// ```
 pub fn generate_streaming(config: &GenConfig, target: f64, callbacks: &mut StreamingCallbacks) {
-    generate_recursive_streaming(
-        config,
-        target,
-        &mut Expression::new(),
-        0, // current stack depth
-        callbacks,
-    );
+    if config.generate_lhs && config.generate_rhs && has_rhs_symbol_overrides(config) {
+        let mut lhs_config = config.clone();
+        lhs_config.generate_lhs = true;
+        lhs_config.generate_rhs = false;
+        if !generate_recursive_streaming(
+            &lhs_config,
+            target,
+            &mut Expression::new(),
+            0,
+            callbacks,
+        ) {
+            return;
+        }
+
+        let rhs_config = rhs_only_config(config);
+        generate_recursive_streaming(&rhs_config, target, &mut Expression::new(), 0, callbacks);
+    } else {
+        generate_recursive_streaming(
+            config,
+            target,
+            &mut Expression::new(),
+            0, // current stack depth
+            callbacks,
+        );
+    }
+}
+
+#[inline]
+fn has_rhs_symbol_overrides(config: &GenConfig) -> bool {
+    config.rhs_constants.is_some()
+        || config.rhs_unary_ops.is_some()
+        || config.rhs_binary_ops.is_some()
+        || config.rhs_symbol_max_counts.is_some()
+}
+
+fn rhs_only_config(config: &GenConfig) -> GenConfig {
+    let mut rhs_config = config.clone();
+    rhs_config.generate_lhs = false;
+    rhs_config.generate_rhs = true;
+    if let Some(constants) = &config.rhs_constants {
+        rhs_config.constants = constants.clone();
+    }
+    if let Some(unary_ops) = &config.rhs_unary_ops {
+        rhs_config.unary_ops = unary_ops.clone();
+    }
+    if let Some(binary_ops) = &config.rhs_binary_ops {
+        rhs_config.binary_ops = binary_ops.clone();
+    }
+    if let Some(rhs_symbol_max_counts) = &config.rhs_symbol_max_counts {
+        rhs_config.symbol_max_counts = rhs_symbol_max_counts.clone();
+    }
+    rhs_config
+}
+
+#[inline]
+fn exceeds_symbol_limit(config: &GenConfig, current: &Expression, sym: Symbol) -> bool {
+    config
+        .symbol_max_counts
+        .get(&sym)
+        .is_some_and(|&max| current.count_symbol(sym) >= max)
 }
 
 /// Recursively generate expressions with streaming callbacks
@@ -279,6 +373,9 @@ fn generate_recursive_streaming(
         if current.complexity() + sym.weight() > max_complexity {
             continue;
         }
+        if exceeds_symbol_limit(config, current, sym) {
+            continue;
+        }
 
         // Skip x if we only want RHS
         if sym == Symbol::X && !config.generate_lhs {
@@ -296,7 +393,9 @@ fn generate_recursive_streaming(
     // Also add x for LHS generation
     if config.generate_lhs && !config.constants.contains(&Symbol::X) {
         let sym = Symbol::X;
-        if current.complexity() + sym.weight() <= max_complexity {
+        if current.complexity() + sym.weight() <= max_complexity
+            && !exceeds_symbol_limit(config, current, sym)
+        {
             current.push(sym);
             if !generate_recursive_streaming(config, target, current, stack_depth + 1, callbacks) {
                 current.pop();
@@ -310,6 +409,9 @@ fn generate_recursive_streaming(
     if stack_depth >= 1 {
         for &sym in &config.unary_ops {
             if current.complexity() + sym.weight() > max_complexity {
+                continue;
+            }
+            if exceeds_symbol_limit(config, current, sym) {
                 continue;
             }
 
@@ -331,6 +433,9 @@ fn generate_recursive_streaming(
     if stack_depth >= 2 {
         for &sym in &config.binary_ops {
             if current.complexity() + sym.weight() > max_complexity {
+                continue;
+            }
+            if exceeds_symbol_limit(config, current, sym) {
                 continue;
             }
 
@@ -420,6 +525,9 @@ fn generate_recursive(
         if current.complexity() + sym.weight() > max_complexity {
             continue;
         }
+        if exceeds_symbol_limit(config, current, sym) {
+            continue;
+        }
 
         // Skip x if we only want RHS
         if sym == Symbol::X && !config.generate_lhs {
@@ -434,7 +542,9 @@ fn generate_recursive(
     // Also add x for LHS generation
     if config.generate_lhs && !config.constants.contains(&Symbol::X) {
         let sym = Symbol::X;
-        if current.complexity() + sym.weight() <= max_complexity {
+        if current.complexity() + sym.weight() <= max_complexity
+            && !exceeds_symbol_limit(config, current, sym)
+        {
             current.push(sym);
             generate_recursive(config, target, current, stack_depth + 1, lhs_out, rhs_out);
             current.pop();
@@ -445,6 +555,9 @@ fn generate_recursive(
     if stack_depth >= 1 {
         for &sym in &config.unary_ops {
             if current.complexity() + sym.weight() > max_complexity {
+                continue;
+            }
+            if exceeds_symbol_limit(config, current, sym) {
                 continue;
             }
 
@@ -463,6 +576,9 @@ fn generate_recursive(
     if stack_depth >= 2 {
         for &sym in &config.binary_ops {
             if current.complexity() + sym.weight() > max_complexity {
+                continue;
+            }
+            if exceeds_symbol_limit(config, current, sym) {
                 continue;
             }
 
@@ -787,6 +903,11 @@ fn should_prune_pattern(expr: &Expression, _sym: Symbol) -> bool {
 pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs {
     use rayon::prelude::*;
 
+    // Parallel path currently assumes shared LHS/RHS symbol sets.
+    if has_rhs_symbol_overrides(config) {
+        return generate_all(config, target);
+    }
+
     // Split work by first symbol
     let first_symbols: Vec<Symbol> = config
         .constants
@@ -796,6 +917,12 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
             Some(Symbol::X)
         } else {
             None
+        })
+        .filter(|&sym| {
+            config
+                .symbol_max_counts
+                .get(&sym)
+                .is_none_or(|&max| max > 0)
         })
         .collect();
 
@@ -871,6 +998,11 @@ mod tests {
             ],
             unary_ops: vec![Symbol::Neg, Symbol::Recip, Symbol::Square, Symbol::Sqrt],
             binary_ops: vec![Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div],
+            rhs_constants: None,
+            rhs_unary_ops: None,
+            rhs_binary_ops: None,
+            symbol_max_counts: HashMap::new(),
+            rhs_symbol_max_counts: None,
             min_num_type: NumType::Transcendental,
             generate_lhs: true,
             generate_rhs: true,

@@ -11,6 +11,7 @@ use crate::thresholds::{
     EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR, NEWTON_DIVERGENCE_THRESHOLD,
     NEWTON_FINAL_TOLERANCE, NEWTON_TOLERANCE, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
 };
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 /// Statistics collected during search
@@ -155,6 +156,12 @@ pub struct SearchConfig {
     pub user_constants: Vec<UserConstant>,
     /// User-defined functions for evaluation
     pub user_functions: Vec<crate::udf::UserFunction>,
+    /// Whether to refine candidate roots with Newton-Raphson
+    pub refine_with_newton: bool,
+    /// Optional RHS-only allowed symbol set (if set, all RHS symbols must be in set)
+    pub rhs_allowed_symbols: Option<HashSet<u8>>,
+    /// Optional RHS-only excluded symbol set (if set, RHS symbols in set are rejected)
+    pub rhs_excluded_symbols: Option<HashSet<u8>>,
 }
 
 impl Default for SearchConfig {
@@ -169,7 +176,31 @@ impl Default for SearchConfig {
             newton_iterations: 15,
             user_constants: Vec::new(),
             user_functions: Vec::new(),
+            refine_with_newton: true,
+            rhs_allowed_symbols: None,
+            rhs_excluded_symbols: None,
         }
+    }
+}
+
+impl SearchConfig {
+    #[inline]
+    fn rhs_symbol_allowed(&self, rhs: &crate::expr::Expression) -> bool {
+        let symbols = rhs.symbols();
+
+        if let Some(allowed) = &self.rhs_allowed_symbols {
+            if symbols.iter().any(|s| !allowed.contains(&(*s as u8))) {
+                return false;
+            }
+        }
+
+        if let Some(excluded) = &self.rhs_excluded_symbols {
+            if symbols.iter().any(|s| excluded.contains(&(*s as u8))) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
@@ -404,7 +435,9 @@ fn calculate_adaptive_search_radius(
 
     // Ensure we have a reasonable minimum and cap at maximum
     let min_radius = 0.1 * deriv_abs; // At least 0.1 * derivative
-    radius.max(min_radius).min(MAX_SEARCH_RADIUS_FACTOR * deriv_abs)
+    radius
+        .max(min_radius)
+        .min(MAX_SEARCH_RADIUS_FACTOR * deriv_abs)
 }
 
 impl ExprDatabase {
@@ -460,8 +493,8 @@ impl ExprDatabase {
         let mut stats = SearchStats::new();
         let search_start = Instant::now();
 
-        // Use target-scaled initial threshold like original RIES
-        let initial_max_error = config.max_error.max(config.target.abs() * 0.01).max(1e-12);
+        // Respect configured max error (with a tiny floor for numerical stability)
+        let initial_max_error = config.max_error.max(1e-12);
 
         // Create bounded pool with configured capacity
         let mut pool = TopKPool::new(config.max_matches, initial_max_error);
@@ -498,7 +531,8 @@ impl ExprDatabase {
                 {
                     // Check both: derivative still ~0, AND value unchanged
                     // This catches x*(1/x)=1 type expressions
-                    let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+                    let value_unchanged =
+                        (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
                     let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
                     if deriv_still_zero || value_unchanged {
                         // Degenerate expression - skip
@@ -513,6 +547,9 @@ impl ExprDatabase {
 
                 stats.lhs_tested += 1;
                 for rhs in self.range(low, high) {
+                    if !config.rhs_symbol_allowed(&rhs.expr) {
+                        continue;
+                    }
                     stats.candidates_tested += 1;
                     let val_diff = (lhs.value - rhs.value).abs();
                     if val_diff < val_error && pool.would_accept(0.0, true) {
@@ -542,6 +579,9 @@ impl ExprDatabase {
             // Track slice sizes for optimization analysis
             // println!("LHS {} (val={:.4}): slice size = {}", lhs.expr.to_postfix(), lhs.value, rhs_slice.len());
             for rhs in rhs_slice {
+                if !config.rhs_symbol_allowed(&rhs.expr) {
+                    continue;
+                }
                 stats.candidates_tested += 1;
 
                 // Compute initial error estimate (coarse filter)
@@ -553,6 +593,36 @@ impl ExprDatabase {
                 // Use strict gate to avoid expensive Newton calls for marginal candidates
                 let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
                 if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
+                    continue;
+                }
+
+                if !config.refine_with_newton {
+                    let refined_x = config.target + x_delta;
+                    let refined_error = x_delta;
+                    let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+
+                    if pool.would_accept(refined_error.abs(), is_exact) {
+                        let m = Match {
+                            lhs: lhs.clone(),
+                            rhs: rhs.clone(),
+                            x_value: refined_x,
+                            error: refined_error,
+                            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                        };
+
+                        pool.try_insert(m);
+
+                        if config.stop_at_exact && is_exact {
+                            early_exit = true;
+                            break 'outer;
+                        }
+                        if let Some(threshold) = config.stop_below {
+                            if refined_error.abs() < threshold {
+                                early_exit = true;
+                                break 'outer;
+                            }
+                        }
+                    }
                     continue;
                 }
 
@@ -713,30 +783,38 @@ pub fn search_with_stats_and_options(
     stop_at_exact: bool,
     stop_below: Option<f64>,
 ) -> (Vec<Match>, SearchStats) {
+    let config = SearchConfig {
+        target,
+        max_matches,
+        stop_at_exact,
+        stop_below,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    search_with_stats_and_config(gen_config, &config)
+}
+
+/// Perform a complete search with a fully specified search configuration
+pub fn search_with_stats_and_config(
+    gen_config: &crate::gen::GenConfig,
+    config: &SearchConfig,
+) -> (Vec<Match>, SearchStats) {
     use crate::gen::generate_all;
 
     let gen_start = Instant::now();
 
     // Generate expressions
-    let generated = generate_all(gen_config, target);
+    let generated = generate_all(gen_config, config.target);
     let gen_time = gen_start.elapsed();
 
     // Build database
     let mut db = ExprDatabase::new();
     db.insert_rhs(generated.rhs);
 
-    // Configure search with user constants from gen_config
-    let search_config = SearchConfig {
-        target,
-        max_matches,
-        stop_at_exact,
-        stop_below,
-        user_constants: gen_config.user_constants.clone(),
-        ..Default::default()
-    };
-
     // Find matches with stats
-    let (matches, mut stats) = db.find_matches_with_stats(&generated.lhs, &search_config);
+    let (matches, mut stats) = db.find_matches_with_stats(&generated.lhs, config);
 
     // Add generation stats
     stats.gen_time = gen_time;
@@ -775,6 +853,7 @@ pub fn search_with_stats_and_options(
 /// let config = GenConfig::default();
 /// let (matches, stats) = search_streaming(2.5, &config, 100, false, None);
 /// ```
+#[allow(dead_code)]
 pub fn search_streaming(
     target: f64,
     gen_config: &crate::gen::GenConfig,
@@ -782,17 +861,35 @@ pub fn search_streaming(
     stop_at_exact: bool,
     stop_below: Option<f64>,
 ) -> (Vec<Match>, SearchStats) {
+    let config = SearchConfig {
+        target,
+        max_matches,
+        stop_at_exact,
+        stop_below,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    search_streaming_with_config(gen_config, &config)
+}
+
+/// Perform a streaming search with a fully specified search configuration.
+pub fn search_streaming_with_config(
+    gen_config: &crate::gen::GenConfig,
+    search_config: &SearchConfig,
+) -> (Vec<Match>, SearchStats) {
     use crate::gen::{generate_streaming, StreamingCallbacks};
     use std::collections::HashMap;
 
     let gen_start = Instant::now();
     let mut stats = SearchStats::new();
 
-    // Use target-scaled initial threshold like original RIES
-    let initial_max_error = 1.0_f64.max(target.abs() * 0.01).max(1e-12);
+    // Respect configured max error (with a tiny floor for numerical stability)
+    let initial_max_error = search_config.max_error.max(1e-12);
 
     // Create bounded pool with configured capacity
-    let mut pool = TopKPool::new(max_matches, initial_max_error);
+    let mut pool = TopKPool::new(search_config.max_matches, initial_max_error);
 
     // Build RHS database first using streaming
     let mut rhs_db = TieredExprDatabase::new();
@@ -824,7 +921,7 @@ pub fn search_streaming(
         };
 
         // Generate with streaming callbacks
-        generate_streaming(gen_config, target, &mut callbacks);
+        generate_streaming(gen_config, search_config.target, &mut callbacks);
     }
 
     // Build the tiered database from deduplicated RHS
@@ -839,16 +936,6 @@ pub fn search_streaming(
 
     // Now match LHS expressions against the RHS database
     let search_start = Instant::now();
-
-    // Configure search
-    let search_config = SearchConfig {
-        target,
-        max_matches,
-        stop_at_exact,
-        stop_below,
-        user_constants: gen_config.user_constants.clone(),
-        ..Default::default()
-    };
 
     // Sort LHS by complexity so simpler expressions are processed first
     lhs_exprs.sort_by_key(|e| e.expr.complexity());
@@ -868,11 +955,14 @@ pub fn search_streaming(
 
         // Skip degenerate expressions
         if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-            let test_x = target + std::f64::consts::E;
-            if let Ok(test_result) =
-                crate::eval::evaluate_with_constants(&lhs.expr, test_x, &search_config.user_constants)
-            {
-                let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+            let test_x = search_config.target + std::f64::consts::E;
+            if let Ok(test_result) = crate::eval::evaluate_with_constants(
+                &lhs.expr,
+                test_x,
+                &search_config.user_constants,
+            ) {
+                let value_unchanged =
+                    (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
                 let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
                 if deriv_still_zero || value_unchanged {
                     continue;
@@ -882,13 +972,16 @@ pub fn search_streaming(
             // Check for value match
             stats.lhs_tested += 1;
             for rhs in rhs_db.iter_tiers_in_range(lhs.value - 0.01, lhs.value + 0.01) {
+                if !search_config.rhs_symbol_allowed(&rhs.expr) {
+                    continue;
+                }
                 stats.candidates_tested += 1;
                 let val_diff = (lhs.value - rhs.value).abs();
                 if val_diff < 0.01 && pool.would_accept(0.0, true) {
                     let m = Match {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),
-                        x_value: target,
+                        x_value: search_config.target,
                         error: 0.0,
                         complexity: lhs.expr.complexity() + rhs.expr.complexity(),
                     };
@@ -905,7 +998,7 @@ pub fn search_streaming(
             lhs.derivative,
             lhs.expr.complexity(),
             pool.len(),
-            max_matches,
+            search_config.max_matches,
             pool.best_error,
         );
         let low = lhs.value - search_radius;
@@ -913,6 +1006,9 @@ pub fn search_streaming(
 
         // Search using tiered iterator (lower tiers first)
         for rhs in rhs_db.iter_tiers_in_range(low, high) {
+            if !search_config.rhs_symbol_allowed(&rhs.expr) {
+                continue;
+            }
             stats.candidates_tested += 1;
 
             // Compute initial error estimate (coarse filter)
@@ -921,8 +1017,38 @@ pub fn search_streaming(
             let coarse_error = x_delta.abs();
 
             // Skip if coarse estimate won't pass threshold
-            let is_potentially_exact = coarse_error < 1e-10;
+            let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
             if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
+                continue;
+            }
+
+            if !search_config.refine_with_newton {
+                let refined_x = search_config.target + x_delta;
+                let refined_error = x_delta;
+                let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+
+                if pool.would_accept(refined_error.abs(), is_exact) {
+                    let m = Match {
+                        lhs: lhs.clone(),
+                        rhs: rhs.clone(),
+                        x_value: refined_x,
+                        error: refined_error,
+                        complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    };
+
+                    pool.try_insert(m);
+
+                    if search_config.stop_at_exact && is_exact {
+                        early_exit = true;
+                        break 'outer;
+                    }
+                    if let Some(threshold) = search_config.stop_below {
+                        if refined_error.abs() < threshold {
+                            early_exit = true;
+                            break 'outer;
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -931,14 +1057,14 @@ pub fn search_streaming(
             if let Some(refined_x) = newton_raphson_with_constants(
                 &lhs.expr,
                 rhs.value,
-                target,
+                search_config.target,
                 search_config.newton_iterations,
                 &search_config.user_constants,
                 &search_config.user_functions,
             ) {
                 stats.newton_success += 1;
-                let refined_error = refined_x - target;
-                let is_exact = refined_error.abs() < 1e-14;
+                let refined_error = refined_x - search_config.target;
+                let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
 
                 // Check if this is acceptable
                 if pool.would_accept(refined_error.abs(), is_exact) {
@@ -954,11 +1080,11 @@ pub fn search_streaming(
                     pool.try_insert(m);
 
                     // Check early exit conditions
-                    if stop_at_exact && is_exact {
+                    if search_config.stop_at_exact && is_exact {
                         early_exit = true;
                         break 'outer;
                     }
-                    if let Some(threshold) = stop_below {
+                    if let Some(threshold) = search_config.stop_below {
                         if refined_error.abs() < threshold {
                             early_exit = true;
                             break 'outer;
@@ -976,6 +1102,105 @@ pub fn search_streaming(
     stats.pool_evictions = pool.stats.evictions;
     stats.pool_final_size = pool.len();
     stats.pool_best_error = pool.best_error;
+    stats.search_time = search_start.elapsed();
+    stats.early_exit = early_exit;
+
+    (pool.into_sorted(), stats)
+}
+
+/// Perform one-sided search: generate RHS expressions only and match `x = RHS`.
+pub fn search_one_sided_with_stats_and_config(
+    gen_config: &crate::gen::GenConfig,
+    config: &SearchConfig,
+) -> (Vec<Match>, SearchStats) {
+    use crate::eval::evaluate_with_constants_and_functions;
+    use crate::expr::Expression;
+    use crate::gen::generate_all;
+    use crate::symbol::Symbol;
+
+    let gen_start = Instant::now();
+
+    let mut rhs_only = gen_config.clone();
+    rhs_only.generate_lhs = false;
+    rhs_only.generate_rhs = true;
+
+    let generated = generate_all(&rhs_only, config.target);
+    let gen_time = gen_start.elapsed();
+
+    let search_start = Instant::now();
+    let initial_max_error = config.max_error.max(1e-12);
+    let mut pool = TopKPool::new(config.max_matches, initial_max_error);
+    let mut stats = SearchStats::new();
+    let mut early_exit = false;
+
+    let mut lhs_expr = Expression::new();
+    lhs_expr.push(Symbol::X);
+    let lhs_eval = evaluate_with_constants_and_functions(
+        &lhs_expr,
+        config.target,
+        &config.user_constants,
+        &config.user_functions,
+    );
+    let lhs_eval = match lhs_eval {
+        Ok(v) => v,
+        Err(_) => {
+            stats.gen_time = gen_time;
+            stats.search_time = search_start.elapsed();
+            return (Vec::new(), stats);
+        }
+    };
+    let lhs = EvaluatedExpr::new(
+        lhs_expr,
+        lhs_eval.value,
+        lhs_eval.derivative,
+        lhs_eval.num_type,
+    );
+
+    stats.lhs_count = 1;
+    stats.rhs_count = generated.rhs.len();
+    stats.lhs_tested = 1;
+
+    for rhs in generated.rhs {
+        if !config.rhs_symbol_allowed(&rhs.expr) {
+            continue;
+        }
+        stats.candidates_tested += 1;
+
+        let error = rhs.value - config.target;
+        let is_exact = error.abs() < EXACT_MATCH_TOLERANCE;
+        if !pool.would_accept(error.abs(), is_exact) {
+            continue;
+        }
+
+        let m = Match {
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
+            x_value: rhs.value,
+            error,
+            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+        };
+
+        pool.try_insert(m);
+
+        if config.stop_at_exact && is_exact {
+            early_exit = true;
+            break;
+        }
+        if let Some(threshold) = config.stop_below {
+            if error.abs() < threshold {
+                early_exit = true;
+                break;
+            }
+        }
+    }
+
+    stats.pool_insertions = pool.stats.insertions;
+    stats.pool_rejections_error = pool.stats.rejections_error;
+    stats.pool_rejections_dedupe = pool.stats.rejections_dedupe;
+    stats.pool_evictions = pool.stats.evictions;
+    stats.pool_final_size = pool.len();
+    stats.pool_best_error = pool.best_error;
+    stats.gen_time = gen_time;
     stats.search_time = search_start.elapsed();
     stats.early_exit = early_exit;
 
@@ -1020,30 +1245,39 @@ pub fn search_parallel_with_stats_and_options(
     stop_at_exact: bool,
     stop_below: Option<f64>,
 ) -> (Vec<Match>, SearchStats) {
+    let config = SearchConfig {
+        target,
+        max_matches,
+        stop_at_exact,
+        stop_below,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    search_parallel_with_stats_and_config(gen_config, &config)
+}
+
+/// Perform a parallel search with a fully specified search configuration.
+#[cfg(feature = "parallel")]
+pub fn search_parallel_with_stats_and_config(
+    gen_config: &crate::gen::GenConfig,
+    config: &SearchConfig,
+) -> (Vec<Match>, SearchStats) {
     use crate::gen::generate_all_parallel;
 
     let gen_start = Instant::now();
 
     // Generate expressions in parallel
-    let generated = generate_all_parallel(gen_config, target);
+    let generated = generate_all_parallel(gen_config, config.target);
     let gen_time = gen_start.elapsed();
 
     // Build database
     let mut db = ExprDatabase::new();
     db.insert_rhs(generated.rhs);
 
-    // Configure search with user constants from gen_config
-    let search_config = SearchConfig {
-        target,
-        max_matches,
-        stop_at_exact,
-        stop_below,
-        user_constants: gen_config.user_constants.clone(),
-        ..Default::default()
-    };
-
     // Find matches with stats
-    let (matches, mut stats) = db.find_matches_with_stats(&generated.lhs, &search_config);
+    let (matches, mut stats) = db.find_matches_with_stats(&generated.lhs, config);
 
     // Add generation stats
     stats.gen_time = gen_time;
@@ -1085,6 +1319,11 @@ mod tests {
                 crate::symbol::Symbol::Mul,
                 crate::symbol::Symbol::Div,
             ],
+            rhs_constants: None,
+            rhs_unary_ops: None,
+            rhs_binary_ops: None,
+            symbol_max_counts: std::collections::HashMap::new(),
+            rhs_symbol_max_counts: None,
             min_num_type: crate::symbol::NumType::Transcendental,
             generate_lhs: true,
             generate_rhs: true,

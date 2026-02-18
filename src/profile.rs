@@ -58,33 +58,7 @@ impl Profile {
 
     /// Load a profile from a file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, ProfileError> {
-        let path = path.as_ref();
-        let file =
-            fs::File::open(path).map_err(|e| ProfileError::IoError(path.to_path_buf(), e))?;
-
-        let mut profile = Profile::new();
-        let reader = io::BufReader::new(file);
-
-        for (line_num, line_result) in reader.lines().enumerate() {
-            let line = line_result.map_err(|e| ProfileError::IoError(path.to_path_buf(), e))?;
-
-            // Skip empty lines and comments
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-
-            // Parse the line
-            if let Err(e) = parse_profile_line(&mut profile, trimmed) {
-                return Err(ProfileError::ParseError(
-                    path.to_path_buf(),
-                    line_num + 1,
-                    e,
-                ));
-            }
-        }
-
-        Ok(profile)
+        load_profile_recursive(path.as_ref(), &mut Vec::new(), 0)
     }
 
     /// Load the default profile chain (~/.ries_profile, ./.ries)
@@ -110,15 +84,6 @@ impl Profile {
         }
 
         profile
-    }
-
-    /// Load from explicit path (for -p option)
-    pub fn load_from(path: Option<&Path>) -> Self {
-        if let Some(p) = path {
-            Self::from_file(p).unwrap_or_default()
-        } else {
-            Self::load_default()
-        }
     }
 
     /// Merge another profile into this one (other takes precedence)
@@ -150,6 +115,96 @@ impl Profile {
     }
 }
 
+const MAX_INCLUDE_DEPTH: usize = 25;
+
+fn load_profile_recursive(
+    path: &Path,
+    include_stack: &mut Vec<PathBuf>,
+    depth: usize,
+) -> Result<Profile, ProfileError> {
+    if depth > MAX_INCLUDE_DEPTH {
+        return Err(ProfileError::ParseError(
+            path.to_path_buf(),
+            0,
+            format!("Profile include depth exceeded {}", MAX_INCLUDE_DEPTH),
+        ));
+    }
+
+    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if include_stack.contains(&canonical) {
+        return Err(ProfileError::ParseError(
+            path.to_path_buf(),
+            0,
+            "Recursive --include detected".to_string(),
+        ));
+    }
+    include_stack.push(canonical);
+
+    let file = fs::File::open(path).map_err(|e| ProfileError::IoError(path.to_path_buf(), e))?;
+    let mut profile = Profile::new();
+    let reader = io::BufReader::new(file);
+
+    for (line_num, line_result) in reader.lines().enumerate() {
+        let line = line_result.map_err(|e| ProfileError::IoError(path.to_path_buf(), e))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if trimmed.starts_with("--include") {
+            let include_raw = parse_include_path(trimmed).map_err(|e| {
+                ProfileError::ParseError(path.to_path_buf(), line_num + 1, e)
+            })?;
+
+            let include_resolved = resolve_include_path(path, &include_raw).ok_or_else(|| {
+                ProfileError::ParseError(
+                    path.to_path_buf(),
+                    line_num + 1,
+                    format!(
+                        "Could not open '{}' or '{}.ries' for reading",
+                        include_raw.display(),
+                        include_raw.display()
+                    ),
+                )
+            })?;
+
+            profile.includes.push(include_resolved.clone());
+            let nested = load_profile_recursive(&include_resolved, include_stack, depth + 1)?;
+            profile = profile.merge(nested);
+            continue;
+        }
+
+        if let Err(e) = parse_profile_line(&mut profile, trimmed) {
+            return Err(ProfileError::ParseError(path.to_path_buf(), line_num + 1, e));
+        }
+    }
+
+    include_stack.pop();
+    Ok(profile)
+}
+
+fn resolve_include_path(current_file: &Path, include_path: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if include_path.is_absolute() {
+        candidates.push(include_path.to_path_buf());
+    } else {
+        let base = current_file.parent().unwrap_or_else(|| Path::new("."));
+        candidates.push(base.join(include_path));
+    }
+
+    let mut with_suffix = include_path.as_os_str().to_os_string();
+    with_suffix.push(".ries");
+    if include_path.is_absolute() {
+        candidates.push(PathBuf::from(with_suffix));
+    } else {
+        let base = current_file.parent().unwrap_or_else(|| Path::new("."));
+        candidates.push(base.join(PathBuf::from(with_suffix)));
+    }
+
+    candidates.into_iter().find(|p| p.exists())
+}
+
 /// Parse a single profile line
 fn parse_profile_line(profile: &mut Profile, line: &str) -> Result<(), String> {
     // Handle -X (user constant) lines
@@ -170,11 +225,6 @@ fn parse_profile_line(profile: &mut Profile, line: &str) -> Result<(), String> {
     // Handle --symbol-weights
     if line.starts_with("--symbol-weights") {
         return parse_symbol_weights(profile, line);
-    }
-
-    // Handle --include
-    if line.starts_with("--include") {
-        return parse_include(profile, line);
     }
 
     // Unknown directive - could be a comment or unsupported option
@@ -336,10 +386,14 @@ fn parse_symbol_weights(profile: &mut Profile, line: &str) -> Result<(), String>
     Ok(())
 }
 
-/// Parse include directive
+/// Parse include directive path.
 /// Format: --include /path/to/profile.ries
-fn parse_include(profile: &mut Profile, line: &str) -> Result<(), String> {
+fn parse_include_path(line: &str) -> Result<PathBuf, String> {
     let rest = line["--include".len()..].trim();
+
+    if rest.is_empty() {
+        return Err("--include requires a filename".to_string());
+    }
 
     // Remove quotes if present
     let path_str = if rest.starts_with('"') && rest.ends_with('"') {
@@ -348,8 +402,7 @@ fn parse_include(profile: &mut Profile, line: &str) -> Result<(), String> {
         rest
     };
 
-    profile.includes.push(PathBuf::from(path_str));
-    Ok(())
+    Ok(PathBuf::from(path_str))
 }
 
 /// Errors that can occur during profile loading
