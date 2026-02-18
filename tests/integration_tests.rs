@@ -60,7 +60,10 @@ fn test_search_closeness_ordering() {
                 seen_non_exact = true;
                 last_error = err;
             } else {
-                assert!(err >= last_error, "non-exact errors should be non-decreasing");
+                assert!(
+                    err >= last_error,
+                    "non-exact errors should be non-decreasing"
+                );
                 last_error = err;
             }
         } else {

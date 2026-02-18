@@ -971,46 +971,140 @@ struct ExpressionConstraintOptions {
     rational_exponents: bool,
     rational_trig_args: bool,
     max_trig_cycles: Option<u32>,
+    user_constant_types: [symbol::NumType; 16],
+    user_function_types: [symbol::NumType; 16],
 }
 
 fn expression_respects_constraints(
     expression: &expr::Expression,
     opts: ExpressionConstraintOptions,
 ) -> bool {
-    use symbol::{Seft, Symbol};
+    use symbol::{NumType, Seft, Symbol};
 
-    let mut stack: Vec<bool> = Vec::with_capacity(expression.len());
+    #[derive(Clone, Copy)]
+    struct ConstraintValue {
+        has_x: bool,
+        num_type: NumType,
+    }
+
+    let mut stack: Vec<ConstraintValue> = Vec::with_capacity(expression.len());
     let mut trig_ops: u32 = 0;
 
     for &sym in expression.symbols() {
         match sym.seft() {
-            Seft::A => stack.push(sym == Symbol::X),
+            Seft::A => {
+                let num_type = if let Some(idx) = sym.user_constant_index() {
+                    opts.user_constant_types[idx as usize]
+                } else {
+                    sym.inherent_type()
+                };
+                stack.push(ConstraintValue {
+                    has_x: sym == Symbol::X,
+                    num_type,
+                });
+            }
             Seft::B => {
-                let Some(arg_has_x) = stack.pop() else {
+                let Some(arg) = stack.pop() else {
                     return false;
                 };
 
                 if matches!(sym, Symbol::SinPi | Symbol::CosPi | Symbol::TanPi) {
                     trig_ops = trig_ops.saturating_add(1);
-                    if opts.rational_trig_args && arg_has_x {
+                    if opts.rational_trig_args && (arg.has_x || arg.num_type < NumType::Rational) {
                         return false;
                     }
                 }
-                stack.push(arg_has_x);
+
+                let num_type = match sym {
+                    Symbol::Neg | Symbol::Square => arg.num_type,
+                    Symbol::Recip => {
+                        if arg.num_type >= NumType::Rational {
+                            NumType::Rational
+                        } else {
+                            arg.num_type
+                        }
+                    }
+                    Symbol::Sqrt => {
+                        if arg.num_type >= NumType::Rational {
+                            NumType::Algebraic
+                        } else {
+                            arg.num_type
+                        }
+                    }
+                    Symbol::UserFunction0
+                    | Symbol::UserFunction1
+                    | Symbol::UserFunction2
+                    | Symbol::UserFunction3
+                    | Symbol::UserFunction4
+                    | Symbol::UserFunction5
+                    | Symbol::UserFunction6
+                    | Symbol::UserFunction7
+                    | Symbol::UserFunction8
+                    | Symbol::UserFunction9
+                    | Symbol::UserFunction10
+                    | Symbol::UserFunction11
+                    | Symbol::UserFunction12
+                    | Symbol::UserFunction13
+                    | Symbol::UserFunction14
+                    | Symbol::UserFunction15 => {
+                        let idx = sym.user_function_index().unwrap_or(0) as usize;
+                        opts.user_function_types[idx]
+                    }
+                    _ => NumType::Transcendental,
+                };
+
+                stack.push(ConstraintValue {
+                    has_x: arg.has_x,
+                    num_type,
+                });
             }
             Seft::C => {
-                let Some(rhs_has_x) = stack.pop() else {
+                let Some(rhs) = stack.pop() else {
                     return false;
                 };
-                let Some(lhs_has_x) = stack.pop() else {
+                let Some(lhs) = stack.pop() else {
                     return false;
                 };
 
-                if opts.rational_exponents && sym == Symbol::Pow && rhs_has_x {
+                if opts.rational_exponents
+                    && sym == Symbol::Pow
+                    && (rhs.has_x || rhs.num_type < NumType::Rational)
+                {
                     return false;
                 }
 
-                stack.push(lhs_has_x || rhs_has_x);
+                let num_type = match sym {
+                    Symbol::Add | Symbol::Sub | Symbol::Mul => lhs.num_type.combine(rhs.num_type),
+                    Symbol::Div => {
+                        let combined = lhs.num_type.combine(rhs.num_type);
+                        if combined == NumType::Integer {
+                            NumType::Rational
+                        } else {
+                            combined
+                        }
+                    }
+                    Symbol::Pow => {
+                        if rhs.has_x {
+                            NumType::Transcendental
+                        } else if rhs.num_type == NumType::Integer {
+                            lhs.num_type
+                        } else if lhs.num_type >= NumType::Rational
+                            && rhs.num_type >= NumType::Rational
+                        {
+                            NumType::Algebraic
+                        } else {
+                            NumType::Transcendental
+                        }
+                    }
+                    Symbol::Root => NumType::Algebraic,
+                    Symbol::Log | Symbol::Atan2 => NumType::Transcendental,
+                    _ => NumType::Transcendental,
+                };
+
+                stack.push(ConstraintValue {
+                    has_x: lhs.has_x || rhs.has_x,
+                    num_type,
+                });
             }
         }
     }
@@ -1299,7 +1393,9 @@ fn canonical_node_key(node: &SolveNode) -> String {
 
     match &node.kind {
         SolveNodeKind::Atom => node.expr.to_postfix(),
-        SolveNodeKind::Unary(op, child) => format!("{}({})", symbol_key(*op), canonical_node_key(child)),
+        SolveNodeKind::Unary(op, child) => {
+            format!("{}({})", symbol_key(*op), canonical_node_key(child))
+        }
         SolveNodeKind::Binary(op, left, right) => {
             let mut lk = canonical_node_key(left);
             let mut rk = canonical_node_key(right);
@@ -1856,11 +1952,9 @@ fn main() {
     if let (Some(max_bytes), Some(threshold)) = (parsed_max_memory, args.memory_abort_threshold) {
         if (0.0..=1.0).contains(&threshold) {
             let budget = (max_bytes as f64 * threshold) as u64;
-            let estimate = (pool_size as u64)
-                .saturating_mul(4096)
-                .saturating_add(
-                    (max_lhs_complexity as u64 + max_rhs_complexity as u64).saturating_mul(1_000_000),
-                );
+            let estimate = (pool_size as u64).saturating_mul(4096).saturating_add(
+                (max_lhs_complexity as u64 + max_rhs_complexity as u64).saturating_mul(1_000_000),
+            );
             if estimate > budget {
                 use_streaming = true;
             }
@@ -1936,10 +2030,21 @@ fn main() {
     if let Some(min_match_distance) = args.min_match_distance {
         matches.retain(|m| m.error.abs() >= min_match_distance);
     }
+    let mut user_constant_types = [symbol::NumType::Transcendental; 16];
+    for (idx, uc) in profile.constants.iter().take(16).enumerate() {
+        user_constant_types[idx] = uc.num_type;
+    }
+    let mut user_function_types = [symbol::NumType::Transcendental; 16];
+    for (idx, uf) in profile.functions.iter().take(16).enumerate() {
+        user_function_types[idx] = uf.num_type;
+    }
+
     let expression_constraints = ExpressionConstraintOptions {
         rational_exponents: args.rational_exponents && !args.any_exponents,
         rational_trig_args: args.rational_trig_args && !args.any_trig_args,
         max_trig_cycles: args.max_trig_cycles,
+        user_constant_types,
+        user_function_types,
     };
     if expression_constraints.rational_exponents
         || expression_constraints.rational_trig_args
@@ -1953,14 +2058,16 @@ fn main() {
     if args.numeric_anagram {
         matches.retain(match_is_numeric_anagram);
     }
-    let canon_enabled =
-        (args.canon_simplify || canon_reduction_enabled(args.canon_reduction.as_deref()))
-            && !args.no_canon_simplify;
+    let canon_enabled = (args.canon_simplify
+        || canon_reduction_enabled(args.canon_reduction.as_deref()))
+        && !args.no_canon_simplify;
     if canon_enabled {
         let mut seen = std::collections::HashSet::<(String, String)>::new();
         matches.retain(|m| {
-            let lhs_key = canonical_expression_key(&m.lhs.expr).unwrap_or_else(|| m.lhs.expr.to_postfix());
-            let rhs_key = canonical_expression_key(&m.rhs.expr).unwrap_or_else(|| m.rhs.expr.to_postfix());
+            let lhs_key =
+                canonical_expression_key(&m.lhs.expr).unwrap_or_else(|| m.lhs.expr.to_postfix());
+            let rhs_key =
+                canonical_expression_key(&m.rhs.expr).unwrap_or_else(|| m.rhs.expr.to_postfix());
             seen.insert((lhs_key, rhs_key))
         });
     }
@@ -2419,7 +2526,8 @@ mod tests {
     fn test_solve_for_x_tan_inverse_supported() {
         let lhs = expr::Expression::parse("xT").unwrap(); // tanpi(x)
         let rhs = expr::Expression::parse("2").unwrap();
-        let solved = solve_for_x_rhs_expression(&lhs, &rhs).expect("tan inverse should be supported");
+        let solved =
+            solve_for_x_rhs_expression(&lhs, &rhs).expect("tan inverse should be supported");
         let postfix = solved.to_postfix();
         assert!(postfix.contains('A') && postfix.contains('p') && postfix.contains('/'));
     }

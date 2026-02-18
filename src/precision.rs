@@ -58,7 +58,16 @@ pub const DEFAULT_PRECISION: u32 = 256;
 /// Note: `Copy` is intentionally NOT required to support arbitrary-precision
 /// types like `rug::Float` which allocate heap memory.
 pub trait RiesFloat:
-    Clone + PartialOrd + Debug + Send + Sync + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Div<Output = Self> + Neg<Output = Self>
+    Clone
+    + PartialOrd
+    + Debug
+    + Send
+    + Sync
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + Div<Output = Self>
+    + Neg<Output = Self>
 {
     /// The zero value
     fn zero() -> Self;

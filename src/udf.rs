@@ -113,16 +113,45 @@ fn parse_udf_formula(formula: &str) -> Result<Vec<UdfOp>, String> {
         }
     }
 
-    // Validate the stack effect
-    let effect = calculate_stack_effect(&ops);
-    if effect != 0 {
+    validate_stack_behavior(&ops)?;
+
+    Ok(ops)
+}
+
+fn validate_stack_behavior(ops: &[UdfOp]) -> Result<(), String> {
+    let mut depth: i32 = 1;
+
+    for (idx, op) in ops.iter().enumerate() {
+        let (required_depth, delta, op_name) = match op {
+            UdfOp::Symbol(sym) => match sym.seft() {
+                crate::symbol::Seft::A => (0, 1, "constant"),
+                crate::symbol::Seft::B => (1, 0, "unary"),
+                crate::symbol::Seft::C => (2, -1, "binary"),
+            },
+            UdfOp::Dup => (1, 1, "dup"),
+            UdfOp::Swap => (2, 0, "swap"),
+        };
+
+        if depth < required_depth {
+            return Err(format!(
+                "Invalid function: stack underflow at op {} ({})",
+                idx + 1,
+                op_name
+            ));
+        }
+
+        depth += delta;
+    }
+
+    if depth != 1 {
+        let effect = depth - 1;
         return Err(format!(
             "Invalid function: stack effect is {} (should be 0 for a unary function)",
             effect
         ));
     }
 
-    Ok(ops)
+    Ok(())
 }
 
 /// Calculate the net stack effect of a sequence of operations
@@ -239,5 +268,19 @@ mod tests {
         let result = UserFunction::parse("4:bad:bad function:xyz");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unknown symbol"));
+    }
+
+    #[test]
+    fn test_stack_underflow_swap_rejected() {
+        let result = UserFunction::parse("4:bad:bad function:@");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("stack underflow"));
+    }
+
+    #[test]
+    fn test_stack_underflow_binary_rejected() {
+        let result = UserFunction::parse("4:bad:bad function:+1");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("stack underflow"));
     }
 }

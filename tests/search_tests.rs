@@ -116,7 +116,11 @@ fn test_symbol_count_limits_are_enforced() {
             .iter()
             .filter(|&&s| s == Symbol::Add)
             .count();
-        assert!(x_count <= 1, "expected at most one x in LHS, got {}", x_count);
+        assert!(
+            x_count <= 1,
+            "expected at most one x in LHS, got {}",
+            x_count
+        );
         assert!(
             add_count <= 1,
             "expected at most one + in LHS, got {}",

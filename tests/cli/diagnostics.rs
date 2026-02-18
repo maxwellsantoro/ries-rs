@@ -266,4 +266,3 @@ fn test_trig_argument_scale_changes_evaluation() {
         scaled_stdout
     );
 }
-

@@ -152,9 +152,8 @@ fn load_profile_recursive(
         }
 
         if trimmed.starts_with("--include") {
-            let include_raw = parse_include_path(trimmed).map_err(|e| {
-                ProfileError::ParseError(path.to_path_buf(), line_num + 1, e)
-            })?;
+            let include_raw = parse_include_path(trimmed)
+                .map_err(|e| ProfileError::ParseError(path.to_path_buf(), line_num + 1, e))?;
 
             let include_resolved = resolve_include_path(path, &include_raw).ok_or_else(|| {
                 ProfileError::ParseError(
@@ -175,7 +174,11 @@ fn load_profile_recursive(
         }
 
         if let Err(e) = parse_profile_line(&mut profile, trimmed) {
-            return Err(ProfileError::ParseError(path.to_path_buf(), line_num + 1, e));
+            return Err(ProfileError::ParseError(
+                path.to_path_buf(),
+                line_num + 1,
+                e,
+            ));
         }
     }
 
@@ -241,9 +244,7 @@ fn parse_user_constant(profile: &mut Profile, line: &str) -> Result<(), String> 
     // Handle both quoted and unquoted formats
     let content = if let Some(stripped) = rest.strip_prefix('"') {
         // Quoted format: -X "weight:name:description:value"
-        let end_quote = stripped
-            .find('"')
-            .ok_or("Unclosed quote in -X directive")?;
+        let end_quote = stripped.find('"').ok_or("Unclosed quote in -X directive")?;
         &stripped[..end_quote]
     } else {
         // Unquoted format: -X weight:name:description:value
