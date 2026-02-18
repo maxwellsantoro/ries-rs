@@ -106,3 +106,68 @@ fn test_lambert_w() {
     let result = evaluate(&expr, 0.0).unwrap();
     assert!(approx_eq_default(result.value, 1.0));
 }
+
+// ============================================================================
+// Root domain tests - regression tests for P1
+// ============================================================================
+
+#[test]
+fn test_root_odd_of_negative() {
+    // Cube root of -8 = -2
+    // Expression: 38nv = push 3, push -8 (8n), apply root
+    // Root computes a-th root of b, so we want root(3, -8) = cube root of -8
+    let expr = Expression::parse("38nv").unwrap();
+    let result = evaluate(&expr, 0.0).unwrap();
+    assert!(approx_eq_default(result.value, -2.0));
+}
+
+#[test]
+fn test_root_even_of_negative() {
+    // Square root of -8 should fail
+    // Expression: 28nv = push 2, push -8, apply root
+    let expr = Expression::parse("28nv").unwrap();
+    let result = evaluate(&expr, 0.0);
+    assert!(matches!(result, Err(EvalError::SqrtDomain)));
+}
+
+#[test]
+fn test_root_non_integer_index_of_negative() {
+    // Non-integer indices of negative radicands have no real value
+
+    // Test with index = e (transcendental, definitely non-integer)
+    // Expression: e8nv = push e, push -8, apply root
+    let expr = Expression::parse("e8nv").unwrap();
+    let result = evaluate(&expr, 0.0);
+    assert!(matches!(result, Err(EvalError::SqrtDomain)));
+
+    // Test with index = pi (transcendental, definitely non-integer)
+    // Expression: p8nv = push pi, push -8, apply root
+    let expr = Expression::parse("p8nv").unwrap();
+    let result = evaluate(&expr, 0.0);
+    assert!(matches!(result, Err(EvalError::SqrtDomain)));
+
+    // Test with index = phi (transcendental, definitely non-integer)
+    // Expression: f8nv = push phi, push -8, apply root
+    let expr = Expression::parse("f8nv").unwrap();
+    let result = evaluate(&expr, 0.0);
+    assert!(matches!(result, Err(EvalError::SqrtDomain)));
+}
+
+#[test]
+fn test_root_fifth_of_negative() {
+    // Fifth root of -1 = -1
+    // Expression: 51nv = push 5, push -1 (1n), apply root
+    let expr = Expression::parse("51nv").unwrap();
+    let result = evaluate(&expr, 0.0).unwrap();
+    assert!(approx_eq_default(result.value, -1.0));
+}
+
+#[test]
+fn test_root_positive_radicand_non_integer() {
+    // Non-integer root of positive radicand should work fine
+    // 8^(1/pi) should compute
+    let expr = Expression::parse("p8v").unwrap();
+    let result = evaluate(&expr, 0.0).unwrap();
+    // 8^(1/pi) - just check it's a valid positive number
+    assert!(result.value > 0.0 && result.value.is_finite());
+}

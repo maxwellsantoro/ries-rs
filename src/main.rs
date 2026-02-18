@@ -2059,31 +2059,37 @@ fn main() {
         search_config.max_matches = effective_max_matches;
     }
 
+    let explicit_streaming = args.streaming;
     let mut use_streaming = args.streaming;
     let parsed_max_memory = args.max_memory.as_deref().and_then(parse_memory_size_bytes);
     let parsed_min_memory = args.min_memory.as_deref().and_then(parse_memory_size_bytes);
-    if !use_streaming {
+
+    // Only apply memory-based heuristics if streaming wasn't explicitly requested
+    if !explicit_streaming {
         if let Some(max_bytes) = parsed_max_memory {
             if max_bytes <= 512 * 1024 * 1024 {
                 use_streaming = true;
             }
         }
-    }
-    if use_streaming {
-        if let Some(min_bytes) = parsed_min_memory {
-            if min_bytes >= 2 * 1024 * 1024 * 1024 {
-                use_streaming = false;
+        // Check memory abort threshold for auto-switching to streaming
+        if let (Some(max_bytes), Some(threshold)) = (parsed_max_memory, args.memory_abort_threshold) {
+            if (0.0..=1.0).contains(&threshold) {
+                let budget = (max_bytes as f64 * threshold) as u64;
+                let estimate = (pool_size as u64).saturating_mul(4096).saturating_add(
+                    (max_lhs_complexity as u64 + max_rhs_complexity as u64).saturating_mul(1_000_000),
+                );
+                if estimate > budget {
+                    use_streaming = true;
+                }
             }
         }
     }
-    if let (Some(max_bytes), Some(threshold)) = (parsed_max_memory, args.memory_abort_threshold) {
-        if (0.0..=1.0).contains(&threshold) {
-            let budget = (max_bytes as f64 * threshold) as u64;
-            let estimate = (pool_size as u64).saturating_mul(4096).saturating_add(
-                (max_lhs_complexity as u64 + max_rhs_complexity as u64).saturating_mul(1_000_000),
-            );
-            if estimate > budget {
-                use_streaming = true;
+
+    // --min-memory can disable auto-streaming, but not explicit --streaming
+    if use_streaming && !explicit_streaming {
+        if let Some(min_bytes) = parsed_min_memory {
+            if min_bytes >= 2 * 1024 * 1024 * 1024 {
+                use_streaming = false;
             }
         }
     }
