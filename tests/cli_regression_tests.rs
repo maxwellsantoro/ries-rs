@@ -804,3 +804,26 @@ fn test_diagnostic_channel_o_recognized() {
         stderr
     );
 }
+
+#[test]
+fn test_diagnostic_o_shows_match_output() {
+    let (stdout, stderr) = run_ries(&["2.5", "-Do", "--report", "false", "--max-matches", "1"]);
+    // -Do should output match check information to stderr
+    let output = format!("{}{}", stdout, stderr).to_lowercase();
+    assert!(output.contains("match") || output.contains("candidate") || output.contains("check"),
+        "expected -Do to show match check output, but got:\nstdout:\n{}\nstderr:\n{}",
+        stdout, stderr);
+}
+
+#[test]
+fn test_diagnostic_n_shows_newton_iterations() {
+    let (stdout, stderr) = run_ries(&["2.5", "-Dn", "--report", "false", "--max-matches", "1"]);
+    // -Dn should show Newton iteration values
+    let output = format!("{}{}", stdout, stderr).to_lowercase();
+    assert!(
+        output.contains("newton") || output.contains("iteration") || output.contains("converg"),
+        "expected -Dn to show Newton iteration diagnostic output\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+}

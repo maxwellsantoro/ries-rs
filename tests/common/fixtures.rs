@@ -30,6 +30,8 @@ pub fn test_search_config(target: f64) -> SearchConfig {
         refine_with_newton: true,
         rhs_allowed_symbols: None,
         rhs_excluded_symbols: None,
+        show_newton: false,
+        show_match_checks: false,
     }
 }
 
