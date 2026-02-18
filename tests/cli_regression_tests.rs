@@ -791,3 +791,16 @@ fn test_verbose_output_shows_total_equations() {
     let lower = stdout.to_lowercase();
     assert!(lower.contains("total") || lower.contains("equations") || lower.contains("summary"), "expected --verbose to show summary with total/equations in footer\n{}", stdout);
 }
+
+#[test]
+fn test_diagnostic_channel_o_recognized() {
+    let (stdout, stderr) = run_ries(&["2.5", "-Do", "--report", "false", "--max-matches", "1"]);
+    // -Do should not warn about unsupported channel (checking both "unsupported" and "not implemented")
+    let combined = format!("{}{}", stdout, stderr).to_lowercase();
+    assert!(
+        !combined.contains("unsupported") && !combined.contains("not implemented"),
+        "expected -Do to be recognized as valid diagnostic channel, but got:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+}

@@ -890,8 +890,15 @@ enum DisplayFormat {
 
 #[derive(Debug, Default)]
 struct DiagnosticOptions {
-    show_work: bool,
-    show_stats: bool,
+    // Existing
+    show_work: bool,           // s, N
+    show_stats: bool,          // y, M
+    // NEW channels
+    show_match_checks: bool,   // o
+    show_pruned_arith: bool,   // A, a
+    show_pruned_range: bool,   // B, b
+    show_db_adds: bool,        // G, g
+    show_newton: bool,         // n
     unsupported_channels: Vec<char>,
 }
 
@@ -903,6 +910,11 @@ fn parse_diagnostics(
     let mut opts = DiagnosticOptions {
         show_work: show_work_flag,
         show_stats: show_stats_flag,
+        show_match_checks: false,
+        show_pruned_arith: false,
+        show_pruned_range: false,
+        show_db_adds: false,
+        show_newton: false,
         unsupported_channels: Vec::new(),
     };
 
@@ -911,6 +923,11 @@ fn parse_diagnostics(
             match ch {
                 's' | 'N' => opts.show_work = true,
                 'y' | 'M' => opts.show_stats = true,
+                'o' => opts.show_match_checks = true,
+                'A' | 'a' => opts.show_pruned_arith = true,
+                'B' | 'b' => opts.show_pruned_range = true,
+                'G' | 'g' => opts.show_db_adds = true,
+                'n' => opts.show_newton = true,
                 _ => opts.unsupported_channels.push(ch),
             }
         }
