@@ -9,6 +9,7 @@ mod eval;
 mod expr;
 mod fast_match;
 mod gen;
+mod highprec_verify;
 mod manifest;
 mod metrics;
 mod pool;
@@ -276,8 +277,9 @@ struct Args {
     #[arg(long, default_value = "15")]
     newton_iterations: usize,
 
-    /// Precision in bits for high-precision mode (e.g., 256 for ~77 digits)
-    /// Note: High-precision mode is not yet implemented; this flag is reserved
+    /// Precision in bits for high-precision verification (e.g., 256 for ~77 digits)
+    /// Re-evaluates top matches at higher precision to verify/impostor detection
+    /// Requires --features highprec at compile time
     #[arg(long)]
     precision: Option<u32>,
 
@@ -1586,12 +1588,14 @@ fn main() {
         );
     }
 
-    // Warn about unimplemented precision flag
+    // Check precision flag - warn if highprec feature not enabled
+    #[cfg(not(feature = "highprec"))]
     if !args.no_slow_messages && args.precision.is_some() {
         eprintln!(
-            "Warning: --precision flag specified but high-precision mode is not yet implemented."
+            "Warning: --precision flag specified but ries-rs was not compiled with 'highprec' feature."
         );
-        eprintln!("         Using standard f64 precision (~15 digits).");
+        eprintln!("         Recompile with: cargo build --features highprec");
+        eprintln!("         Using standard f64 precision (~15 digits) for verification.");
     }
 
     if let Some(scale) = args.trig_argument_scale {
@@ -2272,6 +2276,25 @@ fn main() {
         println!();
         println!("  === Stability Analysis ===");
         print!("{}", stability::format_stability_report(results, effective_max_matches));
+    }
+
+    // High-precision verification if requested
+    if let Some(precision_bits) = args.precision {
+        println!();
+        println!(
+            "  === High-Precision Verification ({} bits) ===",
+            precision_bits
+        );
+        let hp_results = highprec_verify::verify_matches_highprec(
+            manifest_matches.clone(),
+            target,
+            precision_bits,
+            &profile.constants,
+        );
+        print!(
+            "{}",
+            highprec_verify::format_verification_report(&hp_results, effective_max_matches)
+        );
     }
 
     // Emit manifest if requested

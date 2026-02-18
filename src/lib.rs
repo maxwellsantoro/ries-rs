@@ -85,6 +85,7 @@ pub mod eval;
 pub mod expr;
 pub mod fast_match;
 pub mod gen;
+pub mod highprec_verify;
 pub mod manifest;
 pub mod metrics;
 pub mod pool;
