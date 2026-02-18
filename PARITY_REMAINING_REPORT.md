@@ -5,7 +5,7 @@ Scope: `/Users/maxwell/Apps/ries/ries/ries-rs` vs `/Users/maxwell/Apps/ries/ries
 
 ## 1. Executive Summary
 
-`ries-rs` now has **full P0 CLI parity** and **substantial P1 parity** with the original RIES.
+`ries-rs` now has **full P0 CLI parity** and **near-complete P1 parity** with the original RIES.
 
 **Completed in earlier session (2026-02-17) - P0:**
 - ✅ `-s` solve-for-x no longer shows misleading output
@@ -21,13 +21,19 @@ Scope: `/Users/maxwell/Apps/ries/ries/ries-rs` vs `/Users/maxwell/Apps/ries/ries
 - ✅ `--verbose` flag with header/footer output
 - ✅ `-Do` match checks diagnostic
 - ✅ `-Dn` Newton iteration diagnostic
-- ✅ Extended DiagnosticOptions for more channels (A/a, B/b, G/g)
+- ✅ `-DA/-Da` pruned arithmetic diagnostic
+- ✅ `-DB/-Db` pruned range diagnostic
+- ✅ `-DG/-Dg` database adds diagnostic
+- ✅ `--match-all-digits` option (stricter matching)
+- ✅ `--derivative-margin` option (Newton threshold)
 - ✅ Comparison script for debugging parity
 
 **Remaining gaps:**
-- Additional diagnostic channels (`-DA/a`, `-DB/b`, `-DG/g`) - flags recognized but output not yet implemented
+- Additional diagnostic channels (C/c, D/d, E/e, F/f, H/h, I/i, J/j, K/k, L/l, etc.)
 - Some no-op compatibility options
 - Ranking/weight tuning for result ordering parity
+- Report-mode format parity (-F not propagated to report output)
+- Full `-s` algebraic transformation (current: safe equation form)
 
 ---
 
@@ -89,17 +95,17 @@ All format modes now implemented:
 - `-F2` default infix output
 - `-F3` verbose postfix output
 
+Note: Report mode (`--report true`) still uses infix format regardless of `-F` setting.
+
 ### 3.4 Diagnostics coverage (`-D*`)
 
 Status: **partial**
 
-**Implemented:**
+**Implemented with output:**
 - `-Ds` / `--show-work` -> step breakdown output
 - `-Dy` -> stats output
 - `-Do` -> match checks diagnostic output
 - `-Dn` -> Newton iteration diagnostic output
-
-**Flags recognized but output not yet implemented:**
 - `-DA` / `-Da` -> expressions pruned (arithmetic errors)
 - `-DB` / `-Db` -> expressions pruned (zero/out-of-range)
 - `-DG` / `-Dg` -> expressions added to database
@@ -125,8 +131,6 @@ Still no-op in `/Users/maxwell/Apps/ries/ries/ries-rs/src/main.rs`:
 - `--any-trig-args`
 - `--canon-reduction`
 - `--canon-simplify`
-- `--derivative-margin`
-- `--match-all-digits`
 - `--max-memory`
 - `--memory-abort-threshold`
 - `--max-trig-cycles`
@@ -138,6 +142,10 @@ Still no-op in `/Users/maxwell/Apps/ries/ries/ries-rs/src/main.rs`:
 - `--rational-trig-args`
 - `--significance-loss-margin`
 - `--trig-argument-scale`
+
+**Now implemented (removed from no-op list):**
+- `--match-all-digits` - stricter matching based on target's significant digits
+- `--derivative-margin` - configurable Newton-Raphson derivative threshold
 
 ---
 
@@ -163,6 +171,18 @@ This is not a parser issue; it is search/ranking/weighting behavior divergence.
 Status: **RESOLVED** (via --verbose)
 
 Original's legend/explanatory lines and statistics footer are now available via `--verbose` flag.
+
+### 4.3 Report-mode format parity
+
+Status: **partial**
+
+Classic mode (`--report false`) honors `-F0/-F1/-F3`. Report mode still renders infix via `src/report.rs` regardless of `-F` setting.
+
+### 4.4 `-s` algebraic transformation
+
+Status: **safe but incomplete**
+
+Current behavior avoids fake `x = RHS` output (correct), but does not replicate original RIES's algebraic "solve for x" transformation.
 
 ---
 
@@ -191,6 +211,12 @@ Location: `/Users/maxwell/Apps/ries/ries/ries-rs/tests/cli_regression_tests.rs`
 - `test_diagnostic_channel_o_recognized`
 - `test_diagnostic_o_shows_match_output`
 - `test_diagnostic_n_shows_newton_iterations`
+- `test_diagnostic_a_recognized`
+- `test_diagnostic_b_recognized`
+- `test_diagnostic_g_recognized`
+- `test_diagnostic_g_shows_db_add_output`
+- `test_derivative_margin_option_accepted`
+- `test_match_all_digits_option_accepted`
 
 ### 5.2 Comparison Script
 
@@ -205,10 +231,11 @@ Usage:
 
 ## 6. Recommended Next Steps
 
-1. **P1**: Implement output for remaining diagnostic channels (`-DA/a`, `-DB/b`, `-DG/g`)
-2. **P2**: Convert highest-value no-op options into real behavior (`--match-all-digits`, `--derivative-margin`)
-3. **P2**: Tune ranking/weights vs original benchmark set
-4. **P2**: Investigate complexity score calibration
+1. **P2**: Tune ranking/weights vs original benchmark set
+2. **P2**: Investigate complexity score calibration
+3. **P2**: Unify format handling in report mode
+4. **P2**: Implement remaining no-op options (`canon-*`, `rational-*`)
+5. **P2**: Implement remaining `-D` channels if needed for debugging
 
 ---
 
@@ -219,5 +246,6 @@ For parity signoff:
 - ~~Correctness: no mathematically misleading transformations (`-s`).~~ **DONE**
 - ~~Regression guardrails: every fixed item covered by CLI/integration tests.~~ **DONE**
 - ~~Output detail: verbose mode with header/footer.~~ **DONE**
-- ~~Diagnostic channels: core channels implemented.~~ **DONE**
+- ~~Diagnostic channels: core channels implemented (s, y, o, n, A/a, B/b, G/g).~~ **DONE**
+- ~~Key options: --match-all-digits, --derivative-margin working.~~ **DONE**
 - Behavioral similarity: representative benchmark targets produce comparably plausible first-page equations. **REMAINING**
