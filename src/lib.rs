@@ -92,6 +92,7 @@ pub mod pool;
 #[cfg(feature = "highprec")]
 pub mod precision;
 pub mod presets;
+pub mod pslq;
 pub mod profile;
 #[cfg(feature = "python")]
 mod python;

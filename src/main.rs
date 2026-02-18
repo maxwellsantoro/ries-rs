@@ -17,6 +17,7 @@ mod pool;
 mod precision;
 mod presets;
 mod profile;
+mod pslq;
 mod report;
 mod search;
 mod stability;
@@ -390,6 +391,20 @@ struct Args {
     /// Show verbose output with header and footer details
     #[arg(long)]
     verbose: bool,
+
+    /// Run PSLQ integer relation detection on the target
+    /// Searches for integer coefficients relating target to known constants
+    /// Example: ries-rs 3.14159 --pslq might find x - π ≈ 0
+    #[arg(long)]
+    pslq: bool,
+
+    /// Use extended constant set for PSLQ (includes √3, √5, ln(3), etc.)
+    #[arg(long)]
+    pslq_extended: bool,
+
+    /// Maximum coefficient magnitude for PSLQ search (default: 1000)
+    #[arg(long, default_value = "1000")]
+    pslq_max_coeff: i64,
 
     /// Emit a run manifest JSON file for reproducibility
     /// Contains full configuration and results for academic verification
@@ -1811,6 +1826,60 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        return;
+    }
+
+    // Handle --pslq mode (integer relation detection)
+    if args.pslq {
+        let target = match resolved_target {
+            Some(t) => t,
+            None => {
+                eprintln!("Error: TARGET is required for PSLQ");
+                std::process::exit(1);
+            }
+        };
+
+        let config = pslq::PslqConfig {
+            max_coefficient: args.pslq_max_coeff,
+            max_iterations: 10000,
+            tolerance: 1e-10,
+            extended_constants: args.pslq_extended,
+        };
+
+        println!();
+        println!("   PSLQ Integer Relation Detection");
+        println!("   Target: {:.15}", target);
+        println!("   Max coefficient: {}", config.max_coefficient);
+        if config.extended_constants {
+            println!("   Using extended constant set");
+        }
+        println!();
+
+        // Try to find rational approximation first
+        if let Some((num, den)) = pslq::find_rational_approximation(target, config.max_coefficient) {
+            let approx = num as f64 / den as f64;
+            let error = (approx - target).abs();
+            println!("   Rational approximation:");
+            println!("   {} / {} = {:.15}  (error: {:.2e})", num, den, approx, error);
+            println!();
+        }
+
+        // Try PSLQ
+        match pslq::find_integer_relation(target, &config) {
+            Some(relation) => {
+                println!("   Integer relation found:");
+                println!("   {}", relation.to_string());
+                println!("   Residual: {:.2e}", relation.residual);
+                if relation.is_exact {
+                    println!("   (exact match)");
+                }
+            }
+            None => {
+                println!("   No integer relation found within coefficient bounds.");
+                println!("   Try increasing --pslq-max-coeff or using --pslq-extended.");
+            }
+        }
+        println!();
         return;
     }
 
