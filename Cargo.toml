@@ -14,6 +14,8 @@ categories = ["mathematics", "science"]
 [lib]
 name = "ries_rs"
 path = "src/lib.rs"
+# Required for Python bindings
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "ries-rs"
@@ -23,6 +25,7 @@ path = "src/main.rs"
 default = ["parallel"]
 parallel = ["rayon"]
 highprec = ["rug"]
+python = ["pyo3"]
 
 [dependencies]
 # CLI
@@ -36,6 +39,9 @@ rayon = { version = "1.10", optional = true }
 
 # Arbitrary precision (optional)
 rug = { version = "1.24", optional = true }
+
+# Python bindings (optional)
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 
 # Utilities
 ordered-float = "4.2"

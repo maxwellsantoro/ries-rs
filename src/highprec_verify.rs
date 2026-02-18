@@ -4,6 +4,13 @@
 //! at higher precision to distinguish true formulas from numerical coincidences.
 
 use crate::search::Match;
+#[cfg(feature = "highprec")]
+use crate::symbol::Symbol;
+#[cfg(feature = "highprec")]
+use crate::thresholds::EXACT_MATCH_TOLERANCE;
+
+#[cfg(feature = "highprec")]
+use crate::precision::{HighPrec, RiesFloat};
 
 /// Result of high-precision verification
 #[derive(Debug, Clone)]
@@ -42,8 +49,6 @@ pub fn verify_matches_highprec(
     precision_bits: u32,
     user_constants: &[crate::profile::UserConstant],
 ) -> Vec<VerificationResult> {
-    use crate::precision::{HighPrec, RiesFloat};
-
     let target_hp = HighPrec::from_f64_with_prec(target, precision_bits);
     let tolerance_hp = HighPrec::from_f64_with_prec(EXACT_MATCH_TOLERANCE, precision_bits);
 
@@ -51,31 +56,16 @@ pub fn verify_matches_highprec(
         .into_iter()
         .map(|m| {
             // Get user constant values at high precision
-            let hp_constants: Vec<(String, HighPrec)> = user_constants
+            let hp_constants: Vec<HighPrec> = user_constants
                 .iter()
-                .map(|uc| {
-                    (
-                        uc.name.clone(),
-                        HighPrec::from_f64_with_prec(uc.value, precision_bits),
-                    )
-                })
+                .map(|uc| HighPrec::from_f64_with_prec(uc.value, precision_bits))
                 .collect();
 
             // Evaluate LHS(x) at high precision
-            let lhs_val = evaluate_highprec(
-                &m.lhs.expr,
-                m.x_value,
-                precision_bits,
-                &hp_constants,
-            );
+            let lhs_val = evaluate_highprec(&m.lhs.expr, m.x_value, precision_bits, &hp_constants);
 
             // Evaluate RHS at high precision
-            let rhs_val = evaluate_highprec(
-                &m.rhs.expr,
-                m.x_value,
-                precision_bits,
-                &hp_constants,
-            );
+            let rhs_val = evaluate_highprec(&m.rhs.expr, m.x_value, precision_bits, &hp_constants);
 
             match (lhs_val, rhs_val) {
                 (Some(lhs), Some(rhs)) => {
@@ -141,13 +131,11 @@ fn evaluate_highprec(
     expr: &crate::expr::Expression,
     x: f64,
     precision_bits: u32,
-    user_constants: &[(String, HighPrec)],
+    user_constants: &[HighPrec],
 ) -> Option<HighPrec> {
-    use crate::precision::{HighPrec, RiesFloat};
-    use crate::symbol::Symbol;
-
     let zero = HighPrec::from_f64_with_prec(0.0, precision_bits);
     let one = HighPrec::from_f64_with_prec(1.0, precision_bits);
+    let trig_scale = HighPrec::from_f64_with_prec(std::f64::consts::PI, precision_bits);
     let x_hp = HighPrec::from_f64_with_prec(x, precision_bits);
 
     let mut stack: Vec<HighPrec> = Vec::with_capacity(32);
@@ -167,26 +155,41 @@ fn evaluate_highprec(
 
             // Variables and constants
             Symbol::X => stack.push(x_hp.clone()),
-            Symbol::Pi => stack.push(HighPrec::pi()),
-            Symbol::E => stack.push(HighPrec::e()),
+            Symbol::Pi => stack.push(HighPrec::from_f64_with_prec(
+                std::f64::consts::PI,
+                precision_bits,
+            )),
+            Symbol::E => stack.push(HighPrec::from_f64_with_prec(
+                std::f64::consts::E,
+                precision_bits,
+            )),
             Symbol::Phi => {
                 let sqrt5 = HighPrec::from_f64_with_prec(5.0, precision_bits).sqrt();
-                stack.push((one.clone() + sqrt5) / HighPrec::from_f64_with_prec(2.0, precision_bits))
+                stack
+                    .push((one.clone() + sqrt5) / HighPrec::from_f64_with_prec(2.0, precision_bits))
             }
             Symbol::Gamma => {
                 // Euler-Mascheroni constant
-                stack.push(HighPrec::from_f64_with_prec(0.5772156649015329, precision_bits))
+                stack.push(HighPrec::from_f64_with_prec(
+                    0.5772156649015329,
+                    precision_bits,
+                ))
             }
             Symbol::Apery => {
                 // ζ(3)
-                stack.push(HighPrec::from_f64_with_prec(1.2020569031595942, precision_bits))
+                stack.push(HighPrec::from_f64_with_prec(
+                    1.2020569031595942,
+                    precision_bits,
+                ))
             }
-            Symbol::Catalan => {
-                stack.push(HighPrec::from_f64_with_prec(0.915965594177219, precision_bits))
-            }
-            Symbol::Plastic => {
-                stack.push(HighPrec::from_f64_with_prec(1.324717957244746, precision_bits))
-            }
+            Symbol::Catalan => stack.push(HighPrec::from_f64_with_prec(
+                0.915965594177219,
+                precision_bits,
+            )),
+            Symbol::Plastic => stack.push(HighPrec::from_f64_with_prec(
+                1.324717957244746,
+                precision_bits,
+            )),
 
             // Binary operators
             Symbol::Add => {
@@ -228,7 +231,7 @@ fn evaluate_highprec(
                 if a.clone() == zero {
                     return None;
                 }
-                stack.push(one / a);
+                stack.push(one.clone() / a);
             }
             Symbol::Sqrt => {
                 let a = stack.pop()?;
@@ -254,24 +257,43 @@ fn evaluate_highprec(
             }
 
             // Trig functions
-            Symbol::Sin => {
+            Symbol::SinPi => {
                 let a = stack.pop()?;
-                stack.push(a.sin());
+                stack.push((trig_scale.clone() * a).sin());
             }
-            Symbol::Cos => {
+            Symbol::CosPi => {
                 let a = stack.pop()?;
-                stack.push(a.cos());
+                stack.push((trig_scale.clone() * a).cos());
             }
-            Symbol::Tan => {
+            Symbol::TanPi => {
                 let a = stack.pop()?;
-                stack.push(a.tan());
+                stack.push((trig_scale.clone() * a).tan());
             }
 
             // User constants
-            Symbol::UserConst(n) => {
-                let idx = (n - 128) as usize;
+            sym if matches!(
+                sym,
+                Symbol::UserConstant0
+                    | Symbol::UserConstant1
+                    | Symbol::UserConstant2
+                    | Symbol::UserConstant3
+                    | Symbol::UserConstant4
+                    | Symbol::UserConstant5
+                    | Symbol::UserConstant6
+                    | Symbol::UserConstant7
+                    | Symbol::UserConstant8
+                    | Symbol::UserConstant9
+                    | Symbol::UserConstant10
+                    | Symbol::UserConstant11
+                    | Symbol::UserConstant12
+                    | Symbol::UserConstant13
+                    | Symbol::UserConstant14
+                    | Symbol::UserConstant15
+            ) =>
+            {
+                let idx = sym.user_constant_index()? as usize;
                 if idx < user_constants.len() {
-                    stack.push(user_constants[idx].1.clone());
+                    stack.push(user_constants[idx].clone());
                 } else {
                     return None;
                 }
@@ -401,5 +423,31 @@ mod tests {
 
         let report = format_verification_report(&[verified], 10);
         assert!(report.contains("Verified at high precision"));
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_evaluate_highprec_reads_user_constant_slots() {
+        let expr =
+            crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant0]);
+        let constants = vec![HighPrec::from_f64_with_prec(1.234567890123456, 256)];
+
+        let evaluated = evaluate_highprec(&expr, 0.0, 256, &constants)
+            .expect("expected user constant slot to resolve");
+        assert!((evaluated.to_f64() - 1.234567890123456).abs() < 1e-15);
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_evaluate_highprec_fails_for_missing_user_constant_slot() {
+        let expr =
+            crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant1]);
+        let constants = vec![HighPrec::from_f64_with_prec(1.0, 256)];
+
+        let evaluated = evaluate_highprec(&expr, 0.0, 256, &constants);
+        assert!(
+            evaluated.is_none(),
+            "missing user constant slot should fail verification evaluation"
+        );
     }
 }

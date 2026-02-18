@@ -268,6 +268,72 @@ The binary will be at `target/release/ries-rs`.
 cargo install --path .
 ```
 
+### Python Bindings
+
+The Python bindings allow using ries-rs from Python code:
+
+```bash
+# Install maturin (Python package builder for Rust)
+pip install maturin
+
+# Build and install the Python package
+maturin develop --features python
+
+# Or build a wheel for distribution
+maturin build --features python --release
+```
+
+#### Python Usage
+
+```python
+import ries_rs
+
+# Simple search
+results = ries_rs.search(3.1415926535)
+for r in results:
+    print(f"{r.lhs} = {r.rhs}  (error: {r.error:.2e})")
+
+# With options
+results = ries_rs.search(
+    1.618033988,      # Golden ratio
+    level=3,          # Higher search level (more results)
+    max_matches=20,   # Maximum matches to return
+    preset="physics", # Domain-specific preset
+    parallel=True     # Use parallel search
+)
+
+# Access match properties
+for m in results:
+    print(f"LHS: {m.lhs}")          # Expression with x
+    print(f"RHS: {m.rhs}")          # Constants only
+    print(f"x value: {m.x_value}")  # Solved value of x
+    print(f"Error: {m.error}")      # x_value - target
+    print(f"Complexity: {m.complexity}")
+    print(f"Is exact: {m.is_exact}")
+    print(f"As dict: {m.to_dict()}")
+
+# List available presets
+presets = ries_rs.list_presets()
+for name, desc in presets.items():
+    print(f"{name}: {desc}")
+
+# Get version
+print(ries_rs.version())
+```
+
+#### PyMatch Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `lhs` | str | Left-hand side expression (contains x) |
+| `rhs` | str | Right-hand side expression (constants only) |
+| `lhs_postfix` | str | Postfix representation of LHS |
+| `rhs_postfix` | str | Postfix representation of RHS |
+| `x_value` | float | Solved value of x |
+| `error` | float | Error (x_value - target) |
+| `complexity` | int | Complexity score (lower = simpler) |
+| `is_exact` | bool | True if error < 1e-12 |
+
 ## How to Cite
 
 If you use ries-rs in academic work, please cite it using the following BibTeX:
