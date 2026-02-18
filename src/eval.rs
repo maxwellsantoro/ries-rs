@@ -47,7 +47,6 @@ pub enum EvalError {
 
 impl EvalError {
     /// Get a human-readable description of this error
-    #[allow(dead_code)]
     pub fn description(&self) -> &'static str {
         match self {
             EvalError::StackUnderflow => "Stack underflow: not enough operands on stack",
@@ -60,7 +59,6 @@ impl EvalError {
     }
 
     /// Create a detailed error message with context
-    #[allow(dead_code)]
     pub fn with_context(&self, position: Option<usize>, value: Option<f64>) -> String {
         let mut msg = self.description().to_string();
         if let Some(pos) = position {
@@ -187,8 +185,10 @@ impl Default for EvalWorkspace {
 ///
 /// This is the hot-path version that avoids heap allocations.
 /// Use this in loops where `evaluate()` is called many times.
+///
+/// Note: This is a convenience wrapper for the full `evaluate_with_workspace_and_constants_and_functions`
+/// when you don't need user constants or functions. It's provided as a simpler API for common cases.
 #[inline]
-#[allow(dead_code)]
 pub fn evaluate_with_workspace(
     expr: &Expression,
     x: f64,
@@ -201,8 +201,10 @@ pub fn evaluate_with_workspace(
 ///
 /// This is the hot-path version that avoids heap allocations.
 /// The `user_constants` slice provides values for `UserConstant0..15` symbols.
+///
+/// Note: This is a convenience wrapper for the full `evaluate_with_workspace_and_constants_and_functions`
+/// when you don't need user functions. It's provided as a simpler API for common cases.
 #[inline]
-#[allow(dead_code)]
 pub fn evaluate_with_workspace_and_constants(
     expr: &Expression,
     x: f64,
@@ -296,7 +298,9 @@ pub fn evaluate_with_workspace_and_constants_and_functions(
 ///
 /// Convenience wrapper that allocates a new workspace. For hot loops,
 /// prefer `evaluate_with_workspace()` with a reusable `EvalWorkspace`.
-#[allow(dead_code)]
+///
+/// Note: This is a convenience API for library users. Internal code uses
+/// `evaluate_fast_with_constants_and_functions` for performance.
 pub fn evaluate(expr: &Expression, x: f64) -> Result<EvalResult, EvalError> {
     evaluate_with_constants(expr, x, &[])
 }
@@ -343,8 +347,10 @@ pub fn evaluate_with_constants_and_functions(
 /// This is ideal for parallel code where each thread needs its own workspace.
 /// Note: This version does NOT support user constants. For user constants,
 /// use `evaluate_with_constants()` or `evaluate_with_workspace_and_constants()`.
+///
+/// Note: This is a convenience wrapper for the full `evaluate_fast_with_constants_and_functions`
+/// when you don't need user constants or functions. It's provided as a simpler API for common cases.
 #[inline]
-#[allow(dead_code)]
 pub fn evaluate_fast(expr: &Expression, x: f64) -> Result<EvalResult, EvalError> {
     evaluate_fast_with_constants(expr, x, &[])
 }
@@ -353,8 +359,10 @@ pub fn evaluate_fast(expr: &Expression, x: f64) -> Result<EvalResult, EvalError>
 ///
 /// Note: This uses a global thread-local storage, so it's not safe to call recursively
 /// with different user_constants. For recursive calls, use `evaluate_with_workspace_and_constants`.
+///
+/// Note: This is a convenience wrapper for the full `evaluate_fast_with_constants_and_functions`
+/// when you don't need user functions. It's provided as a simpler API for common cases.
 #[inline]
-#[allow(dead_code)]
 pub fn evaluate_fast_with_constants(
     expr: &Expression,
     x: f64,
@@ -388,49 +396,6 @@ pub fn evaluate_fast_with_constants_and_functions(
             user_constants,
             user_functions,
         )
-    })
-}
-
-// Legacy implementation for reference - now replaced by evaluate_with_workspace
-#[allow(dead_code)]
-fn evaluate_legacy(expr: &Expression, x: f64) -> Result<EvalResult, EvalError> {
-    let mut stack: Vec<StackEntry> = Vec::with_capacity(16);
-
-    for &sym in expr.symbols() {
-        match sym.seft() {
-            Seft::A => {
-                let entry = eval_constant(sym, x);
-                stack.push(entry);
-            }
-            Seft::B => {
-                let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                let result = eval_unary(sym, a)?;
-                stack.push(result);
-            }
-            Seft::C => {
-                let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                let result = eval_binary(sym, a, b)?;
-                stack.push(result);
-            }
-        }
-    }
-
-    if stack.len() != 1 {
-        return Err(EvalError::Invalid);
-    }
-
-    let result = stack.pop().unwrap();
-
-    // Check for invalid results
-    if result.val.is_nan() || result.val.is_infinite() {
-        return Err(EvalError::Overflow);
-    }
-
-    Ok(EvalResult {
-        value: result.val,
-        derivative: result.deriv,
-        num_type: result.num_type,
     })
 }
 
