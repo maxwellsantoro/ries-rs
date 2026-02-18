@@ -1420,6 +1420,8 @@ fn main() {
         refine_with_newton: !args.no_refinement,
         rhs_allowed_symbols,
         rhs_excluded_symbols,
+        show_newton: diagnostics.show_newton,
+        show_match_checks: diagnostics.show_match_checks,
     };
 
     if args.one_sided {

@@ -162,6 +162,10 @@ pub struct SearchConfig {
     pub rhs_allowed_symbols: Option<HashSet<u8>>,
     /// Optional RHS-only excluded symbol set (if set, RHS symbols in set are rejected)
     pub rhs_excluded_symbols: Option<HashSet<u8>>,
+    /// Show Newton-Raphson iteration diagnostic output (-Dn)
+    pub show_newton: bool,
+    /// Show match check diagnostic output (-Do)
+    pub show_match_checks: bool,
 }
 
 impl Default for SearchConfig {
@@ -179,6 +183,8 @@ impl Default for SearchConfig {
             refine_with_newton: true,
             rhs_allowed_symbols: None,
             rhs_excluded_symbols: None,
+            show_newton: false,
+            show_match_checks: false,
         }
     }
 }
@@ -551,6 +557,12 @@ impl ExprDatabase {
                         continue;
                     }
                     stats.candidates_tested += 1;
+                    if config.show_match_checks {
+                        eprintln!(
+                            "  [match] checking lhs={:.6} rhs={:.6}",
+                            lhs.value, rhs.value
+                        );
+                    }
                     let val_diff = (lhs.value - rhs.value).abs();
                     if val_diff < val_error && pool.would_accept(0.0, true) {
                         let m = Match {
@@ -635,6 +647,7 @@ impl ExprDatabase {
                     config.newton_iterations,
                     &config.user_constants,
                     &config.user_functions,
+                    config.show_newton,
                 ) {
                     stats.newton_success += 1;
                     let refined_error = refined_x - config.target;
@@ -701,7 +714,7 @@ fn newton_raphson(
     initial_x: f64,
     max_iterations: usize,
 ) -> Option<f64> {
-    newton_raphson_with_constants(lhs, rhs_value, initial_x, max_iterations, &[], &[])
+    newton_raphson_with_constants(lhs, rhs_value, initial_x, max_iterations, &[], &[], false)
 }
 
 /// Newton-Raphson with user constants support
@@ -712,13 +725,14 @@ fn newton_raphson_with_constants(
     max_iterations: usize,
     user_constants: &[crate::profile::UserConstant],
     user_functions: &[crate::udf::UserFunction],
+    show_newton: bool,
 ) -> Option<f64> {
     use crate::eval::evaluate_fast_with_constants_and_functions;
 
     let mut x = initial_x;
     let tolerance = NEWTON_TOLERANCE;
 
-    for _ in 0..max_iterations {
+    for iter in 0..max_iterations {
         let result =
             evaluate_fast_with_constants_and_functions(lhs, x, user_constants, user_functions)
                 .ok()?;
@@ -726,11 +740,21 @@ fn newton_raphson_with_constants(
         let df = result.derivative;
 
         if df.abs() < DEGENERATE_DERIVATIVE {
+            if show_newton {
+                eprintln!("  [newton] iter={} x={:.10} derivative too small", iter, x);
+            }
             return None; // Derivative too small
         }
 
         let delta = f / df;
         x -= delta;
+
+        if show_newton {
+            eprintln!(
+                "  [newton] iter={} x={:.10} dx={:.10e}",
+                iter, x, delta
+            );
+        }
 
         if delta.abs() < tolerance * (1.0 + x.abs()) {
             return Some(x);
@@ -738,6 +762,9 @@ fn newton_raphson_with_constants(
 
         // Check for divergence
         if x.abs() > NEWTON_DIVERGENCE_THRESHOLD || x.is_nan() {
+            if show_newton {
+                eprintln!("  [newton] iter={} diverged", iter);
+            }
             return None;
         }
     }
@@ -748,6 +775,9 @@ fn newton_raphson_with_constants(
     if (result.value - rhs_value).abs() < NEWTON_FINAL_TOLERANCE {
         Some(x)
     } else {
+        if show_newton {
+            eprintln!("  [newton] failed to converge after {} iterations", max_iterations);
+        }
         None
     }
 }
@@ -1061,6 +1091,7 @@ pub fn search_streaming_with_config(
                 search_config.newton_iterations,
                 &search_config.user_constants,
                 &search_config.user_functions,
+                search_config.show_newton,
             ) {
                 stats.newton_success += 1;
                 let refined_error = refined_x - search_config.target;
