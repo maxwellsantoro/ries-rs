@@ -830,7 +830,7 @@ fn test_diagnostic_n_shows_newton_iterations() {
 
 #[test]
 fn test_diagnostic_a_recognized() {
-    let (stdout, stderr) = run_ries(&["2.5", "-DA", "--report", "false", "--max-matches", "1"]);
+    let (_stdout, stderr) = run_ries(&["2.5", "-DA", "--report", "false", "--max-matches", "1"]);
     // -DA should not warn about unsupported channel
     assert!(!stderr.to_lowercase().contains("unsupported"));
 }

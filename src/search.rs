@@ -167,6 +167,7 @@ pub struct SearchConfig {
     /// Show match check diagnostic output (-Do)
     pub show_match_checks: bool,
     /// Show pruned arithmetic diagnostic output (-DA)
+    #[allow(dead_code)]
     pub show_pruned_arith: bool,
     /// When true, matches must match all significant digits of the target
     /// (tolerance is computed in main.rs and passed as max_error)
@@ -737,6 +738,7 @@ fn newton_raphson(
 }
 
 /// Newton-Raphson with user constants support
+#[allow(clippy::too_many_arguments)]
 fn newton_raphson_with_constants(
     lhs: &crate::expr::Expression,
     rhs_value: f64,
