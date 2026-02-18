@@ -99,7 +99,7 @@ impl SearchStats {
 }
 
 /// A matched equation
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Match {
     /// Left-hand side expression (contains x)
     pub lhs: EvaluatedExpr,

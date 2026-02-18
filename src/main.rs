@@ -14,9 +14,11 @@ mod metrics;
 mod pool;
 #[cfg(feature = "highprec")]
 mod precision;
+mod presets;
 mod profile;
 mod report;
 mod search;
+mod stability;
 mod symbol;
 mod thresholds;
 mod udf;
@@ -191,6 +193,26 @@ struct Args {
     /// Print list of supported options and exit
     #[arg(long = "list-options")]
     list_options: bool,
+
+    /// Use a domain-specific preset for symbol weights and constants
+    /// Available: analytic-nt, elliptic, combinatorics, physics, number-theory, calculus
+    /// Use --list-presets to see descriptions
+    #[arg(long)]
+    preset: Option<String>,
+
+    /// List available domain presets and exit
+    #[arg(long)]
+    list_presets: bool,
+
+    /// Run stability analysis (impostor detection)
+    /// Runs search at multiple tolerance levels and classifies candidates
+    /// Use --stability-thorough for more precision levels
+    #[arg(long)]
+    stability_check: bool,
+
+    /// Use thorough stability analysis (more precision levels, slower)
+    #[arg(long)]
+    stability_thorough: bool,
 
     /// Stop search when an exact match is found
     #[arg(long)]
@@ -1532,6 +1554,12 @@ fn main() {
         return;
     }
 
+    // Handle --list-presets (print available presets and exit)
+    if args.list_presets {
+        presets::print_presets();
+        return;
+    }
+
     // Handle -S without argument (print symbol table and exit)
     // When -S is used with num_args=0..=1, bare -S gives Some("") and -S with value gives Some(value)
     // Also check if target is None to distinguish from "-S symbols target"
@@ -1657,6 +1685,20 @@ fn main() {
     } else {
         Profile::load_default()
     };
+
+    // Apply preset if specified (before includes, so includes can override)
+    if let Some(preset_name) = &args.preset {
+        if let Some(preset) = presets::Preset::from_str(preset_name) {
+            let preset_profile = preset.to_profile();
+            profile = profile.merge(preset_profile);
+        } else {
+            eprintln!(
+                "Error: Unknown preset '{}'. Use --list-presets to see available presets.",
+                preset_name
+            );
+            std::process::exit(1);
+        }
+    }
 
     // Include additional profiles
     for include_path in &args.include {
@@ -2047,6 +2089,41 @@ fn main() {
         matches.sort_by(|a, b| pool::compare_matches(a, b, ranking_mode));
     }
 
+    // Stability check: run multiple passes with different tolerances
+    let stability_results = if args.stability_check {
+        let config = if args.stability_thorough {
+            stability::StabilityConfig::thorough()
+        } else {
+            stability::StabilityConfig::default()
+        };
+        let mut analyzer = stability::StabilityAnalyzer::new(config);
+
+        // Add the base matches
+        analyzer.add_level(matches.clone());
+
+        // Run additional levels with tighter tolerances
+        let base_error = search_config.max_error;
+        let use_parallel = !args.deterministic && args.parallel;
+
+        for factor in &[0.1, 0.01, 0.001] {
+            let mut tighter_config = search_config.clone();
+            tighter_config.max_error = base_error * factor;
+
+            let (level_matches, _) = perform_search(
+                &gen_config,
+                &tighter_config,
+                use_streaming,
+                use_parallel,
+                args.one_sided,
+            );
+            analyzer.add_level(level_matches);
+        }
+
+        Some(analyzer.analyze())
+    } else {
+        None
+    };
+
     if args.min_equate_value.is_some() || args.max_equate_value.is_some() {
         matches.retain(|m| match_in_equate_bounds(m, args.min_equate_value, args.max_equate_value));
     }
@@ -2188,6 +2265,13 @@ fn main() {
     // Print detailed stats if requested
     if diagnostics.show_stats {
         stats.print();
+    }
+
+    // Print stability analysis if requested
+    if let Some(ref results) = stability_results {
+        println!();
+        println!("  === Stability Analysis ===");
+        print!("{}", stability::format_stability_report(results, effective_max_matches));
     }
 
     // Emit manifest if requested
