@@ -95,9 +95,7 @@ impl Preset {
 
                 // zeta(3) ≈ 1.202057 (Apéry's constant) - already built-in as 'z'
                 // But let's ensure it has a good weight
-                profile
-                    .symbol_weights
-                    .insert(Symbol::Apery, 8);
+                profile.symbol_weights.insert(Symbol::Apery, 8);
 
                 // Euler-Mascheroni gamma - already built-in as 'g'
                 profile.symbol_weights.insert(Symbol::Gamma, 8);
@@ -109,13 +107,13 @@ impl Preset {
                 // Avoid: trig (elliptic integrals replace them)
 
                 profile.symbol_weights = vec![
-                    (Symbol::Sqrt, 4),      // Lower - very common
-                    (Symbol::Square, 4),    // Lower - very common
-                    (Symbol::Ln, 6),        // Common
-                    (Symbol::Pi, 6),        // Common
-                    (Symbol::SinPi, 16),    // Avoid - elliptic replaces
-                    (Symbol::CosPi, 16),    // Avoid - elliptic replaces
-                    (Symbol::TanPi, 18),    // Avoid - elliptic replaces
+                    (Symbol::Sqrt, 4),   // Lower - very common
+                    (Symbol::Square, 4), // Lower - very common
+                    (Symbol::Ln, 6),     // Common
+                    (Symbol::Pi, 6),     // Common
+                    (Symbol::SinPi, 16), // Avoid - elliptic replaces
+                    (Symbol::CosPi, 16), // Avoid - elliptic replaces
+                    (Symbol::TanPi, 18), // Avoid - elliptic replaces
                 ]
                 .into_iter()
                 .collect();

@@ -428,8 +428,7 @@ mod tests {
     #[cfg(feature = "highprec")]
     #[test]
     fn test_evaluate_highprec_reads_user_constant_slots() {
-        let expr =
-            crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant0]);
+        let expr = crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant0]);
         let constants = vec![HighPrec::from_f64_with_prec(1.234567890123456, 256)];
 
         let evaluated = evaluate_highprec(&expr, 0.0, 256, &constants)
@@ -440,8 +439,7 @@ mod tests {
     #[cfg(feature = "highprec")]
     #[test]
     fn test_evaluate_highprec_fails_for_missing_user_constant_slot() {
-        let expr =
-            crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant1]);
+        let expr = crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant1]);
         let constants = vec![HighPrec::from_f64_with_prec(1.0, 256)];
 
         let evaluated = evaluate_highprec(&expr, 0.0, 256, &constants);

@@ -2276,7 +2276,10 @@ fn main() {
     if let Some(ref results) = stability_results {
         println!();
         println!("  === Stability Analysis ===");
-        print!("{}", stability::format_stability_report(results, effective_max_matches));
+        print!(
+            "{}",
+            stability::format_stability_report(results, effective_max_matches)
+        );
     }
 
     // High-precision verification if requested
