@@ -32,6 +32,8 @@ pub fn test_search_config(target: f64) -> SearchConfig {
         rhs_excluded_symbols: None,
         show_newton: false,
         show_match_checks: false,
+        show_pruned_arith: false,
+        match_all_digits: false,
     }
 }
 

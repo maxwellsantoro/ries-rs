@@ -166,6 +166,15 @@ pub struct SearchConfig {
     pub show_newton: bool,
     /// Show match check diagnostic output (-Do)
     pub show_match_checks: bool,
+    /// Show pruned arithmetic diagnostic output (-DA)
+    pub show_pruned_arith: bool,
+    /// When true, matches must match all significant digits of the target
+    /// (tolerance is computed in main.rs and passed as max_error)
+    #[allow(dead_code)]
+    pub match_all_digits: bool,
+    /// Threshold below which derivative is considered degenerate in Newton-Raphson
+    /// If |derivative| < this threshold, Newton-Raphson is skipped
+    pub derivative_margin: f64,
 }
 
 impl Default for SearchConfig {
@@ -185,6 +194,9 @@ impl Default for SearchConfig {
             rhs_excluded_symbols: None,
             show_newton: false,
             show_match_checks: false,
+            show_pruned_arith: false,
+            match_all_digits: false,
+            derivative_margin: DEGENERATE_DERIVATIVE,
         }
     }
 }
@@ -654,6 +666,7 @@ impl ExprDatabase {
                     &config.user_constants,
                     &config.user_functions,
                     config.show_newton,
+                    config.derivative_margin,
                 ) {
                     stats.newton_success += 1;
                     let refined_error = refined_x - config.target;
@@ -720,7 +733,7 @@ fn newton_raphson(
     initial_x: f64,
     max_iterations: usize,
 ) -> Option<f64> {
-    newton_raphson_with_constants(lhs, rhs_value, initial_x, max_iterations, &[], &[], false)
+    newton_raphson_with_constants(lhs, rhs_value, initial_x, max_iterations, &[], &[], false, DEGENERATE_DERIVATIVE)
 }
 
 /// Newton-Raphson with user constants support
@@ -732,6 +745,7 @@ fn newton_raphson_with_constants(
     user_constants: &[crate::profile::UserConstant],
     user_functions: &[crate::udf::UserFunction],
     show_newton: bool,
+    derivative_margin: f64,
 ) -> Option<f64> {
     use crate::eval::evaluate_fast_with_constants_and_functions;
 
@@ -745,7 +759,7 @@ fn newton_raphson_with_constants(
         let f = result.value - rhs_value;
         let df = result.derivative;
 
-        if df.abs() < DEGENERATE_DERIVATIVE {
+        if df.abs() < derivative_margin {
             if show_newton {
                 eprintln!("  [newton] iter={} x={:.10} derivative too small", iter, x);
             }
@@ -1110,6 +1124,7 @@ pub fn search_streaming_with_config(
                 &search_config.user_constants,
                 &search_config.user_functions,
                 search_config.show_newton,
+                search_config.derivative_margin,
             ) {
                 stats.newton_success += 1;
                 let refined_error = refined_x - search_config.target;
