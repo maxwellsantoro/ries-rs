@@ -1420,6 +1420,8 @@ fn main() {
         show_newton: diagnostics.show_newton,
         show_match_checks: diagnostics.show_match_checks,
         show_pruned_arith: diagnostics.show_pruned_arith,
+        show_pruned_range: diagnostics.show_pruned_range,
+        show_db_adds: diagnostics.show_db_adds,
         match_all_digits: args.match_all_digits,
         derivative_margin: args.derivative_margin.unwrap_or(thresholds::DEGENERATE_DERIVATIVE),
     };
