@@ -244,13 +244,8 @@ pub fn generate_streaming(config: &GenConfig, target: f64, callbacks: &mut Strea
         let mut lhs_config = config.clone();
         lhs_config.generate_lhs = true;
         lhs_config.generate_rhs = false;
-        if !generate_recursive_streaming(
-            &lhs_config,
-            target,
-            &mut Expression::new(),
-            0,
-            callbacks,
-        ) {
+        if !generate_recursive_streaming(&lhs_config, target, &mut Expression::new(), 0, callbacks)
+        {
             return;
         }
 
@@ -324,19 +319,25 @@ fn generate_recursive_streaming(
         ) {
             Ok(result) => {
                 // Skip expressions with extreme values (overflow-prone, unlikely useful)
-                if result.value.is_finite() && result.value.abs() <= 1e12 && result.num_type >= config.min_num_type {
+                if result.value.is_finite()
+                    && result.value.abs() <= 1e12
+                    && result.num_type >= config.min_num_type
+                {
                     let expr = current.clone();
                     let eval_expr =
                         EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
 
                     if current.contains_x() {
-                        if config.generate_lhs && current.complexity() <= config.max_lhs_complexity {
+                        if config.generate_lhs && current.complexity() <= config.max_lhs_complexity
+                        {
                             // Call the LHS callback; return false if it signals stop
                             if !(callbacks.on_lhs)(&eval_expr) {
                                 return false;
                             }
                         }
-                    } else if config.generate_rhs && current.complexity() <= config.max_rhs_complexity {
+                    } else if config.generate_rhs
+                        && current.complexity() <= config.max_rhs_complexity
+                    {
                         // Call the RHS callback; return false if it signals stop
                         if !(callbacks.on_rhs)(&eval_expr) {
                             return false;
@@ -499,11 +500,14 @@ fn generate_recursive(
                         EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
 
                     if current.contains_x() {
-                        if config.generate_lhs && current.complexity() <= config.max_lhs_complexity {
+                        if config.generate_lhs && current.complexity() <= config.max_lhs_complexity
+                        {
                             // Keep all LHS expressions; derivative≈0 cases handled in search
                             lhs_out.push(eval_expr);
                         }
-                    } else if config.generate_rhs && current.complexity() <= config.max_rhs_complexity {
+                    } else if config.generate_rhs
+                        && current.complexity() <= config.max_rhs_complexity
+                    {
                         rhs_out.push(eval_expr);
                     }
                 }
@@ -788,7 +792,7 @@ fn is_same_subexpr(symbols: &[Symbol], n: usize) -> bool {
         let prev_depth = *stack_depths.last().unwrap();
         let new_depth = match sym.seft() {
             Seft::A => prev_depth + 1,
-            Seft::B => prev_depth, // pop 1, push 1
+            Seft::B => prev_depth,     // pop 1, push 1
             Seft::C => prev_depth - 1, // pop 2, push 1
         };
         stack_depths.push(new_depth);
@@ -856,7 +860,7 @@ fn should_prune_by_range(_expr: &Expression, sym: Symbol, value: f64) -> bool {
         Ln if value <= 0.0 => true,
 
         // Exp of large values overflows
-        Exp if value > 700.0 => true, // e^700 ≈ 1e304, near f64 max
+        Exp if value > 700.0 => true,  // e^700 ≈ 1e304, near f64 max
         Exp if value < -700.0 => true, // e^-700 ≈ 0
 
         // Reciprocal of near-zero produces huge values
@@ -1020,8 +1024,13 @@ mod tests {
             max_rhs_complexity: 20,
             max_length: 8,
             constants: vec![
-                Symbol::One, Symbol::Two, Symbol::Three, Symbol::Four,
-                Symbol::Five, Symbol::Pi, Symbol::E,
+                Symbol::One,
+                Symbol::Two,
+                Symbol::Three,
+                Symbol::Four,
+                Symbol::Five,
+                Symbol::Pi,
+                Symbol::E,
             ],
             unary_ops: vec![Symbol::Neg, Symbol::Recip, Symbol::Square, Symbol::Sqrt],
             binary_ops: vec![Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div],

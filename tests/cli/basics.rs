@@ -406,6 +406,79 @@ fn test_extended_compat_options_are_accepted() {
 }
 
 #[test]
+fn test_rational_exponents_rejects_irrational_exponents() {
+    let (baseline_stdout, _stderr) = run_ries(&[
+        "8.824977827",
+        "--one-sided",
+        "--report",
+        "false",
+        "-n",
+        "20",
+        "-F",
+        "0",
+    ]);
+    assert!(
+        baseline_stdout.contains("2p^"),
+        "expected baseline run to include irrational exponent form\n{}",
+        baseline_stdout
+    );
+
+    let (restricted_stdout, _stderr) = run_ries(&[
+        "8.824977827",
+        "--one-sided",
+        "--rational-exponents",
+        "--report",
+        "false",
+        "-n",
+        "20",
+        "-F",
+        "0",
+    ]);
+    assert!(
+        !restricted_stdout.contains("2p^"),
+        "expected --rational-exponents to filter irrational exponent forms\n{}",
+        restricted_stdout
+    );
+}
+
+#[test]
+fn test_rational_trig_args_rejects_irrational_constants() {
+    let target = "0.773942685266709";
+    let (baseline_stdout, _stderr) = run_ries(&[
+        target,
+        "--one-sided",
+        "--report",
+        "false",
+        "-n",
+        "20",
+        "-F",
+        "0",
+    ]);
+    assert!(
+        baseline_stdout.contains("eS"),
+        "expected baseline run to include sinpi(e)\n{}",
+        baseline_stdout
+    );
+
+    let (restricted_stdout, _stderr) = run_ries(&[
+        target,
+        "--one-sided",
+        "--rational-trig-args",
+        "--report",
+        "false",
+        "-n",
+        "20",
+        "-F",
+        "0",
+    ]);
+    assert!(
+        !restricted_stdout.contains("eS"),
+        "expected --rational-trig-args to filter irrational trig arguments\n{}",
+        restricted_stdout
+    );
+}
+
+#[test]
 fn test_format_zero_uses_compact_postfix_output() {
     let (stdout, _stderr) = run_ries(&[
         "2.5",
@@ -509,4 +582,3 @@ fn test_explicit_multiply_changes_infix_rendering() {
         stdout
     );
 }
-

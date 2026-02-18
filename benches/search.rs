@@ -64,7 +64,13 @@ fn bench_different_targets(c: &mut Criterion) {
 
     for (name, target) in targets {
         group.bench_with_input(BenchmarkId::new("target", name), &target, |b, &target| {
-            b.iter(|| search(black_box(target), black_box(&config), black_box(max_matches)))
+            b.iter(|| {
+                search(
+                    black_box(target),
+                    black_box(&config),
+                    black_box(max_matches),
+                )
+            })
         });
     }
 
@@ -85,11 +91,23 @@ fn bench_parallel_vs_sequential(c: &mut Criterion) {
     let max_matches = 50;
 
     group.bench_function("sequential", |b| {
-        b.iter(|| search(black_box(target), black_box(&config), black_box(max_matches)))
+        b.iter(|| {
+            search(
+                black_box(target),
+                black_box(&config),
+                black_box(max_matches),
+            )
+        })
     });
 
     group.bench_function("parallel", |b| {
-        b.iter(|| search_parallel(black_box(target), black_box(&config), black_box(max_matches)))
+        b.iter(|| {
+            search_parallel(
+                black_box(target),
+                black_box(&config),
+                black_box(max_matches),
+            )
+        })
     });
 
     group.finish();
@@ -149,11 +167,23 @@ fn bench_statistics_collection(c: &mut Criterion) {
     let max_matches = 50;
 
     group.bench_function("without_stats", |b| {
-        b.iter(|| search(black_box(target), black_box(&config), black_box(max_matches)))
+        b.iter(|| {
+            search(
+                black_box(target),
+                black_box(&config),
+                black_box(max_matches),
+            )
+        })
     });
 
     group.bench_function("with_stats", |b| {
-        b.iter(|| search_with_stats(black_box(target), black_box(&config), black_box(max_matches)))
+        b.iter(|| {
+            search_with_stats(
+                black_box(target),
+                black_box(&config),
+                black_box(max_matches),
+            )
+        })
     });
 
     group.finish();

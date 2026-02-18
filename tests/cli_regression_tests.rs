@@ -97,9 +97,9 @@ fn unique_tmp_path(stem: &str) -> std::path::PathBuf {
 
 #[path = "cli/basics.rs"]
 mod basics;
-#[path = "cli/legacy.rs"]
-mod legacy;
 #[path = "cli/diagnostics.rs"]
 mod diagnostics;
+#[path = "cli/legacy.rs"]
+mod legacy;
 #[path = "cli/ranking.rs"]
 mod ranking;

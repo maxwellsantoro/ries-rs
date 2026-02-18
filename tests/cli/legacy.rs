@@ -192,4 +192,3 @@ fn test_e_bare_enable_all() {
         stdout
     );
 }
-

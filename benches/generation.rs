@@ -72,11 +72,7 @@ fn bench_full_generation(c: &mut Criterion) {
 
     let target = 2.5;
 
-    let configs = [
-        ("level1", 20, 15),
-        ("level2", 43, 36),
-        ("level3", 60, 50),
-    ];
+    let configs = [("level1", 20, 15), ("level2", 43, 36), ("level3", 60, 50)];
 
     for (name, lhs_comp, rhs_comp) in configs {
         let mut config = GenConfig::default();
@@ -144,9 +140,7 @@ fn bench_expression_count(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("count", name),
             &(result.lhs.len(), result.rhs.len()),
-            |b, counts| {
-                b.iter(|| black_box(counts))
-            },
+            |b, counts| b.iter(|| black_box(counts)),
         );
     }
 

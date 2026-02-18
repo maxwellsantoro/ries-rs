@@ -820,7 +820,6 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             (val, deriv, NumType::Transcendental)
         }
 
-
         // Non-binary symbols should never be passed to this function
         _ => return Err(EvalError::Invalid),
     };
