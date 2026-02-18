@@ -37,6 +37,7 @@ pub fn test_search_config(target: f64) -> SearchConfig {
         show_db_adds: false,
         match_all_digits: false,
         derivative_margin: ries_rs::thresholds::DEGENERATE_DERIVATIVE,
+        ranking_mode: ries_rs::pool::RankingMode::Complexity,
     }
 }
 
