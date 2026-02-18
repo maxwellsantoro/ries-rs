@@ -67,12 +67,32 @@ fn parse_first_complexity(stdout: &str) -> Option<u32> {
     })
 }
 
+fn parse_first_match_line(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .find(|line| line.contains('=') && line.contains('{'))
+        .map(|line| line.trim().to_string())
+}
+
+fn parse_match_lines(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter(|line| line.contains('=') && line.contains('{'))
+        .map(|line| line.trim().to_string())
+        .collect()
+}
+
 fn unique_tmp_path(stem: &str) -> std::path::PathBuf {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock before unix epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("ries-rs-{}-{}-{}.ries", stem, std::process::id(), now))
+    std::env::temp_dir().join(format!(
+        "ries-rs-{}-{}-{}.ries",
+        stem,
+        std::process::id(),
+        now
+    ))
 }
 
 #[test]
@@ -170,8 +190,7 @@ fn test_classic_prefers_exact_match() {
 
 #[test]
 fn test_op_limits_is_count_limit_not_allow_list() {
-    let (stdout, _stderr) =
-        run_ries(&["6", "--report", "false", "-n", "1", "-l", "2", "-O", "1+"]);
+    let (stdout, _stderr) = run_ries(&["6", "--report", "false", "-n", "1", "-l", "2", "-O", "1+"]);
     let (lhs, rhs) =
         parse_generated_counts(&stdout).expect("missing generated counts in CLI output");
     assert!(
@@ -304,7 +323,8 @@ fn test_user_constant_weight_changes_complexity() {
         "-X",
         "99:taux:test:0.123456789",
     ]);
-    let high = parse_first_complexity(&stdout_high).expect("missing complexity for high-weight run");
+    let high =
+        parse_first_complexity(&stdout_high).expect("missing complexity for high-weight run");
 
     assert!(
         high > low + 20,
@@ -319,39 +339,27 @@ fn test_user_constant_weight_changes_complexity() {
 #[test]
 fn test_list_options_outputs_known_flags() {
     let output = run_ries_raw(&["--list-options"]);
-    assert!(output.status.success(), "--list-options should exit successfully");
+    assert!(
+        output.status.success(),
+        "--list-options should exit successfully"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--list-options"));
     assert!(stdout.contains("--find-expression"));
+    assert!(stdout.contains("--complexity-ranking"));
+    assert!(stdout.contains("--parity-ranking"));
     assert!(stdout.contains("--O-RHS"));
     assert!(stdout.contains("--E-RHS"));
 }
 
 #[test]
 fn test_enable_reenables_symbol_after_exclude() {
-    let (stdout_no_enable, _stderr) = run_ries(&[
-        "2.5",
-        "--report",
-        "false",
-        "-n",
-        "1",
-        "-N",
-        "+",
-    ]);
+    let (stdout_no_enable, _stderr) = run_ries(&["2.5", "--report", "false", "-n", "1", "-N", "+"]);
     let (lhs_no, rhs_no) =
         parse_generated_counts(&stdout_no_enable).expect("missing generated counts");
 
-    let (stdout_enable, _stderr) = run_ries(&[
-        "2.5",
-        "--report",
-        "false",
-        "-n",
-        "1",
-        "-N",
-        "+",
-        "-E",
-        "+",
-    ]);
+    let (stdout_enable, _stderr) =
+        run_ries(&["2.5", "--report", "false", "-n", "1", "-N", "+", "-E", "+"]);
     let (lhs_yes, rhs_yes) =
         parse_generated_counts(&stdout_enable).expect("missing generated counts");
 
@@ -552,15 +560,7 @@ fn test_show_work_outputs_step_details() {
 
 #[test]
 fn test_dy_enables_stats_output() {
-    let (stdout, _stderr) = run_ries(&[
-        "2.5",
-        "--classic",
-        "--report",
-        "false",
-        "-n",
-        "1",
-        "-Dy",
-    ]);
+    let (stdout, _stderr) = run_ries(&["2.5", "--classic", "--report", "false", "-n", "1", "-Dy"]);
     assert!(
         stdout.contains("=== Search Statistics ==="),
         "expected -Dy to enable stats output\n{}",
@@ -607,16 +607,19 @@ fn test_explicit_multiply_changes_infix_rendering() {
 
 #[test]
 fn test_s_flag_shows_equation_form_not_misleading_x_equals() {
-    // The -s flag should NOT show just "x = RHS" when the LHS is complex (e.g., tanpi(x)).
-    // Until proper algebraic transformation is implemented, -s should show the full equation.
-    let (stdout, _stderr) = run_ries(&["2.5063", "--classic", "--report", "false", "-s", "-n", "1"]);
+    // The -s flag should avoid misleading direct assignment for complex LHS forms.
+    // It may either keep equation form, or show a valid transformed x = ... expression.
+    let (stdout, _stderr) =
+        run_ries(&["2.5063", "--classic", "--report", "false", "-s", "-n", "1"]);
 
-    // The output should show the equation form, not just "x = ..."
-    // For 2.5063, a match is "tanpi(x) = 4-e^4" which should NOT become "x = 4-e^4"
-    // because that's mathematically incorrect (solving tanpi(x) = RHS for x requires arctanpi).
     assert!(
-        stdout.contains("tanpi(x) ="),
-        "expected -s to show equation form with LHS, not misleading 'x = RHS'\n{}",
+        stdout.contains("tanpi(x) =") || stdout.contains("atan2("),
+        "expected -s to either preserve equation form or show a valid inverse transform\n{}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("x = 4-e^4"),
+        "expected -s to avoid misleading direct assignment\n{}",
         stdout
     );
 }
@@ -676,7 +679,16 @@ fn test_l_flag_liouvillian_mode() {
 #[test]
 fn test_level_flag_with_integer() {
     // For explicit level, use -l3 or --level 3 with a target
-    let output = run_ries_raw(&["--level", "1", "2.5", "--classic", "--report", "false", "-n", "1"]);
+    let output = run_ries_raw(&[
+        "--level",
+        "1",
+        "2.5",
+        "--classic",
+        "--report",
+        "false",
+        "-n",
+        "1",
+    ]);
     assert!(
         output.status.success(),
         "Should parse --level 1 with target 2.5\nstdout:\n{}\nstderr:\n{}",
@@ -728,8 +740,11 @@ fn test_ie_integer_exact_mode() {
     assert!(output.status.success(), "Should succeed with --ie flag");
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Should find x=3 as exact match and stop quickly
-    assert!(stdout.contains("3") && stdout.contains("('exact' match)"),
-            "Should find x=3 as exact match\n{}", stdout);
+    assert!(
+        stdout.contains("3") && stdout.contains("('exact' match)"),
+        "Should find x=3 as exact match\n{}",
+        stdout
+    );
 }
 
 #[test]
@@ -739,8 +754,11 @@ fn test_re_rational_exact_mode() {
     assert!(output.status.success(), "Should succeed with --re flag");
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Should find 2x=5 or x=5/2 as exact match
-    assert!(stdout.contains("('exact' match)"),
-            "Should find exact match for 2.5\n{}", stdout);
+    assert!(
+        stdout.contains("('exact' match)"),
+        "Should find exact match for 2.5\n{}",
+        stdout
+    );
 }
 
 #[test]
@@ -750,10 +768,16 @@ fn test_s_bare_symbol_table() {
     assert!(output.status.success(), "Should succeed with bare -S");
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Should print symbol table with pi, e, and other symbols
-    assert!(stdout.contains("pi") && stdout.contains("e"),
-            "Should print symbol table with pi and e\n{}", stdout);
-    assert!(stdout.contains("Explicit values") || stdout.contains("description"),
-            "Should show symbol table header\n{}", stdout);
+    assert!(
+        stdout.contains("pi") && stdout.contains("e"),
+        "Should print symbol table with pi and e\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Explicit values") || stdout.contains("description"),
+        "Should show symbol table header\n{}",
+        stdout
+    );
 }
 
 #[test]
@@ -761,9 +785,17 @@ fn test_e_bare_enable_all() {
     // -E without argument should enable all symbols and treat next arg as target
     // Original ries: "ries -E 2.5" means "enable all and search for 2.5"
     let output = run_ries_raw(&["-E", "2.5", "--classic", "--report", "false", "-n", "1"]);
-    assert!(output.status.success(), "Should succeed with bare -E: {:?}", output);
+    assert!(
+        output.status.success(),
+        "Should succeed with bare -E: {:?}",
+        output
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("2.5"), "Should show target value\n{}", stdout);
+    assert!(
+        stdout.contains("2.5"),
+        "Should show target value\n{}",
+        stdout
+    );
 }
 
 #[test]
@@ -780,16 +812,38 @@ fn test_f1_condensed_format_accepted() {
 
 #[test]
 fn test_verbose_output_shows_target() {
-    let (stdout, _stderr) = run_ries(&["2.5", "--verbose", "--report", "false", "--max-matches", "1"]);
-    assert!(stdout.contains("Target:") || stdout.contains("target"), "expected --verbose to show target in header\n{}", stdout);
+    let (stdout, _stderr) = run_ries(&[
+        "2.5",
+        "--verbose",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+    ]);
+    assert!(
+        stdout.contains("Target:") || stdout.contains("target"),
+        "expected --verbose to show target in header\n{}",
+        stdout
+    );
 }
 
 #[test]
 fn test_verbose_output_shows_total_equations() {
-    let (stdout, _stderr) = run_ries(&["2.5", "--verbose", "--report", "false", "--max-matches", "1"]);
+    let (stdout, _stderr) = run_ries(&[
+        "2.5",
+        "--verbose",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+    ]);
     // Should show total equations tested or similar summary info
     let lower = stdout.to_lowercase();
-    assert!(lower.contains("total") || lower.contains("equations") || lower.contains("summary"), "expected --verbose to show summary with total/equations in footer\n{}", stdout);
+    assert!(
+        lower.contains("total") || lower.contains("equations") || lower.contains("summary"),
+        "expected --verbose to show summary with total/equations in footer\n{}",
+        stdout
+    );
 }
 
 #[test]
@@ -810,9 +864,12 @@ fn test_diagnostic_o_shows_match_output() {
     let (stdout, stderr) = run_ries(&["2.5", "-Do", "--report", "false", "--max-matches", "1"]);
     // -Do should output match check information to stderr
     let output = format!("{}{}", stdout, stderr).to_lowercase();
-    assert!(output.contains("match") || output.contains("candidate") || output.contains("check"),
+    assert!(
+        output.contains("match") || output.contains("candidate") || output.contains("check"),
         "expected -Do to show match check output, but got:\nstdout:\n{}\nstderr:\n{}",
-        stdout, stderr);
+        stdout,
+        stderr
+    );
 }
 
 #[test]
@@ -838,14 +895,29 @@ fn test_diagnostic_a_recognized() {
 #[test]
 fn test_match_all_digits_option_accepted() {
     // Just verify the option is accepted and doesn't crash
-    let (stdout, _) = run_ries(&["2.5", "--match-all-digits", "--report", "false", "--max-matches", "1"]);
+    let (stdout, _) = run_ries(&[
+        "2.5",
+        "--match-all-digits",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+    ]);
     assert!(stdout.contains("x"));
 }
 
 #[test]
 fn test_derivative_margin_option_accepted() {
     // Just verify the option is accepted and doesn't crash
-    let (stdout, _) = run_ries(&["2.5", "--derivative-margin", "1e-10", "--report", "false", "--max-matches", "1"]);
+    let (stdout, _) = run_ries(&[
+        "2.5",
+        "--derivative-margin",
+        "1e-10",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+    ]);
     assert!(stdout.contains("x"));
 }
 
@@ -883,6 +955,24 @@ fn test_diagnostic_b_recognized() {
 }
 
 #[test]
+fn test_additional_diagnostic_channels_are_recognized() {
+    let (_stdout, stderr) = run_ries(&[
+        "2.5",
+        "-DCEFHIKL",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+    ]);
+    let lower = stderr.to_lowercase();
+    assert!(
+        !lower.contains("unsupported") && !lower.contains("not implemented"),
+        "expected compatibility diagnostic channels to be recognized\n{}",
+        stderr
+    );
+}
+
+#[test]
 fn test_report_mode_honors_format() {
     // Report mode with -F0 should show postfix format
     let (stdout0, _) = run_ries(&["2.5", "-F0", "--max-matches", "1"]);
@@ -896,6 +986,222 @@ fn test_report_mode_honors_format() {
     let has_infix = stdout2.contains("5/2") || stdout2.contains("x = ");
 
     // Both formats should work correctly
-    assert!(has_postfix_compact, "-F0 should produce postfix compact output in report mode\n-F0 output:\n{}", stdout0);
-    assert!(has_infix, "-F2 should produce infix output in report mode\n-F2 output:\n{}", stdout2);
+    assert!(
+        has_postfix_compact,
+        "-F0 should produce postfix compact output in report mode\n-F0 output:\n{}",
+        stdout0
+    );
+    assert!(
+        has_infix,
+        "-F2 should produce infix output in report mode\n-F2 output:\n{}",
+        stdout2
+    );
+}
+
+#[test]
+fn test_no_slow_messages_suppresses_precision_warning() {
+    let output = run_ries_raw(&[
+        "2.5",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+        "--precision",
+        "256",
+        "--no-slow-messages",
+    ]);
+    assert!(output.status.success(), "command should still succeed");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !stderr.to_lowercase().contains("warning"),
+        "expected --no-slow-messages to suppress compatibility warnings\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn test_s_flag_solves_supported_equation_forms() {
+    // At level 1 for this target, x^2 = 2*pi is a top match and should
+    // transform into x = sqrt(2*pi) under -s.
+    let (stdout, _stderr) = run_ries(&[
+        "2.5063",
+        "--classic",
+        "--report",
+        "false",
+        "-l",
+        "1",
+        "-s",
+        "-n",
+        "1",
+    ]);
+    assert!(
+        stdout.contains("x ="),
+        "expected -s to isolate x for supported equation forms\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_trig_argument_scale_changes_evaluation() {
+    let (default_stdout, _stderr) = run_ries(&["--find-expression", "xS", "--at", "1"]);
+    let (scaled_stdout, _stderr) = run_ries(&[
+        "--find-expression",
+        "xS",
+        "--at",
+        "1",
+        "--trig-argument-scale",
+        "1",
+    ]);
+
+    assert!(
+        default_stdout.contains("Value = 0.000000000000000"),
+        "expected default sinpi(1) == 0\n{}",
+        default_stdout
+    );
+    assert!(
+        !scaled_stdout.contains("Value = 0.000000000000000"),
+        "expected scaled trig argument to change evaluation\n{}",
+        scaled_stdout
+    );
+}
+
+#[test]
+fn test_parity_ranking_flag_is_accepted() {
+    let (stdout, _stderr) = run_ries(&[
+        "2.5",
+        "--report",
+        "false",
+        "--parity-ranking",
+        "-n",
+        "2",
+        "-l",
+        "1",
+    ]);
+    assert!(
+        stdout.contains("Search completed"),
+        "expected --parity-ranking to run successfully\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_parity_ranking_changes_first_match_for_some_target() {
+    let targets = ["2.5", "2.5063", "1.6180339887", "0.9159655942", "3.2"];
+
+    let mut changed = false;
+    let mut samples = Vec::new();
+
+    for target in targets {
+        let (base_stdout, _stderr) = run_ries(&[target, "--report", "false", "-n", "6", "-l", "1"]);
+        let (parity_stdout, _stderr) = run_ries(&[
+            target,
+            "--report",
+            "false",
+            "--parity-ranking",
+            "-n",
+            "6",
+            "-l",
+            "1",
+        ]);
+
+        let base_first = parse_first_match_line(&base_stdout).unwrap_or_default();
+        let parity_first = parse_first_match_line(&parity_stdout).unwrap_or_default();
+        if !base_first.is_empty() && !parity_first.is_empty() {
+            samples.push(format!(
+                "target={} | base={} | parity={}",
+                target, base_first, parity_first
+            ));
+        }
+        if base_first != parity_first {
+            changed = true;
+            break;
+        }
+    }
+
+    assert!(
+        changed,
+        "expected --parity-ranking to alter first match ordering for at least one benchmark target\n{}",
+        samples.join("\n")
+    );
+}
+
+#[test]
+fn test_classic_defaults_to_parity_ranking() {
+    let target = "2.5063";
+    let args_base = [
+        target,
+        "--classic",
+        "--report",
+        "false",
+        "-n",
+        "6",
+        "-l",
+        "1",
+    ];
+
+    let (classic_stdout, _stderr) = run_ries(&args_base);
+    let classic_first = parse_first_match_line(&classic_stdout).unwrap_or_default();
+
+    let mut parity_args: Vec<&str> = args_base.to_vec();
+    parity_args.push("--parity-ranking");
+    let (parity_stdout, _stderr) = run_ries(&parity_args);
+    let parity_first = parse_first_match_line(&parity_stdout).unwrap_or_default();
+
+    assert_eq!(
+        classic_first, parity_first,
+        "expected classic mode default ordering to match --parity-ranking\nclassic:\n{}\nparity:\n{}",
+        classic_stdout, parity_stdout
+    );
+}
+
+#[test]
+fn test_complexity_ranking_overrides_classic_default() {
+    let target = "2.5063";
+    let args_base = [
+        target,
+        "--classic",
+        "--report",
+        "false",
+        "-n",
+        "6",
+        "-l",
+        "1",
+    ];
+
+    let (classic_stdout, _stderr) = run_ries(&args_base);
+    let classic_lines = parse_match_lines(&classic_stdout);
+
+    let mut complexity_args: Vec<&str> = args_base.to_vec();
+    complexity_args.push("--complexity-ranking");
+    let (complexity_stdout, _stderr) = run_ries(&complexity_args);
+    let complexity_lines = parse_match_lines(&complexity_stdout);
+
+    assert_ne!(
+        classic_lines, complexity_lines,
+        "expected --complexity-ranking to override classic default parity ranking\nclassic:\n{}\ncomplexity:\n{}",
+        classic_stdout, complexity_stdout
+    );
+}
+
+#[test]
+fn test_ranking_flags_conflict() {
+    let output = run_ries_raw(&[
+        "2.5",
+        "--report",
+        "false",
+        "--parity-ranking",
+        "--complexity-ranking",
+        "-n",
+        "1",
+    ]);
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "expected conflicting ranking flags to fail"
+    );
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("conflicts with"),
+        "expected clap conflict error for ranking flags\n{}",
+        stderr
+    );
 }

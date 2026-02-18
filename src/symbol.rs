@@ -339,6 +339,57 @@ impl Symbol {
         }
     }
 
+    /// Legacy (original RIES) per-symbol weight delta used for parity ranking.
+    ///
+    /// Original RIES uses a base symbol cost plus a signed per-symbol delta where
+    /// many binary operators have negative deltas. This function exposes the
+    /// signed delta component for output-ranking parity mode.
+    #[inline]
+    pub fn legacy_parity_weight(self) -> i32 {
+        use Symbol::*;
+        match self {
+            // Constants (original C deltas)
+            One => 0,
+            Two => 3,
+            Three => 5,
+            Four => 6,
+            Five => 7,
+            Six => 8,
+            Seven => 8,
+            Eight => 9,
+            Nine => 9,
+            Pi => 4,
+            E => 6,
+            Phi => 8,
+            X => 5,
+
+            // Unary operators
+            Neg => -3,
+            Recip => -3,
+            Square => -1,
+            Sqrt => -1,
+            Ln => 3,
+            Exp => 3,
+            SinPi => 3,
+            CosPi => 3,
+            TanPi => 6,
+            LambertW => 5,
+
+            // Binary operators
+            Add => -6,
+            Sub => -5,
+            Mul => -6,
+            Div => -5,
+            Pow => -4,
+            Root => -3,
+            Log => -1,
+            Atan2 => -1,
+
+            // Symbols absent from original baseline: use configured weight.
+            _ => self.weight() as i32,
+        }
+    }
+
     /// Get the result type when this operation is applied
     pub fn result_type(self, arg_types: &[NumType]) -> NumType {
         use NumType::*;

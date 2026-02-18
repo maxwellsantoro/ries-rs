@@ -145,10 +145,20 @@ struct Args {
     #[arg(long, default_value_t = true, action = ArgAction::Set)]
     report: bool,
 
-    /// Classic/sniper mode: single list sorted by complexity (like original RIES)
+    /// Classic/sniper mode: single list output (like original RIES)
     /// Implies --stop-at-exact and aggressive early exit for speed
     #[arg(long)]
     classic: bool,
+
+    /// Use original-RIES-like signed weight ranking for match ordering
+    /// (exactness -> error -> legacy parity score -> complexity)
+    #[arg(long, conflicts_with = "complexity_ranking")]
+    parity_ranking: bool,
+
+    /// Force complexity-first ranking
+    /// (exactness -> error -> complexity)
+    #[arg(long, conflicts_with = "parity_ranking")]
+    complexity_ranking: bool,
 
     /// Output format for expressions
     /// Options: default, pretty (Unicode), mathematica, sympy
@@ -454,10 +464,7 @@ fn parse_symbol_names_from_cli(profile: &mut Profile, spec: &str) -> Result<(), 
         }
 
         let Some(symbol) = symbol::Symbol::from_byte(symbol_char as u8) else {
-            return Err(format!(
-                "Unknown symbol in --symbol-names: {}",
-                symbol_char
-            ));
+            return Err(format!("Unknown symbol in --symbol-names: {}", symbol_char));
         };
 
         profile.symbol_names.insert(symbol, display_name);
@@ -501,7 +508,9 @@ fn parse_symbol_weights_from_cli(profile: &mut Profile, spec: &str) -> Result<()
 }
 
 /// Parse -O/--op-limits into per-symbol maximum counts.
-fn parse_symbol_count_limits(spec: &str) -> Result<std::collections::HashMap<symbol::Symbol, u32>, String> {
+fn parse_symbol_count_limits(
+    spec: &str,
+) -> Result<std::collections::HashMap<symbol::Symbol, u32>, String> {
     let mut limits = std::collections::HashMap::new();
     let chars: Vec<char> = spec.chars().collect();
     let mut i = 0;
@@ -537,7 +546,10 @@ fn parse_symbol_count_limits(spec: &str) -> Result<std::collections::HashMap<sym
         }
 
         let Some(sym) = symbol::Symbol::from_byte(symbol_char as u8) else {
-            return Err(format!("Unknown symbol '{}' in -O/--op-limits", symbol_char));
+            return Err(format!(
+                "Unknown symbol '{}' in -O/--op-limits",
+                symbol_char
+            ));
         };
         limits.insert(sym, max_count);
     }
@@ -729,8 +741,7 @@ fn build_gen_config(
 
     // Parse effective symbol sets (with -E/--enable support).
     let (allowed, excluded) = parse_symbol_sets(only_symbols, exclude, enable);
-    let (allowed_rhs, excluded_rhs) =
-        parse_symbol_sets(only_symbols_rhs, exclude_rhs, enable_rhs);
+    let (allowed_rhs, excluded_rhs) = parse_symbol_sets(only_symbols_rhs, exclude_rhs, enable_rhs);
 
     // Apply LHS symbol filtering
     config.constants = filter_symbols(
@@ -893,14 +904,14 @@ enum DisplayFormat {
 #[derive(Debug, Default)]
 struct DiagnosticOptions {
     // Existing
-    show_work: bool,           // s, N
-    show_stats: bool,          // y, M
+    show_work: bool,  // s, N
+    show_stats: bool, // y, M
     // NEW channels
-    show_match_checks: bool,   // o
-    show_pruned_arith: bool,   // A, a
-    show_pruned_range: bool,   // B, b
-    show_db_adds: bool,        // G, g
-    show_newton: bool,         // n
+    show_match_checks: bool, // o
+    show_pruned_arith: bool, // A, a
+    show_pruned_range: bool, // B, b
+    show_db_adds: bool,      // G, g
+    show_newton: bool,       // n
     unsupported_channels: Vec<char>,
 }
 
@@ -921,6 +932,7 @@ fn parse_diagnostics(
     };
 
     if let Some(spec) = diagnostics {
+        const COMPAT_NOOP_CHANNELS: &str = "CcDdEeFfHhIiJjKkLlPpQqRrTtUuVvWwXxZz";
         for ch in spec.chars() {
             match ch {
                 's' | 'N' => opts.show_work = true,
@@ -930,6 +942,9 @@ fn parse_diagnostics(
                 'B' | 'b' => opts.show_pruned_range = true,
                 'G' | 'g' => opts.show_db_adds = true,
                 'n' => opts.show_newton = true,
+                _ if COMPAT_NOOP_CHANNELS.contains(ch) => {
+                    // Recognized for compatibility; currently no-op.
+                }
                 _ => opts.unsupported_channels.push(ch),
             }
         }
@@ -949,6 +964,383 @@ fn match_in_equate_bounds(
     let min_ok = min_equate_value.is_none_or(|min| lhs >= min && rhs >= min);
     let max_ok = max_equate_value.is_none_or(|max| lhs <= max && rhs <= max);
     min_ok && max_ok
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExpressionConstraintOptions {
+    rational_exponents: bool,
+    rational_trig_args: bool,
+    max_trig_cycles: Option<u32>,
+}
+
+fn expression_respects_constraints(
+    expression: &expr::Expression,
+    opts: ExpressionConstraintOptions,
+) -> bool {
+    use symbol::{Seft, Symbol};
+
+    let mut stack: Vec<bool> = Vec::with_capacity(expression.len());
+    let mut trig_ops: u32 = 0;
+
+    for &sym in expression.symbols() {
+        match sym.seft() {
+            Seft::A => stack.push(sym == Symbol::X),
+            Seft::B => {
+                let Some(arg_has_x) = stack.pop() else {
+                    return false;
+                };
+
+                if matches!(sym, Symbol::SinPi | Symbol::CosPi | Symbol::TanPi) {
+                    trig_ops = trig_ops.saturating_add(1);
+                    if opts.rational_trig_args && arg_has_x {
+                        return false;
+                    }
+                }
+                stack.push(arg_has_x);
+            }
+            Seft::C => {
+                let Some(rhs_has_x) = stack.pop() else {
+                    return false;
+                };
+                let Some(lhs_has_x) = stack.pop() else {
+                    return false;
+                };
+
+                if opts.rational_exponents && sym == Symbol::Pow && rhs_has_x {
+                    return false;
+                }
+
+                stack.push(lhs_has_x || rhs_has_x);
+            }
+        }
+    }
+
+    if stack.len() != 1 {
+        return false;
+    }
+
+    opts.max_trig_cycles
+        .is_none_or(|max_cycles| trig_ops <= max_cycles)
+}
+
+fn parse_memory_size_bytes(spec: &str) -> Option<u64> {
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let (num_part, suffix) = match trimmed.chars().last().filter(|c| c.is_ascii_alphabetic()) {
+        Some(last) => (&trimmed[..trimmed.len() - last.len_utf8()], Some(last)),
+        None => (trimmed, None),
+    };
+
+    let number: f64 = num_part.trim().parse().ok()?;
+    if !number.is_finite() || number < 0.0 {
+        return None;
+    }
+
+    let mult = match suffix.map(|c| c.to_ascii_uppercase()) {
+        None => 1_f64,
+        Some('K') => 1024_f64,
+        Some('M') => 1024_f64 * 1024_f64,
+        Some('G') => 1024_f64 * 1024_f64 * 1024_f64,
+        Some('T') => 1024_f64 * 1024_f64 * 1024_f64 * 1024_f64,
+        _ => return None,
+    };
+
+    Some((number * mult) as u64)
+}
+
+#[derive(Clone)]
+enum SolveNodeKind {
+    Atom,
+    Unary(symbol::Symbol, Box<SolveNode>),
+    Binary(symbol::Symbol, Box<SolveNode>, Box<SolveNode>),
+}
+
+#[derive(Clone)]
+struct SolveNode {
+    expr: expr::Expression,
+    x_count: u32,
+    kind: SolveNodeKind,
+}
+
+fn append_unary_expression(base: &expr::Expression, op: symbol::Symbol) -> expr::Expression {
+    let mut out = base.clone();
+    out.push(op);
+    out
+}
+
+fn combine_binary_expressions(
+    lhs: &expr::Expression,
+    rhs: &expr::Expression,
+    op: symbol::Symbol,
+) -> expr::Expression {
+    let mut out = expr::Expression::new();
+    for &sym in lhs.symbols() {
+        out.push(sym);
+    }
+    for &sym in rhs.symbols() {
+        out.push(sym);
+    }
+    out.push(op);
+    out
+}
+
+fn build_solve_ast(expression: &expr::Expression) -> Option<SolveNode> {
+    use symbol::{Seft, Symbol};
+
+    let mut stack: Vec<SolveNode> = Vec::with_capacity(expression.len());
+
+    for &sym in expression.symbols() {
+        match sym.seft() {
+            Seft::A => {
+                let mut e = expr::Expression::new();
+                e.push(sym);
+                stack.push(SolveNode {
+                    expr: e,
+                    x_count: u32::from(sym == Symbol::X),
+                    kind: SolveNodeKind::Atom,
+                });
+            }
+            Seft::B => {
+                let arg = stack.pop()?;
+                let mut e = arg.expr.clone();
+                e.push(sym);
+                stack.push(SolveNode {
+                    expr: e,
+                    x_count: arg.x_count,
+                    kind: SolveNodeKind::Unary(sym, Box::new(arg)),
+                });
+            }
+            Seft::C => {
+                let rhs = stack.pop()?;
+                let lhs = stack.pop()?;
+                let mut e = expr::Expression::new();
+                for &s in lhs.expr.symbols() {
+                    e.push(s);
+                }
+                for &s in rhs.expr.symbols() {
+                    e.push(s);
+                }
+                e.push(sym);
+                stack.push(SolveNode {
+                    expr: e,
+                    x_count: lhs.x_count.saturating_add(rhs.x_count),
+                    kind: SolveNodeKind::Binary(sym, Box::new(lhs), Box::new(rhs)),
+                });
+            }
+        }
+    }
+
+    if stack.len() == 1 {
+        stack.pop()
+    } else {
+        None
+    }
+}
+
+fn constant_expression(sym: symbol::Symbol) -> expr::Expression {
+    let mut out = expr::Expression::new();
+    out.push(sym);
+    out
+}
+
+fn unary_inverse_expression(
+    op: symbol::Symbol,
+    rhs_value: &expr::Expression,
+) -> Option<expr::Expression> {
+    use symbol::Symbol;
+
+    Some(match op {
+        Symbol::Neg => append_unary_expression(rhs_value, Symbol::Neg),
+        Symbol::Recip => append_unary_expression(rhs_value, Symbol::Recip),
+        Symbol::Square => append_unary_expression(rhs_value, Symbol::Sqrt),
+        Symbol::Sqrt => append_unary_expression(rhs_value, Symbol::Square),
+        Symbol::Ln => append_unary_expression(rhs_value, Symbol::Exp),
+        Symbol::Exp => append_unary_expression(rhs_value, Symbol::Ln),
+        Symbol::TanPi => {
+            // x = atan(rhs) / pi = atan2(rhs, 1) / pi
+            let one = constant_expression(symbol::Symbol::One);
+            let atan = combine_binary_expressions(rhs_value, &one, symbol::Symbol::Atan2);
+            let pi = constant_expression(symbol::Symbol::Pi);
+            combine_binary_expressions(&atan, &pi, symbol::Symbol::Div)
+        }
+        Symbol::SinPi => {
+            // x = asin(rhs)/pi = atan2(rhs, sqrt(1-rhs^2))/pi
+            let one = constant_expression(symbol::Symbol::One);
+            let rhs_sq = append_unary_expression(rhs_value, symbol::Symbol::Square);
+            let inner = combine_binary_expressions(&one, &rhs_sq, symbol::Symbol::Sub);
+            let denom = append_unary_expression(&inner, symbol::Symbol::Sqrt);
+            let atan = combine_binary_expressions(rhs_value, &denom, symbol::Symbol::Atan2);
+            let pi = constant_expression(symbol::Symbol::Pi);
+            combine_binary_expressions(&atan, &pi, symbol::Symbol::Div)
+        }
+        Symbol::CosPi => {
+            // x = acos(rhs)/pi = atan2(sqrt(1-rhs^2), rhs)/pi
+            let one = constant_expression(symbol::Symbol::One);
+            let rhs_sq = append_unary_expression(rhs_value, symbol::Symbol::Square);
+            let inner = combine_binary_expressions(&one, &rhs_sq, symbol::Symbol::Sub);
+            let numer = append_unary_expression(&inner, symbol::Symbol::Sqrt);
+            let atan = combine_binary_expressions(&numer, rhs_value, symbol::Symbol::Atan2);
+            let pi = constant_expression(symbol::Symbol::Pi);
+            combine_binary_expressions(&atan, &pi, symbol::Symbol::Div)
+        }
+        Symbol::LambertW => {
+            // x = W(y)  =>  y = x * exp(x)
+            let exp_rhs = append_unary_expression(rhs_value, symbol::Symbol::Exp);
+            combine_binary_expressions(rhs_value, &exp_rhs, symbol::Symbol::Mul)
+        }
+        _ => return None,
+    })
+}
+
+fn invert_binary_left(
+    op: symbol::Symbol,
+    rhs_value: &expr::Expression,
+    known_right: &expr::Expression,
+) -> Option<expr::Expression> {
+    use symbol::Symbol;
+    Some(match op {
+        Symbol::Add => combine_binary_expressions(rhs_value, known_right, Symbol::Sub),
+        Symbol::Sub => combine_binary_expressions(rhs_value, known_right, Symbol::Add),
+        Symbol::Mul => combine_binary_expressions(rhs_value, known_right, Symbol::Div),
+        Symbol::Div => combine_binary_expressions(rhs_value, known_right, Symbol::Mul),
+        Symbol::Pow => combine_binary_expressions(known_right, rhs_value, Symbol::Root),
+        Symbol::Root => combine_binary_expressions(rhs_value, known_right, Symbol::Log),
+        Symbol::Log => combine_binary_expressions(rhs_value, known_right, Symbol::Root),
+        _ => return None,
+    })
+}
+
+fn invert_binary_right(
+    op: symbol::Symbol,
+    known_left: &expr::Expression,
+    rhs_value: &expr::Expression,
+) -> Option<expr::Expression> {
+    use symbol::Symbol;
+    Some(match op {
+        Symbol::Add => combine_binary_expressions(rhs_value, known_left, Symbol::Sub),
+        Symbol::Sub => combine_binary_expressions(known_left, rhs_value, Symbol::Sub),
+        Symbol::Mul => combine_binary_expressions(rhs_value, known_left, Symbol::Div),
+        Symbol::Div => combine_binary_expressions(known_left, rhs_value, Symbol::Div),
+        Symbol::Pow => combine_binary_expressions(known_left, rhs_value, Symbol::Log),
+        Symbol::Root => combine_binary_expressions(rhs_value, known_left, Symbol::Pow),
+        Symbol::Log => combine_binary_expressions(known_left, rhs_value, Symbol::Pow),
+        _ => return None,
+    })
+}
+
+fn is_x_atom(expression: &expr::Expression) -> bool {
+    use symbol::Symbol;
+    expression.len() == 1
+        && expression
+            .symbols()
+            .first()
+            .is_some_and(|sym| *sym == Symbol::X)
+}
+
+fn solve_for_x_rhs_expression(
+    lhs: &expr::Expression,
+    rhs: &expr::Expression,
+) -> Option<expr::Expression> {
+    use symbol::Symbol;
+
+    if lhs.count_symbol(Symbol::X) != 1 {
+        return None;
+    }
+
+    let mut node = build_solve_ast(lhs)?;
+    if node.x_count != 1 {
+        return None;
+    }
+    let mut rhs_expr = rhs.clone();
+
+    loop {
+        match node.kind {
+            SolveNodeKind::Atom => return is_x_atom(&node.expr).then_some(rhs_expr),
+            SolveNodeKind::Unary(op, child) => {
+                if child.x_count != 1 {
+                    return None;
+                }
+                rhs_expr = unary_inverse_expression(op, &rhs_expr)?;
+                node = *child;
+            }
+            SolveNodeKind::Binary(op, left, right) => {
+                let lx = left.x_count;
+                let rx = right.x_count;
+                if lx + rx != 1 {
+                    return None;
+                }
+
+                if lx == 1 {
+                    rhs_expr = invert_binary_left(op, &rhs_expr, &right.expr)?;
+                    node = *left;
+                } else {
+                    rhs_expr = invert_binary_right(op, &left.expr, &rhs_expr)?;
+                    node = *right;
+                }
+            }
+        }
+    }
+}
+
+fn symbol_key(sym: symbol::Symbol) -> String {
+    let byte = sym as u8;
+    if byte.is_ascii_graphic() {
+        (byte as char).to_string()
+    } else {
+        format!("#{}", byte)
+    }
+}
+
+fn canonical_node_key(node: &SolveNode) -> String {
+    use symbol::Symbol;
+
+    match &node.kind {
+        SolveNodeKind::Atom => node.expr.to_postfix(),
+        SolveNodeKind::Unary(op, child) => format!("{}({})", symbol_key(*op), canonical_node_key(child)),
+        SolveNodeKind::Binary(op, left, right) => {
+            let mut lk = canonical_node_key(left);
+            let mut rk = canonical_node_key(right);
+            if matches!(op, Symbol::Add | Symbol::Mul) && lk > rk {
+                std::mem::swap(&mut lk, &mut rk);
+            }
+            format!("({}{}{})", lk, symbol_key(*op), rk)
+        }
+    }
+}
+
+fn canonical_expression_key(expression: &expr::Expression) -> Option<String> {
+    let node = build_solve_ast(expression)?;
+    Some(canonical_node_key(&node))
+}
+
+fn canon_reduction_enabled(spec: Option<&str>) -> bool {
+    let Some(value) = spec else {
+        return false;
+    };
+    let lowered = value.trim().to_ascii_lowercase();
+    !matches!(lowered.as_str(), "" | "off" | "none" | "0" | "false")
+}
+
+fn digit_signature(expression: &expr::Expression) -> String {
+    let mut digits: Vec<char> = expression
+        .symbols()
+        .iter()
+        .filter_map(|sym| {
+            let b = *sym as u8;
+            (b'1'..=b'9').contains(&b).then_some(b as char)
+        })
+        .collect();
+    digits.sort_unstable();
+    digits.into_iter().collect()
+}
+
+fn match_is_numeric_anagram(m: &search::Match) -> bool {
+    let lhs = digit_signature(&m.lhs.expr);
+    let rhs = digit_signature(&m.rhs.expr);
+    !lhs.is_empty() && lhs == rhs
 }
 
 fn main() {
@@ -988,6 +1380,8 @@ fn main() {
             "--no-solve-for-x",
             "--numeric-anagram",
             "--one-sided",
+            "--complexity-ranking",
+            "--parity-ranking",
             "--rational-exponents",
             "--rational-trig-args",
             "--show-work",
@@ -1035,40 +1429,20 @@ fn main() {
     // Also check if target is None to distinguish from "-S symbols target"
     // Note: clap's num_args=0..=1 with a positional arg means -S alone could also give None
     // if the positional target is consumed instead
-    let is_bare_s = (args.only_symbols.as_ref().is_some_and(|s| s.is_empty()) && args.target.is_none())
-        || (args.only_symbols.is_none() && args.target.is_none() && std::env::args().any(|a| a == "-S"));
+    let is_bare_s = (args.only_symbols.as_ref().is_some_and(|s| s.is_empty())
+        && args.target.is_none())
+        || (args.only_symbols.is_none()
+            && args.target.is_none()
+            && std::env::args().any(|a| a == "-S"));
     if is_bare_s {
         print_symbol_table();
         return;
     }
 
-    let _compat_noop = (
-        args.wide,
-        args.wide_output,
-        args.relative_roots,
-        args.any_exponents,
-        args.any_subexpressions,
-        args.any_trig_args,
-        args.canon_reduction.as_deref(),
-        args.canon_simplify,
-        args.derivative_margin,
-        args.match_all_digits,
-        args.max_memory.as_deref(),
-        args.memory_abort_threshold,
-        args.max_trig_cycles,
-        args.min_memory.as_deref(),
-        args.no_canon_simplify,
-        args.no_slow_messages,
-        args.numeric_anagram,
-        args.rational_exponents,
-        args.rational_trig_args,
-        args.significance_loss_margin,
-        args.trig_argument_scale,
-    );
-    let diagnostics =
-        parse_diagnostics(args.diagnostics.as_deref(), args.show_work, args.stats);
+    let _compat_noop = (args.wide, args.wide_output, args.relative_roots);
+    let diagnostics = parse_diagnostics(args.diagnostics.as_deref(), args.show_work, args.stats);
 
-    if !diagnostics.unsupported_channels.is_empty() {
+    if !args.no_slow_messages && !diagnostics.unsupported_channels.is_empty() {
         let unsupported: String = diagnostics.unsupported_channels.iter().collect();
         eprintln!(
             "Warning: -D channels not implemented in ries-rs yet: {}",
@@ -1077,80 +1451,88 @@ fn main() {
     }
 
     // Warn about unimplemented precision flag
-    if args.precision.is_some() {
+    if !args.no_slow_messages && args.precision.is_some() {
         eprintln!(
             "Warning: --precision flag specified but high-precision mode is not yet implemented."
         );
         eprintln!("         Using standard f64 precision (~15 digits).");
     }
 
+    if let Some(scale) = args.trig_argument_scale {
+        if scale.is_finite() && scale != 0.0 {
+            eval::set_trig_argument_scale(scale);
+        } else if !args.no_slow_messages {
+            eprintln!(
+                "Warning: --trig-argument-scale must be finite and non-zero (got {}).",
+                scale
+            );
+        }
+    }
+
     // Handle -p legacy semantics: if profile looks like a number and no target, treat as target
     // Original ries behavior: "ries -p 2.5" means "use default profile and search for 2.5"
-    let (profile_arg, resolved_target) =
-        if let Some(ref profile_path) = args.profile {
-            if args.target.is_none() {
-                // Check if profile argument looks like a target (numeric)
-                if let Ok(val) = profile_path.to_string_lossy().parse::<f64>() {
-                    // It's a number, treat as target and use default profile
-                    (None, Some(val))
-                } else {
-                    // Not a number, use as profile path
-                    (args.profile.clone(), args.target)
-                }
+    let (profile_arg, resolved_target) = if let Some(ref profile_path) = args.profile {
+        if args.target.is_none() {
+            // Check if profile argument looks like a target (numeric)
+            if let Ok(val) = profile_path.to_string_lossy().parse::<f64>() {
+                // It's a number, treat as target and use default profile
+                (None, Some(val))
             } else {
-                // Both -p and target provided, use both normally
+                // Not a number, use as profile path
                 (args.profile.clone(), args.target)
             }
         } else {
-            (None, args.target)
-        };
+            // Both -p and target provided, use both normally
+            (args.profile.clone(), args.target)
+        }
+    } else {
+        (None, args.target)
+    };
 
     // Handle -E legacy semantics: if enable looks like a number and no target, treat as target
     // Original ries behavior: "ries -E 2.5" means "enable all and search for 2.5"
-    let (enable_arg, resolved_target) =
-        if let Some(ref enable_str) = args.enable {
-            if resolved_target.is_none() {
-                // Check if enable argument looks like a target (numeric)
-                if let Ok(val) = enable_str.parse::<f64>() {
-                    // It's a number, treat as target and use "all" for enable
-                    (Some("all".to_string()), Some(val))
-                } else {
-                    // Not a number, use as enable string
-                    (args.enable.clone(), resolved_target)
-                }
+    let (enable_arg, resolved_target) = if let Some(ref enable_str) = args.enable {
+        if resolved_target.is_none() {
+            // Check if enable argument looks like a target (numeric)
+            if let Ok(val) = enable_str.parse::<f64>() {
+                // It's a number, treat as target and use "all" for enable
+                (Some("all".to_string()), Some(val))
             } else {
-                // Both -E and target provided, use both normally
+                // Not a number, use as enable string
                 (args.enable.clone(), resolved_target)
             }
         } else {
-            (None, resolved_target)
-        };
+            // Both -E and target provided, use both normally
+            (args.enable.clone(), resolved_target)
+        }
+    } else {
+        (None, resolved_target)
+    };
 
     // Handle -l legacy semantics: if level looks like a float and no target, treat as target + liouvillian
     // Original ries: "-l 2.5" means liouvillian mode + target 2.5
     // "-l3" or "--level 3" with an explicit target means level 3
-    let (level_value, liouvillian_override, final_target) =
-        if resolved_target.is_some() {
-            // Target was explicitly provided, use -l as level
-            let level = args.level.parse::<f32>().unwrap_or(2.0);
-            (level, None, resolved_target)
-        } else {
-            // No explicit target - check if "level" looks like a target (has decimal point)
-            if args.level.contains('.') {
-                // Legacy: -l 2.5 means liouvillian + target 2.5
-                if let Ok(target_val) = args.level.parse::<f64>() {
-                    (2.0, Some(true), Some(target_val))
-                } else {
-                    // Parse error, let it fail later with proper error
-                    let level = args.level.parse::<f32>().unwrap_or(2.0);
-                    (level, None, None)
-                }
+    let (level_value, liouvillian_override, final_target) = if resolved_target.is_some() {
+        // Target was explicitly provided, use -l as level
+        let level = args.level.parse::<f32>().unwrap_or(2.0);
+        (level, None, resolved_target)
+    } else {
+        // No explicit target - check if "level" looks like a target (has decimal point)
+        if args.level.contains('.') {
+            // Legacy: -l 2.5 means liouvillian + target 2.5
+            if let Ok(target_val) = args.level.parse::<f64>() {
+                (2.0, Some(true), Some(target_val))
             } else {
-                // It's an integer level, but no target - still an error later
+                // Parse error, let it fail later with proper error
                 let level = args.level.parse::<f32>().unwrap_or(2.0);
                 (level, None, None)
             }
-        };
+        } else {
+            // It's an integer level, but no target - still an error later
+            let level = args.level.parse::<f32>().unwrap_or(2.0);
+            (level, None, None)
+        }
+    };
 
     // Use final_target instead of resolved_target from here on
     let resolved_target = final_target;
@@ -1317,7 +1699,9 @@ fn main() {
         (false, true, true)
     } else if args.integer {
         if target.fract() != 0.0 {
-            eprintln!("ries: Replacing -i with -r because target isn't an integer.");
+            if !args.no_slow_messages {
+                eprintln!("ries: Replacing -i with -r because target isn't an integer.");
+            }
             (false, true, false) // Fallback to rational mode
         } else {
             (true, false, false)
@@ -1328,7 +1712,7 @@ fn main() {
 
     // Determine numeric type restriction
     // Check liouvillian_override first (from -l legacy semantics)
-    let min_type = if integer_mode {
+    let mut min_type = if integer_mode {
         symbol::NumType::Integer
     } else if rational_mode {
         symbol::NumType::Rational
@@ -1341,6 +1725,9 @@ fn main() {
     } else {
         symbol::NumType::Transcendental
     };
+    if args.any_subexpressions {
+        min_type = symbol::NumType::Transcendental;
+    }
 
     // Build generation config with CLI options
     let gen_config = match build_gen_config(
@@ -1400,6 +1787,15 @@ fn main() {
         args.enable_rhs.as_deref(),
     );
 
+    let ranking_mode = if args.complexity_ranking {
+        pool::RankingMode::Complexity
+    } else if args.parity_ranking || args.classic {
+        // Classic mode defaults to original-style parity ordering.
+        pool::RankingMode::Parity
+    } else {
+        pool::RankingMode::Complexity
+    };
+
     let mut search_config = search::SearchConfig {
         target,
         max_matches: pool_size,
@@ -1423,7 +1819,11 @@ fn main() {
         show_pruned_range: diagnostics.show_pruned_range,
         show_db_adds: diagnostics.show_db_adds,
         match_all_digits: args.match_all_digits,
-        derivative_margin: args.derivative_margin.unwrap_or(thresholds::DEGENERATE_DERIVATIVE),
+        derivative_margin: args
+            .derivative_margin
+            .or(args.significance_loss_margin)
+            .unwrap_or(thresholds::DEGENERATE_DERIVATIVE),
+        ranking_mode,
     };
 
     // When --match-all-digits is enabled, set tolerance based on target's significant digits
@@ -1436,6 +1836,37 @@ fn main() {
         search_config.max_matches = effective_max_matches;
     }
 
+    let mut use_streaming = args.streaming;
+    let parsed_max_memory = args.max_memory.as_deref().and_then(parse_memory_size_bytes);
+    let parsed_min_memory = args.min_memory.as_deref().and_then(parse_memory_size_bytes);
+    if !use_streaming {
+        if let Some(max_bytes) = parsed_max_memory {
+            if max_bytes <= 512 * 1024 * 1024 {
+                use_streaming = true;
+            }
+        }
+    }
+    if use_streaming {
+        if let Some(min_bytes) = parsed_min_memory {
+            if min_bytes >= 2 * 1024 * 1024 * 1024 {
+                use_streaming = false;
+            }
+        }
+    }
+    if let (Some(max_bytes), Some(threshold)) = (parsed_max_memory, args.memory_abort_threshold) {
+        if (0.0..=1.0).contains(&threshold) {
+            let budget = (max_bytes as f64 * threshold) as u64;
+            let estimate = (pool_size as u64)
+                .saturating_mul(4096)
+                .saturating_add(
+                    (max_lhs_complexity as u64 + max_rhs_complexity as u64).saturating_mul(1_000_000),
+                );
+            if estimate > budget {
+                use_streaming = true;
+            }
+        }
+    }
+
     let start = Instant::now();
 
     // Build symbol filters for fast path
@@ -1445,15 +1876,15 @@ fn main() {
         excluded_symbols.extend(rhs_excluded.iter().copied());
     }
 
-    let fast_allowed_storage: Option<std::collections::HashSet<u8>> =
-        match (allowed_effective.as_ref(), search_config.rhs_allowed_symbols.as_ref()) {
-            (Some(all_set), Some(rhs_set)) => {
-                Some(all_set.intersection(rhs_set).copied().collect())
-            }
-            (Some(all_set), None) => Some(all_set.clone()),
-            (None, Some(rhs_set)) => Some(rhs_set.clone()),
-            (None, None) => None,
-        };
+    let fast_allowed_storage: Option<std::collections::HashSet<u8>> = match (
+        allowed_effective.as_ref(),
+        search_config.rhs_allowed_symbols.as_ref(),
+    ) {
+        (Some(all_set), Some(rhs_set)) => Some(all_set.intersection(rhs_set).copied().collect()),
+        (Some(all_set), None) => Some(all_set.clone()),
+        (None, Some(rhs_set)) => Some(rhs_set.clone()),
+        (None, None) => None,
+    };
 
     // Build fast match config
     let fast_config = fast_match::FastMatchConfig {
@@ -1482,7 +1913,7 @@ fn main() {
             perform_search(
                 &gen_config,
                 &search_config,
-                args.streaming,
+                use_streaming,
                 args.parallel,
                 args.one_sided,
             )
@@ -1492,7 +1923,7 @@ fn main() {
         perform_search(
             &gen_config,
             &search_config,
-            args.streaming,
+            use_streaming,
             args.parallel,
             args.one_sided,
         )
@@ -1504,6 +1935,34 @@ fn main() {
     }
     if let Some(min_match_distance) = args.min_match_distance {
         matches.retain(|m| m.error.abs() >= min_match_distance);
+    }
+    let expression_constraints = ExpressionConstraintOptions {
+        rational_exponents: args.rational_exponents && !args.any_exponents,
+        rational_trig_args: args.rational_trig_args && !args.any_trig_args,
+        max_trig_cycles: args.max_trig_cycles,
+    };
+    if expression_constraints.rational_exponents
+        || expression_constraints.rational_trig_args
+        || expression_constraints.max_trig_cycles.is_some()
+    {
+        matches.retain(|m| {
+            expression_respects_constraints(&m.lhs.expr, expression_constraints)
+                && expression_respects_constraints(&m.rhs.expr, expression_constraints)
+        });
+    }
+    if args.numeric_anagram {
+        matches.retain(match_is_numeric_anagram);
+    }
+    let canon_enabled =
+        (args.canon_simplify || canon_reduction_enabled(args.canon_reduction.as_deref()))
+            && !args.no_canon_simplify;
+    if canon_enabled {
+        let mut seen = std::collections::HashSet::<(String, String)>::new();
+        matches.retain(|m| {
+            let lhs_key = canonical_expression_key(&m.lhs.expr).unwrap_or_else(|| m.lhs.expr.to_postfix());
+            let rhs_key = canonical_expression_key(&m.rhs.expr).unwrap_or_else(|| m.rhs.expr.to_postfix());
+            seen.insert((lhs_key, rhs_key))
+        });
     }
 
     let elapsed = start.elapsed();
@@ -1559,9 +2018,7 @@ fn main() {
     } else {
         // Report mode: categorized output
         if diagnostics.show_work {
-            eprintln!(
-                "Warning: --show-work/-Ds is currently only available with --report false."
-            );
+            eprintln!("Warning: --show-work/-Ds is currently only available with --report false.");
         }
         let mut report_config = ReportConfig::default()
             .with_top_k(args.top_k)
@@ -1742,8 +2199,23 @@ fn print_match_relative(
     format: DisplayFormat,
     explicit_multiply: bool,
 ) {
-    let lhs_str = format_expression_for_display(&m.lhs.expr, format, explicit_multiply);
-    let rhs_str = format_expression_for_display(&m.rhs.expr, format, explicit_multiply);
+    let solved_rhs = if solve {
+        solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr)
+    } else {
+        None
+    };
+
+    let lhs_expr = if solved_rhs.is_some() {
+        let mut x_expr = expr::Expression::new();
+        x_expr.push(symbol::Symbol::X);
+        x_expr
+    } else {
+        m.lhs.expr.clone()
+    };
+    let rhs_expr = solved_rhs.as_ref().unwrap_or(&m.rhs.expr);
+
+    let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply);
+    let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply);
 
     let error_str = if m.error.abs() < EXACT_MATCH_TOLERANCE {
         "('exact' match)".to_string()
@@ -1752,10 +2224,6 @@ fn print_match_relative(
         format!("for x = T {} {:.6e}", sign, m.error.abs())
     };
 
-    // Note: The -s flag is intended to transform equations to x = ... form, but proper
-    // algebraic solving is complex. For now, show the equation form to avoid misleading
-    // output (e.g., showing "x = RHS" when the actual equation is "tanpi(x) = RHS").
-    let _ = solve; // Suppress unused warning until proper transformation is implemented
     println!(
         "{:>24} = {:<24} {} {{{}}}",
         lhs_str, rhs_str, error_str, m.complexity
@@ -1768,13 +2236,24 @@ fn print_match_absolute(
     format: DisplayFormat,
     explicit_multiply: bool,
 ) {
-    let lhs_str = format_expression_for_display(&m.lhs.expr, format, explicit_multiply);
-    let rhs_str = format_expression_for_display(&m.rhs.expr, format, explicit_multiply);
+    let solved_rhs = if solve {
+        solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr)
+    } else {
+        None
+    };
 
-    // Note: The -s flag is intended to transform equations to x = ... form, but proper
-    // algebraic solving is complex. For now, show the equation form to avoid misleading
-    // output (e.g., showing "x = RHS" when the actual equation is "tanpi(x) = RHS").
-    let _ = solve; // Suppress unused warning until proper transformation is implemented
+    let lhs_expr = if solved_rhs.is_some() {
+        let mut x_expr = expr::Expression::new();
+        x_expr.push(symbol::Symbol::X);
+        x_expr
+    } else {
+        m.lhs.expr.clone()
+    };
+    let rhs_expr = solved_rhs.as_ref().unwrap_or(&m.rhs.expr);
+
+    let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply);
+    let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply);
+
     println!(
         "{:>24} = {:<24} for x = {:.15} {{{}}}",
         lhs_str, rhs_str, m.x_value, m.complexity
@@ -1910,5 +2389,57 @@ mod tests {
     fn test_format_value() {
         assert_eq!(format_value(2.71828), "2.7182800000");
         assert_eq!(format_value(1e10), "1.0000000000e10");
+    }
+
+    #[test]
+    fn test_solve_for_x_linear_add() {
+        let lhs = expr::Expression::parse("x1+").unwrap();
+        let rhs = expr::Expression::parse("3").unwrap();
+        let solved = solve_for_x_rhs_expression(&lhs, &rhs).expect("solvable linear add");
+        assert_eq!(solved.to_postfix(), "31-");
+    }
+
+    #[test]
+    fn test_solve_for_x_linear_mul() {
+        let lhs = expr::Expression::parse("2x*").unwrap();
+        let rhs = expr::Expression::parse("5").unwrap();
+        let solved = solve_for_x_rhs_expression(&lhs, &rhs).expect("solvable linear multiply");
+        assert_eq!(solved.to_postfix(), "52/");
+    }
+
+    #[test]
+    fn test_solve_for_x_unary_inverse() {
+        let lhs = expr::Expression::parse("xq").unwrap(); // sqrt(x)
+        let rhs = expr::Expression::parse("2").unwrap();
+        let solved = solve_for_x_rhs_expression(&lhs, &rhs).expect("solvable unary inverse");
+        assert_eq!(solved.to_postfix(), "2s");
+    }
+
+    #[test]
+    fn test_solve_for_x_tan_inverse_supported() {
+        let lhs = expr::Expression::parse("xT").unwrap(); // tanpi(x)
+        let rhs = expr::Expression::parse("2").unwrap();
+        let solved = solve_for_x_rhs_expression(&lhs, &rhs).expect("tan inverse should be supported");
+        let postfix = solved.to_postfix();
+        assert!(postfix.contains('A') && postfix.contains('p') && postfix.contains('/'));
+    }
+
+    #[test]
+    fn test_solve_for_x_lambert_inverse_supported() {
+        let lhs = expr::Expression::parse("xW").unwrap(); // W(x)
+        let rhs = expr::Expression::parse("2").unwrap();
+        let solved =
+            solve_for_x_rhs_expression(&lhs, &rhs).expect("Lambert W inverse should be supported");
+        assert_eq!(solved.to_postfix(), "22E*");
+    }
+
+    #[test]
+    fn test_solve_for_x_unsupported_falls_back() {
+        let lhs = expr::Expression::parse("xH").unwrap(); // user function (unsupported inverse)
+        let rhs = expr::Expression::parse("2").unwrap();
+        assert!(
+            solve_for_x_rhs_expression(&lhs, &rhs).is_none(),
+            "unsupported inverses should fall back to equation form"
+        );
     }
 }

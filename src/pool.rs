@@ -19,6 +19,16 @@ use crate::thresholds::{
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 
+/// Match ranking mode for pool eviction and final ordering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RankingMode {
+    /// Sort by exactness -> error -> complexity (current default behavior)
+    #[default]
+    Complexity,
+    /// Sort by exactness -> error -> legacy signed parity score -> complexity
+    Parity,
+}
+
 /// Keys for full equation deduplication (LHS + RHS pair)
 ///
 /// Uses a pair of expressions directly for zero-allocation hashing.
@@ -91,22 +101,84 @@ impl SignatureKey {
     }
 }
 
+/// Compute legacy (original RIES style) signed parity score for an expression.
+pub fn legacy_parity_score_expr(expr: &Expression) -> i32 {
+    expr.symbols().iter().fold(0_i32, |acc, sym| {
+        acc.saturating_add(sym.legacy_parity_weight())
+    })
+}
+
+/// Compute legacy (original RIES style) signed parity score for a match.
+pub fn legacy_parity_score_match(m: &Match) -> i32 {
+    legacy_parity_score_expr(&m.lhs.expr).saturating_add(legacy_parity_score_expr(&m.rhs.expr))
+}
+
+#[inline]
+fn compare_expr(a: &Expression, b: &Expression) -> Ordering {
+    a.symbols()
+        .iter()
+        .map(|s| *s as u8)
+        .cmp(b.symbols().iter().map(|s| *s as u8))
+}
+
+/// Compare two matches according to the selected ranking mode.
+pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Ordering {
+    let a_exactness = if a.error.abs() < EXACT_MATCH_TOLERANCE {
+        0_u8
+    } else {
+        1_u8
+    };
+    let b_exactness = if b.error.abs() < EXACT_MATCH_TOLERANCE {
+        0_u8
+    } else {
+        1_u8
+    };
+
+    let mut ord = a_exactness.cmp(&b_exactness).then_with(|| {
+        a.error
+            .abs()
+            .partial_cmp(&b.error.abs())
+            .unwrap_or(Ordering::Equal)
+    });
+
+    if ord != Ordering::Equal {
+        return ord;
+    }
+
+    ord = match ranking_mode {
+        RankingMode::Complexity => a.complexity.cmp(&b.complexity),
+        RankingMode::Parity => legacy_parity_score_match(a)
+            .cmp(&legacy_parity_score_match(b))
+            .then_with(|| a.complexity.cmp(&b.complexity)),
+    };
+
+    if ord != Ordering::Equal {
+        return ord;
+    }
+
+    compare_expr(&a.lhs.expr, &b.lhs.expr).then_with(|| compare_expr(&a.rhs.expr, &b.rhs.expr))
+}
+
 /// Wrapper for Match that implements ordering for the heap
-/// We want a min-heap by (exactness, error, complexity) so we reverse ordering.
+/// We keep the worst-ranked entry at the heap top for eviction.
 #[derive(Clone)]
 struct PoolEntry {
     m: Match,
-    rank_key: (u8, i64, u32), // (exactness, error_bits, complexity) - lower is better
+    rank_key: (u8, i64, i32, u32), // (exactness, error_bits, mode_tie, complexity)
 }
 
 impl PoolEntry {
-    fn new(m: Match) -> Self {
+    fn new(m: Match, ranking_mode: RankingMode) -> Self {
         let is_exact = m.error.abs() < EXACT_MATCH_TOLERANCE;
         let exactness_rank = if is_exact { 0 } else { 1 };
         // Convert error to sortable integer.
         let error_bits = m.error.abs().to_bits() as i64;
+        let mode_tie = match ranking_mode {
+            RankingMode::Complexity => m.complexity as i32,
+            RankingMode::Parity => legacy_parity_score_match(&m),
+        };
         Self {
-            rank_key: (exactness_rank, error_bits, m.complexity),
+            rank_key: (exactness_rank, error_bits, mode_tie, m.complexity),
             m,
         }
     }
@@ -164,6 +236,8 @@ pub struct TopKPool {
     pub stats: PoolStats,
     /// Show diagnostic output for database adds (-DG)
     show_db_adds: bool,
+    /// Ranking mode for eviction and output ordering
+    ranking_mode: RankingMode,
 }
 
 impl TopKPool {
@@ -179,11 +253,17 @@ impl TopKPool {
             accept_error: initial_max_error,
             stats: PoolStats::default(),
             show_db_adds: false,
+            ranking_mode: RankingMode::Complexity,
         }
     }
 
     /// Create a new pool with diagnostic options
-    pub fn new_with_diagnostics(capacity: usize, initial_max_error: f64, show_db_adds: bool) -> Self {
+    pub fn new_with_diagnostics(
+        capacity: usize,
+        initial_max_error: f64,
+        show_db_adds: bool,
+        ranking_mode: RankingMode,
+    ) -> Self {
         Self {
             capacity,
             heap: BinaryHeap::with_capacity(capacity + 1),
@@ -193,6 +273,7 @@ impl TopKPool {
             accept_error: initial_max_error,
             stats: PoolStats::default(),
             show_db_adds,
+            ranking_mode,
         }
     }
 
@@ -216,7 +297,7 @@ impl TopKPool {
         }
 
         // Insert
-        let entry = PoolEntry::new(m);
+        let entry = PoolEntry::new(m, self.ranking_mode);
         self.seen_eqn.insert(eqn_key);
         self.seen_lhs.insert(LhsKey::from_match(&entry.m));
 
@@ -237,7 +318,8 @@ impl TopKPool {
         // Update thresholds
         if is_exact {
             // Exact match: tighten best_error aggressively but keep a floor
-            self.best_error = EXACT_MATCH_TOLERANCE.max(self.best_error * BEST_ERROR_TIGHTEN_FACTOR);
+            self.best_error =
+                EXACT_MATCH_TOLERANCE.max(self.best_error * BEST_ERROR_TIGHTEN_FACTOR);
         } else if error < self.best_error {
             // Better approximation: tighten best_error
             self.best_error = error * BEST_ERROR_TIGHTEN_FACTOR - NEWTON_TOLERANCE;
@@ -296,33 +378,11 @@ impl TopKPool {
         true
     }
 
-    /// Get all matches, sorted by (exactness, error, complexity)
+    /// Get all matches, sorted by ranking mode.
     pub fn into_sorted(self) -> Vec<Match> {
+        let ranking_mode = self.ranking_mode;
         let mut matches: Vec<Match> = self.heap.into_iter().map(|e| e.m).collect();
-        matches.sort_by(|a, b| {
-            let a_exactness = if a.error.abs() < EXACT_MATCH_TOLERANCE {
-                0_u8
-            } else {
-                1_u8
-            };
-            let b_exactness = if b.error.abs() < EXACT_MATCH_TOLERANCE {
-                0_u8
-            } else {
-                1_u8
-            };
-
-            a_exactness
-                .cmp(&b_exactness)
-                .then_with(|| {
-                    a.error
-                        .abs()
-                        .partial_cmp(&b.error.abs())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .then_with(|| {
-                    a.complexity.cmp(&b.complexity)
-                })
-        });
+        matches.sort_by(|a, b| compare_matches(a, b, ranking_mode));
         matches
     }
 
@@ -407,5 +467,41 @@ mod tests {
         assert!(!pool.try_insert(make_match("2x*", "5", 0.0, 27)));
 
         assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn test_parity_score_prefers_operator_dense_form() {
+        let low_operator = make_match("2x*", "5", 1e-6, 10);
+        let high_operator = make_match("x1+", "3", 1e-6, 20);
+
+        let low_score = legacy_parity_score_match(&low_operator);
+        let high_score = legacy_parity_score_match(&high_operator);
+        assert!(
+            high_score < low_score,
+            "expected operator-dense form to have lower legacy parity score ({} vs {})",
+            high_score,
+            low_score
+        );
+    }
+
+    #[test]
+    fn test_parity_ranking_changes_ordering() {
+        let low_operator = make_match("2x*", "5", 1e-6, 10);
+        let high_operator = make_match("x1+", "3", 1e-6, 20);
+
+        // Complexity mode: simpler complexity first.
+        let mut complexity_pool =
+            TopKPool::new_with_diagnostics(10, 1.0, false, RankingMode::Complexity);
+        complexity_pool.try_insert(low_operator.clone());
+        complexity_pool.try_insert(high_operator.clone());
+        let complexity_sorted = complexity_pool.into_sorted();
+        assert_eq!(complexity_sorted[0].lhs.expr.to_postfix(), "2x*");
+
+        // Parity mode: legacy parity score first.
+        let mut parity_pool = TopKPool::new_with_diagnostics(10, 1.0, false, RankingMode::Parity);
+        parity_pool.try_insert(low_operator);
+        parity_pool.try_insert(high_operator);
+        let parity_sorted = parity_pool.into_sorted();
+        assert_eq!(parity_sorted[0].lhs.expr.to_postfix(), "x1+");
     }
 }

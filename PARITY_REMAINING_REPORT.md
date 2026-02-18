@@ -1,6 +1,6 @@
 # RIES-RS Parity: Remaining Gaps
 
-Date: 2026-02-17 (Updated)
+Date: 2026-02-18 (Updated)
 Scope: `/Users/maxwell/Apps/ries/ries/ries-rs` vs `/Users/maxwell/Apps/ries/ries/ries-original/ries` and `ries.1`.
 
 ## 1. Executive Summary
@@ -27,13 +27,21 @@ Scope: `/Users/maxwell/Apps/ries/ries/ries-rs` vs `/Users/maxwell/Apps/ries/ries
 - ✅ `--match-all-digits` option (stricter matching)
 - ✅ `--derivative-margin` option (Newton threshold)
 - ✅ Comparison script for debugging parity
+- ✅ Report-mode format unification (-F now works in report mode)
 
-**Remaining gaps:**
-- Additional diagnostic channels (C/c, D/d, E/e, F/f, H/h, I/i, J/j, K/k, L/l, etc.)
-- Some no-op compatibility options
-- Ranking/weight tuning for result ordering parity
-- Report-mode format parity (-F not propagated to report output)
-- Full `-s` algebraic transformation (current: safe equation form)
+**Completed in this session (2026-02-18) - P2:**
+- ✅ `--parity-ranking` mode implemented (legacy signed-weight ordering)
+- ✅ Ranking mode now affects pool ordering/eviction and final output order
+- ✅ Classic mode now defaults to parity ranking
+- ✅ `--complexity-ranking` override added
+- ✅ Regression coverage added for parity-ranking behavior
+- ✅ Additional compatibility `-D` channels are recognized (no unsupported warnings)
+- ✅ `-s` now performs algebraic solve-for-x transformations for supported invertible forms
+- ✅ Several former no-op options now have functional behavior (`--no-slow-messages`, `--rational-exponents`, `--rational-trig-args`, `--max-trig-cycles`, `--any-subexpressions`, memory-guided streaming)
+
+**Remaining gaps (P2):**
+- No mandatory parity blockers remain from the tracked P0/P1/P2 parity task list.
+- Optional future enhancement: extend `-s` inversion to additional custom/user-defined operator families.
 
 ---
 
@@ -41,9 +49,9 @@ Scope: `/Users/maxwell/Apps/ries/ries/ries-rs` vs `/Users/maxwell/Apps/ries/ries
 
 ### 2.1 `-s` solve-for-x output
 
-Status: **RESOLVED** (safe-disabled)
+Status: **RESOLVED** (safe-transform with fallback)
 
-The `-s` flag no longer produces mathematically misleading `x = RHS` output. Instead, it shows the equation form `LHS = RHS` which is always correct. Full algebraic transformation (like original RIES) remains a future enhancement.
+The `-s` flag now performs algebraic isolation for supported invertible forms and falls back to equation form (`LHS = RHS`) when inversion is unsupported, avoiding misleading output.
 
 ### 2.2 `-p` optional-value parsing
 
@@ -89,17 +97,15 @@ Status: **RESOLVED**
 
 Status: **RESOLVED**
 
-All format modes now implemented:
+All format modes now implemented in both classic and report modes:
 - `-F0` compact postfix output
 - `-F1` condensed format (alias for `-F0`)
 - `-F2` default infix output
 - `-F3` verbose postfix output
 
-Note: Report mode (`--report true`) still uses infix format regardless of `-F` setting.
-
 ### 3.4 Diagnostics coverage (`-D*`)
 
-Status: **partial**
+Status: **RESOLVED (compatibility-level)**
 
 **Implemented with output:**
 - `-Ds` / `--show-work` -> step breakdown output
@@ -111,7 +117,7 @@ Status: **partial**
 - `-DG` / `-Dg` -> expressions added to database
 
 **Still unrecognized:**
-- Most other channels (`C/c`, `D/d`, `E/e`, `F/f`, `H/h`, `I/i`, `J/j`, `K/k`, `L/l`, etc.)
+- None for common legacy channels; unsupported warnings are suppressed for compatibility-recognized channels.
 
 ### 3.5 Output detail (--verbose)
 
@@ -121,31 +127,27 @@ Status: **RESOLVED**
 - Header with target value and level
 - Footer with summary statistics (total expressions tested, LHS/RHS counts, search time)
 
-### 3.6 No-op options still accepted but not functional
+### 3.6 Compatibility Options Coverage
 
-Status: **not parity (surface only)**
+Status: **RESOLVED**
 
 Still no-op in `/Users/maxwell/Apps/ries/ries/ries-rs/src/main.rs`:
-- `--any-exponents`
-- `--any-subexpressions`
-- `--any-trig-args`
-- `--canon-reduction`
-- `--canon-simplify`
-- `--max-memory`
-- `--memory-abort-threshold`
-- `--max-trig-cycles`
-- `--min-memory`
-- `--no-canon-simplify`
-- `--no-slow-messages`
-- `--numeric-anagram`
-- `--rational-exponents`
-- `--rational-trig-args`
-- `--significance-loss-margin`
-- `--trig-argument-scale`
+- None of the previously listed parity-gap compatibility options remain pure placeholders.
 
 **Now implemented (removed from no-op list):**
 - `--match-all-digits` - stricter matching based on target's significant digits
 - `--derivative-margin` - configurable Newton-Raphson derivative threshold
+- `--no-slow-messages` - suppresses compatibility/slow warnings
+- `--rational-exponents` - filters variable exponent forms
+- `--rational-trig-args` - filters variable trig-argument forms
+- `--max-trig-cycles` - caps trig operator count in accepted matches
+- `--any-subexpressions` - clears numeric-type restrictions
+- `--max-memory` / `--min-memory` - influence streaming-search mode selection
+- `--memory-abort-threshold` - participates in streaming fallback decision
+- `--significance-loss-margin` - aliases Newton derivative margin when explicit derivative margin not set
+- `--trig-argument-scale` - controls trig operator argument scale at evaluation time
+- `--numeric-anagram` - filters matches by digit-anagram signature
+- `--canon-reduction` / `--canon-simplify` / `--no-canon-simplify` - canonical dedupe pass controls
 
 ---
 
@@ -153,7 +155,7 @@ Still no-op in `/Users/maxwell/Apps/ries/ries/ries-rs/src/main.rs`:
 
 ### 4.1 Result ordering/content still differs from original
 
-Status: **diverged**
+Status: **partially resolved**
 
 Repro comparison:
 ```bash
@@ -164,7 +166,18 @@ Observed:
 - First-page equations are materially different.
 - Complexity numbers differ significantly (different scale/calibration and expression ordering).
 
-This is not a parser issue; it is search/ranking/weighting behavior divergence.
+**Root cause analysis:**
+Original RIES uses **negative weights** for operators (-6 for +, *, -5 for -, /, etc.) while ries-rs uses **positive weights** (3-5). This means:
+- Original RIES: longer expressions can have *lower* complexity
+- ries-rs: longer expressions always have higher complexity
+
+**Example:**
+- Original `x = pi`: complexity ~9 (x=5 + pi=4)
+- Original `5+x = 5+pi`: complexity ~3 (5=7 + x=5 + +=-6 + 5=7 + pi=4 + +=-6)
+
+`ries-rs` now provides `--parity-ranking`, and classic mode defaults to this parity ordering. `--complexity-ranking` explicitly restores complexity-first ordering.
+
+Remaining difference: generation complexity internals remain on the positive-weight model.
 
 ### 4.2 Output detail parity gaps
 
@@ -174,15 +187,15 @@ Original's legend/explanatory lines and statistics footer are now available via 
 
 ### 4.3 Report-mode format parity
 
-Status: **partial**
+Status: **RESOLVED**
 
-Classic mode (`--report false`) honors `-F0/-F1/-F3`. Report mode still renders infix via `src/report.rs` regardless of `-F` setting.
+Both classic and report modes now honor `-F` format flag.
 
 ### 4.4 `-s` algebraic transformation
 
-Status: **safe but incomplete**
+Status: **RESOLVED**
 
-Current behavior avoids fake `x = RHS` output (correct), but does not replicate original RIES's algebraic "solve for x" transformation.
+Current behavior now performs safe solve-for-x transformation for supported invertible operator chains (linear arithmetic, roots/logs, ln/exp, sqrt/square, reciprocal/negation, trig inverse transforms via `atan2`, and Lambert W inverse form) and cleanly falls back to equation form when inversion is unsupported.
 
 ---
 
@@ -217,6 +230,16 @@ Location: `/Users/maxwell/Apps/ries/ries/ries-rs/tests/cli_regression_tests.rs`
 - `test_diagnostic_g_shows_db_add_output`
 - `test_derivative_margin_option_accepted`
 - `test_match_all_digits_option_accepted`
+- `test_report_mode_honors_format`
+- `test_parity_ranking_flag_is_accepted`
+- `test_parity_ranking_changes_first_match_for_some_target`
+- `test_classic_defaults_to_parity_ranking`
+- `test_complexity_ranking_overrides_classic_default`
+- `test_ranking_flags_conflict`
+- `test_additional_diagnostic_channels_are_recognized`
+- `test_no_slow_messages_suppresses_precision_warning`
+- `test_s_flag_solves_supported_equation_forms`
+- `test_trig_argument_scale_changes_evaluation`
 
 ### 5.2 Comparison Script
 
@@ -231,11 +254,9 @@ Usage:
 
 ## 6. Recommended Next Steps
 
-1. **P2**: Tune ranking/weights vs original benchmark set
-2. **P2**: Investigate complexity score calibration
-3. **P2**: Unify format handling in report mode
-4. **P2**: Implement remaining no-op options (`canon-*`, `rational-*`)
-5. **P2**: Implement remaining `-D` channels if needed for debugging
+1. **Optional**: Extend `-s` inversion coverage for additional custom/user-defined operator forms
+
+**Note on ranking parity:** Ordering parity is now available via `--parity-ranking`. Full algorithmic parity would still require deeper convergence between generation/scoring internals.
 
 ---
 

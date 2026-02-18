@@ -12,6 +12,7 @@ use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::{UdfOp, UserFunction};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Result of evaluating an expression
 #[derive(Debug, Clone, Copy)]
@@ -93,6 +94,26 @@ pub mod constants {
     pub const APERY: f64 = 1.202_056_903_159_594_2;
     /// Catalan's constant G
     pub const CATALAN: f64 = 0.915_965_594_177_219;
+}
+
+fn trig_argument_scale_bits() -> &'static AtomicU64 {
+    static SCALE_BITS: AtomicU64 = AtomicU64::new(std::f64::consts::PI.to_bits());
+    &SCALE_BITS
+}
+
+/// Set global trig argument scale used by `sinpi/cospi/tanpi` symbols.
+///
+/// The default is π, matching original `sinpi(x) = sin(πx)` semantics.
+/// Values must be finite and non-zero to be accepted.
+pub fn set_trig_argument_scale(scale: f64) {
+    if scale.is_finite() && scale != 0.0 {
+        trig_argument_scale_bits().store(scale.to_bits(), Ordering::Relaxed);
+    }
+}
+
+#[inline]
+fn trig_argument_scale() -> f64 {
+    f64::from_bits(trig_argument_scale_bits().load(Ordering::Relaxed))
 }
 
 /// Stack entry for evaluation with derivative tracking
@@ -611,26 +632,29 @@ fn eval_unary(sym: Symbol, a: StackEntry) -> Result<StackEntry, EvalError> {
 
         // sin(π*a), d(sin(πa))/dx = π*cos(πa)*da/dx
         SinPi => {
-            let val = (constants::PI * a.val).sin();
-            let deriv = constants::PI * (constants::PI * a.val).cos() * a.deriv;
+            let scale = trig_argument_scale();
+            let val = (scale * a.val).sin();
+            let deriv = scale * (scale * a.val).cos() * a.deriv;
             (val, deriv, NumType::Transcendental)
         }
 
         // cos(π*a), d(cos(πa))/dx = -π*sin(πa)*da/dx
         CosPi => {
-            let val = (constants::PI * a.val).cos();
-            let deriv = -constants::PI * (constants::PI * a.val).sin() * a.deriv;
+            let scale = trig_argument_scale();
+            let val = (scale * a.val).cos();
+            let deriv = -scale * (scale * a.val).sin() * a.deriv;
             (val, deriv, NumType::Transcendental)
         }
 
         // tan(π*a), d(tan(πa))/dx = π*sec²(πa)*da/dx
         TanPi => {
-            let cos_val = (constants::PI * a.val).cos();
+            let scale = trig_argument_scale();
+            let cos_val = (scale * a.val).cos();
             if cos_val.abs() < 1e-10 {
                 return Err(EvalError::Overflow);
             }
-            let val = (constants::PI * a.val).tan();
-            let deriv = constants::PI * a.deriv / (cos_val * cos_val);
+            let val = (scale * a.val).tan();
+            let deriv = scale * a.deriv / (cos_val * cos_val);
             (val, deriv, NumType::Transcendental)
         }
 

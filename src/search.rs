@@ -3,7 +3,7 @@
 //! Finds equations by matching LHS and RHS expressions.
 
 use crate::expr::EvaluatedExpr;
-use crate::pool::TopKPool;
+use crate::pool::{RankingMode, TopKPool};
 use crate::profile::UserConstant;
 use crate::thresholds::{
     ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
@@ -180,6 +180,8 @@ pub struct SearchConfig {
     /// Threshold below which derivative is considered degenerate in Newton-Raphson
     /// If |derivative| < this threshold, Newton-Raphson is skipped
     pub derivative_margin: f64,
+    /// Ranking mode for pool ordering/eviction
+    pub ranking_mode: RankingMode,
 }
 
 impl Default for SearchConfig {
@@ -204,6 +206,7 @@ impl Default for SearchConfig {
             show_db_adds: false,
             match_all_digits: false,
             derivative_margin: DEGENERATE_DERIVATIVE,
+            ranking_mode: RankingMode::Complexity,
         }
     }
 }
@@ -526,6 +529,7 @@ impl ExprDatabase {
             config.max_matches,
             initial_max_error,
             config.show_db_adds,
+            config.ranking_mode,
         );
 
         // Sort LHS by complexity so simpler expressions are processed first
@@ -751,7 +755,16 @@ fn newton_raphson(
     initial_x: f64,
     max_iterations: usize,
 ) -> Option<f64> {
-    newton_raphson_with_constants(lhs, rhs_value, initial_x, max_iterations, &[], &[], false, DEGENERATE_DERIVATIVE)
+    newton_raphson_with_constants(
+        lhs,
+        rhs_value,
+        initial_x,
+        max_iterations,
+        &[],
+        &[],
+        false,
+        DEGENERATE_DERIVATIVE,
+    )
 }
 
 /// Newton-Raphson with user constants support
@@ -789,10 +802,7 @@ fn newton_raphson_with_constants(
         x -= delta;
 
         if show_newton {
-            eprintln!(
-                "  [newton] iter={} x={:.10} dx={:.10e}",
-                iter, x, delta
-            );
+            eprintln!("  [newton] iter={} x={:.10} dx={:.10e}", iter, x, delta);
         }
 
         if delta.abs() < tolerance * (1.0 + x.abs()) {
@@ -815,7 +825,10 @@ fn newton_raphson_with_constants(
         Some(x)
     } else {
         if show_newton {
-            eprintln!("  [newton] failed to converge after {} iterations", max_iterations);
+            eprintln!(
+                "  [newton] failed to converge after {} iterations",
+                max_iterations
+            );
         }
         None
     }
@@ -962,6 +975,7 @@ pub fn search_streaming_with_config(
         search_config.max_matches,
         initial_max_error,
         search_config.show_db_adds,
+        search_config.ranking_mode,
     );
 
     // Build RHS database first using streaming
@@ -1227,6 +1241,7 @@ pub fn search_one_sided_with_stats_and_config(
         config.max_matches,
         initial_max_error,
         config.show_db_adds,
+        config.ranking_mode,
     );
     let mut stats = SearchStats::new();
     let mut early_exit = false;
