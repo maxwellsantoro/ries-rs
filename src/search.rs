@@ -595,6 +595,12 @@ impl ExprDatabase {
                     continue;
                 }
                 stats.candidates_tested += 1;
+                if config.show_match_checks {
+                    eprintln!(
+                        "  [match] checking lhs={:.6} rhs={:.6}",
+                        lhs.value, rhs.value
+                    );
+                }
 
                 // Compute initial error estimate (coarse filter)
                 let val_diff = lhs.value - rhs.value;
@@ -1006,6 +1012,12 @@ pub fn search_streaming_with_config(
                     continue;
                 }
                 stats.candidates_tested += 1;
+                if search_config.show_match_checks {
+                    eprintln!(
+                        "  [match] checking lhs={:.6} rhs={:.6}",
+                        lhs.value, rhs.value
+                    );
+                }
                 let val_diff = (lhs.value - rhs.value).abs();
                 if val_diff < 0.01 && pool.would_accept(0.0, true) {
                     let m = Match {
@@ -1040,6 +1052,12 @@ pub fn search_streaming_with_config(
                 continue;
             }
             stats.candidates_tested += 1;
+            if search_config.show_match_checks {
+                eprintln!(
+                    "  [match] checking lhs={:.6} rhs={:.6}",
+                    lhs.value, rhs.value
+                );
+            }
 
             // Compute initial error estimate (coarse filter)
             let val_diff = lhs.value - rhs.value;
@@ -1196,6 +1214,12 @@ pub fn search_one_sided_with_stats_and_config(
             continue;
         }
         stats.candidates_tested += 1;
+        if config.show_match_checks {
+            eprintln!(
+                "  [match] checking lhs={:.6} rhs={:.6}",
+                lhs.value, rhs.value
+            );
+        }
 
         let error = rhs.value - config.target;
         let is_exact = error.abs() < EXACT_MATCH_TOLERANCE;
