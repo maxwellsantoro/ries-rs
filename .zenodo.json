@@ -1,0 +1,71 @@
+{
+  "title": "ries-rs: A Rust Implementation of the RIES Inverse Equation Solver",
+  "description": "RIES-RS is a Rust implementation of Robert Munafo's RIES (RILYBOT Inverse Equation Solver). Given a numeric target value, it searches for algebraic equations that have the target as a solution. Features include parallel search, automatic differentiation for Newton-Raphson refinement, user-defined constants and functions, multiple output formats, and domain-specific presets for mathematics, physics, and number theory.",
+  "license": {
+    "id": "MIT"
+  },
+  "keywords": [
+    "inverse symbolic calculator",
+    "equation solver",
+    "algebraic equations",
+    "mathematical constants",
+    "PSLQ",
+    "integer relations",
+    "Newton-Raphson",
+    "automatic differentiation",
+    "Rust"
+  ],
+  "creators": [
+    {
+      "name": "RIES Contributors",
+      "affiliation": "Open Source Community"
+    }
+  ],
+  "contributors": [
+    {
+      "name": "Munafo, Robert",
+      "type": "Other",
+      "orcid": "0000-0000-0000-0000",
+      "affiliation": "Author of original RIES"
+    }
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://mrob.com/pub/ries/",
+      "relation": "isDerivedFrom",
+      "resource_type": "software",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://github.com/clsn/ries",
+      "relation": "isDerivedFrom",
+      "resource_type": "software",
+      "scheme": "url"
+    }
+  ],
+  "references": [
+    "Munafo, R. (2010). RIES - Find Algebraic Equations, Given Their Solution. https://mrob.com/pub/ries/",
+    "Ferguson, H.R.P., & Bailey, D.H. (1992). A Polynomial Time, Numerically Stable Integer Relation Algorithm. RNR-91-032.",
+    "Stoutemyer, D.R. (2024). Computing with No Machine Constants, Only Constructive Axioms. arXiv:2402.03304"
+  ],
+  "communities": [
+    {
+      "identifier": "software"
+    }
+  ],
+  "grants": [],
+  "subjects": [
+    {
+      "term": "Computer Science - Symbolic Computation",
+      "identifier": "cs.SC"
+    },
+    {
+      "term": "Mathematics - Number Theory",
+      "identifier": "math.NT"
+    }
+  ],
+  "language": "eng",
+  "access_right": "open",
+  "upload_type": "software",
+  "notes": "This software implements an inverse symbolic calculator similar to the original RIES by Robert Munafo. It can find algebraic equations given their numeric solutions, making it useful for experimental mathematics, physics, and number theory research. The implementation includes PSLQ integer relation detection, stability analysis for impostor detection, and high-precision verification."
+}
