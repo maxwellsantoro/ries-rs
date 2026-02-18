@@ -773,9 +773,28 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
                 return Err(EvalError::DivisionByZero);
             }
             let exp = 1.0 / a.val;
-            if b.val < 0.0 && (a.val.round() as i64) % 2 == 0 {
-                return Err(EvalError::SqrtDomain);
+
+            // For negative radicands, we need to check if the index is an odd integer
+            // Non-integer indices of negative numbers have no real value
+            if b.val < 0.0 {
+                // Check if the index is close to an integer
+                let rounded = a.val.round();
+                let is_integer = (a.val - rounded).abs() < 1e-10;
+
+                if !is_integer {
+                    // Non-integer index of negative number - no real value
+                    return Err(EvalError::SqrtDomain);
+                }
+
+                // Check if the integer is odd (odd roots of negatives are real)
+                let int_val = rounded as i64;
+                if int_val % 2 == 0 {
+                    // Even integer root of negative - no real value
+                    return Err(EvalError::SqrtDomain);
+                }
+                // Odd integer root of negative is OK
             }
+
             let val = if b.val < 0.0 {
                 // Odd root of negative number
                 -((-b.val).powf(exp))
