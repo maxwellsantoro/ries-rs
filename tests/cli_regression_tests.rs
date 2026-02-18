@@ -881,3 +881,21 @@ fn test_diagnostic_b_recognized() {
     // -DB should not warn about unsupported channel
     assert!(!stderr.to_lowercase().contains("unsupported"));
 }
+
+#[test]
+fn test_report_mode_honors_format() {
+    // Report mode with -F0 should show postfix format
+    let (stdout0, _) = run_ries(&["2.5", "-F0", "--max-matches", "1"]);
+    // Report mode with -F2 should show infix format
+    let (stdout2, _) = run_ries(&["2.5", "-F2", "--max-matches", "1"]);
+
+    // -F0 should show postfix notation (compact postfix like "x52/" without spaces)
+    // Classic mode shows "52/" for 5/2, report mode should do the same
+    let has_postfix_compact = stdout0.contains("x52/") || stdout0.contains("52/");
+    // -F2 should show infix notation (like "5/2" with mathematical operators)
+    let has_infix = stdout2.contains("5/2") || stdout2.contains("x = ");
+
+    // Both formats should work correctly
+    assert!(has_postfix_compact, "-F0 should produce postfix compact output in report mode\n-F0 output:\n{}", stdout0);
+    assert!(has_infix, "-F2 should produce infix output in report mode\n-F2 output:\n{}", stdout2);
+}

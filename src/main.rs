@@ -1520,11 +1520,13 @@ fn main() {
     );
 
     // Display matches
+    // Parse the output format once for both classic and report modes
+    let output_format = parse_display_format(&args.format);
+
     if matches.is_empty() {
         println!("   No matches found.");
     } else if !use_report {
         // Classic mode: single list sorted by complexity
-        let output_format = parse_display_format(&args.format);
         let shown: Vec<&search::Match> = matches.iter().take(effective_max_matches).collect();
         for m in shown.iter().copied() {
             let show_solve = args.solve && !args.no_solve;
@@ -1569,8 +1571,16 @@ fn main() {
             report_config = report_config.without_stable();
         }
 
+        // Convert main.rs DisplayFormat to report::DisplayFormat
+        let report_format = match output_format {
+            DisplayFormat::Infix(fmt) => report::DisplayFormat::Infix(fmt),
+            DisplayFormat::PostfixCompact => report::DisplayFormat::PostfixCompact,
+            DisplayFormat::PostfixVerbose => report::DisplayFormat::PostfixVerbose,
+            DisplayFormat::Condensed => report::DisplayFormat::Condensed,
+        };
+
         let report = Report::generate(matches, target, &report_config);
-        report.print(args.absolute, args.solve && !args.no_solve);
+        report.print(args.absolute, args.solve && !args.no_solve, report_format);
     }
 
     // Print footer - verbose or standard
