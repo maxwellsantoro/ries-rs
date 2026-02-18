@@ -777,3 +777,9 @@ fn test_f1_condensed_format_accepted() {
         stdout
     );
 }
+
+#[test]
+fn test_verbose_output_shows_target() {
+    let (stdout, _stderr) = run_ries(&["2.5", "--verbose", "--report", "false", "--max-matches", "1"]);
+    assert!(stdout.contains("Target:") || stdout.contains("target"), "expected --verbose to show target in header\n{}", stdout);
+}

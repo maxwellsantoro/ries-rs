@@ -345,6 +345,10 @@ struct Args {
     /// Compatibility option (currently no-op)
     #[arg(long = "trig-argument-scale")]
     trig_argument_scale: Option<f64>,
+
+    /// Show verbose output with header and footer details
+    #[arg(long)]
+    verbose: bool,
 }
 
 /// Parse a user constant from CLI argument
@@ -1478,6 +1482,11 @@ fn main() {
 
     let elapsed = start.elapsed();
 
+    // Print verbose header if requested
+    if args.verbose {
+        print_header(target, level_value as i32);
+    }
+
     // Print expression counts (always shown)
     println!(
         "Generated {} LHS and {} RHS expressions",
@@ -1553,6 +1562,13 @@ fn format_value(v: f64) -> String {
     } else {
         format!("{:.10}", v)
     }
+}
+
+fn print_header(target: f64, level: i32) {
+    println!();
+    println!("  Target: {}", target);
+    println!("  Level: {}", level);
+    println!();
 }
 
 /// Parse output format from string
