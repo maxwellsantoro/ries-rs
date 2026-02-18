@@ -28,8 +28,8 @@
 //! });
 //! ```
 
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use serde::{Serialize, Deserialize};
 
 /// A matched equation from the search
 #[wasm_bindgen]
@@ -138,33 +138,87 @@ impl Default for SearchOptions {
     }
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+struct SearchOptionsInput {
+    level: u32,
+    #[serde(rename = "maxMatches", alias = "max_matches")]
+    max_matches: usize,
+    preset: Option<String>,
+}
+
+impl Default for SearchOptionsInput {
+    fn default() -> Self {
+        Self {
+            level: 2,
+            max_matches: 16,
+            preset: None,
+        }
+    }
+}
+
+fn parse_search_options(options: Option<JsValue>) -> Result<SearchOptionsInput, JsValue> {
+    match options {
+        None => Ok(SearchOptionsInput::default()),
+        Some(value) if value.is_null() || value.is_undefined() => Ok(SearchOptionsInput::default()),
+        Some(value) => serde_wasm_bindgen::from_value(value)
+            .map_err(|e| JsValue::from_str(&format!("Invalid search options: {}", e))),
+    }
+}
+
+fn apply_profile_overrides(profile: &crate::profile::Profile) {
+    use std::collections::HashMap;
+
+    let mut weight_overrides: HashMap<crate::symbol::Symbol, u32> = profile.symbol_weights.clone();
+    for (idx, user_constant) in profile.constants.iter().enumerate().take(16) {
+        if let Some(sym) = crate::symbol::Symbol::from_byte(128 + idx as u8) {
+            weight_overrides.insert(sym, user_constant.weight);
+        }
+    }
+    for (idx, user_function) in profile.functions.iter().enumerate().take(16) {
+        if let Some(sym) = crate::symbol::Symbol::from_byte(144 + idx as u8) {
+            weight_overrides.insert(sym, user_function.weight as u32);
+        }
+    }
+    crate::symbol::set_weight_overrides(weight_overrides);
+
+    let mut name_overrides: HashMap<crate::symbol::Symbol, String> = profile.symbol_names.clone();
+    for (idx, user_constant) in profile.constants.iter().enumerate().take(16) {
+        if let Some(sym) = crate::symbol::Symbol::from_byte(128 + idx as u8) {
+            name_overrides.insert(sym, user_constant.name.clone());
+        }
+    }
+    for (idx, user_function) in profile.functions.iter().enumerate().take(16) {
+        if let Some(sym) = crate::symbol::Symbol::from_byte(144 + idx as u8) {
+            name_overrides.insert(sym, user_function.name.clone());
+        }
+    }
+    crate::symbol::set_name_overrides(name_overrides);
+}
+
 /// Build a GenConfig from simple parameters
 fn build_gen_config(
     max_lhs_complexity: u32,
     max_rhs_complexity: u32,
-    _preset: Option<&str>,
+    profile: &crate::profile::Profile,
 ) -> crate::gen::GenConfig {
     use crate::symbol::{NumType, Symbol};
     use std::collections::HashMap;
 
-    // Start with default symbols
-    let constants: Vec<Symbol> = vec![
-        Symbol::One, Symbol::Two, Symbol::Three, Symbol::Four, Symbol::Five,
-        Symbol::Six, Symbol::Seven, Symbol::Eight, Symbol::Nine,
-        Symbol::Pi, Symbol::E, Symbol::Phi, Symbol::Gamma,
-        Symbol::Apery, Symbol::Catalan, Symbol::Plastic,
-    ];
+    let mut constants: Vec<Symbol> = Symbol::constants().to_vec();
+    let mut unary_ops: Vec<Symbol> = Symbol::unary_ops().to_vec();
+    let binary_ops: Vec<Symbol> = Symbol::binary_ops().to_vec();
 
-    let unary_ops: Vec<Symbol> = vec![
-        Symbol::Neg, Symbol::Recip, Symbol::Sqrt, Symbol::Square,
-        Symbol::Ln, Symbol::Exp,
-        Symbol::SinPi, Symbol::CosPi, Symbol::TanPi,
-        Symbol::LambertW,
-    ];
-
-    let binary_ops: Vec<Symbol> = vec![
-        Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div, Symbol::Pow
-    ];
+    for idx in 0..profile.constants.len().min(16) {
+        if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
+            constants.push(sym);
+        }
+    }
+    for idx in 0..profile.functions.len().min(16) {
+        if let Some(sym) = Symbol::from_byte(144 + idx as u8) {
+            unary_ops.push(sym);
+        }
+    }
 
     crate::gen::GenConfig {
         max_lhs_complexity,
@@ -181,8 +235,8 @@ fn build_gen_config(
         min_num_type: NumType::Transcendental,
         generate_lhs: true,
         generate_rhs: true,
-        user_constants: vec![],
-        user_functions: vec![],
+        user_constants: profile.constants.clone(),
+        user_functions: profile.functions.clone(),
         show_pruned_arith: false,
     }
 }
@@ -200,8 +254,8 @@ fn build_gen_config(
 /// console.log(results[0].rhs); // "pi"
 /// ```
 #[wasm_bindgen]
-pub fn search(target: f64, options: Option<SearchOptions>) -> Vec<WasmMatch> {
-    let opts = options.unwrap_or_default();
+pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, JsValue> {
+    let opts = parse_search_options(options)?;
 
     // Convert level to complexity limits
     let base_lhs: u32 = 10;
@@ -210,8 +264,20 @@ pub fn search(target: f64, options: Option<SearchOptions>) -> Vec<WasmMatch> {
     let max_lhs_complexity = base_lhs + level_factor;
     let max_rhs_complexity = base_rhs + level_factor;
 
+    let mut profile = crate::profile::Profile::new();
+    if let Some(preset_name) = opts.preset.as_deref() {
+        let parsed = crate::presets::Preset::from_str(preset_name).ok_or_else(|| {
+            JsValue::from_str(&format!(
+                "Unknown preset '{}'. Use listPresets() for available options.",
+                preset_name
+            ))
+        })?;
+        profile = profile.merge(parsed.to_profile());
+    }
+    apply_profile_overrides(&profile);
+
     // Build generation config
-    let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, opts.preset.as_deref());
+    let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, &profile);
 
     // Build search config
     let max_error = (target.abs() * 0.01).max(1e-12);
@@ -223,8 +289,8 @@ pub fn search(target: f64, options: Option<SearchOptions>) -> Vec<WasmMatch> {
         stop_below: None,
         zero_value_threshold: 1e-4,
         newton_iterations: 15,
-        user_constants: vec![],
-        user_functions: vec![],
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
         refine_with_newton: true,
         rhs_allowed_symbols: None,
         rhs_excluded_symbols: None,
@@ -239,27 +305,33 @@ pub fn search(target: f64, options: Option<SearchOptions>) -> Vec<WasmMatch> {
     };
 
     // Perform search (use sequential for WASM - no rayon in browser)
-    let (matches, _stats) = crate::search::search_with_stats_and_config(&gen_config, &search_config);
+    let (matches, _stats) =
+        crate::search::search_with_stats_and_config(&gen_config, &search_config);
 
     // Convert to WasmMatch and limit to max_matches
-    matches
+    Ok(matches
         .into_iter()
         .take(opts.max_matches)
         .map(WasmMatch::from)
-        .collect()
+        .collect())
 }
 
 /// Get list of available domain presets
 ///
 /// @returns Object mapping preset names to descriptions
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = listPresets)]
 pub fn list_presets() -> Result<JsValue, JsValue> {
-    let presets: Vec<(&str, &str)> = crate::presets::Preset::all()
+    let presets: std::collections::BTreeMap<String, String> = crate::presets::Preset::all()
         .iter()
-        .map(|p| (p.name(), p.description()))
+        .map(|p| (p.name().to_string(), p.description().to_string()))
         .collect();
 
     serde_wasm_bindgen::to_value(&presets).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+#[wasm_bindgen(js_name = list_presets)]
+pub fn list_presets_compat() -> Result<JsValue, JsValue> {
+    list_presets()
 }
 
 /// Get version information

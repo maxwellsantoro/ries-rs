@@ -485,7 +485,7 @@ console.log(version()); // "0.1.0"
 | `x_value` | number | Solved value of x |
 | `error` | number | Error (x_value - target) |
 | `complexity` | number | Complexity score (lower = simpler) |
-| `is_exact` | boolean | True if error < 1e-12 |
+| `is_exact` | boolean | True if error < 1e-14 |
 
 #### SearchOptions
 
