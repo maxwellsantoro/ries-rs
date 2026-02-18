@@ -31,7 +31,38 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-/// A matched equation from the search
+/// A matched equation from the search.
+///
+/// Each match represents an equation of the form `lhs = rhs` where `lhs`
+/// contains the variable `x` and `rhs` contains only constants. The equation
+/// is solved such that `x` approximates the target value.
+///
+/// Attributes
+/// ----------
+/// lhs : str
+///     Left-hand side expression in infix notation (contains x)
+/// rhs : str
+///     Right-hand side expression in infix notation (constants only)
+/// lhs_postfix : str
+///     Left-hand side expression in postfix (RPN) notation
+/// rhs_postfix : str
+///     Right-hand side expression in postfix (RPN) notation
+/// x_value : float
+///     The solved value of x that satisfies the equation
+/// error : float
+///     The difference between x_value and the original target
+/// complexity : int
+///     Complexity score (lower = simpler expression)
+/// is_exact : bool
+///     True if the match is within exact match tolerance (< 1e-12)
+///
+/// Examples
+/// --------
+/// >>> m = PyMatch(lhs='x', rhs='pi', x_value=3.14159..., error=8.98e-11, complexity=14)
+/// >>> print(m)
+/// x = pi  [error: 8.98e-11] {14}
+/// >>> m.to_dict()
+/// {'lhs': 'x', 'rhs': 'pi', 'x_value': 3.14159..., ...}
 #[pyclass]
 #[derive(Clone)]
 pub struct PyMatch {
@@ -77,7 +108,20 @@ impl PyMatch {
         )
     }
 
-    /// Convert to dictionary
+    /// Convert the match to a Python dictionary.
+    ///
+    /// Returns
+    /// -------
+    /// dict
+    ///     Dictionary with keys: lhs, rhs, lhs_postfix, rhs_postfix,
+    ///     x_value, error, complexity, is_exact
+    ///
+    /// Examples
+    /// --------
+    /// >>> m.to_dict()
+    /// {'lhs': 'x', 'rhs': 'pi', 'lhs_postfix': 'x', 'rhs_postfix': 'p',
+    ///  'x_value': 3.14159..., 'error': 8.98e-11, 'complexity': 14,
+    ///  'is_exact': True}
     fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let dict = PyDict::new_bound(py);
         dict.set_item("lhs", &self.lhs)?;

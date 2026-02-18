@@ -321,6 +321,16 @@ for name, desc in presets.items():
 print(ries_rs.version())
 ```
 
+#### search() Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `target` | float | required | The target value to find equations for |
+| `level` | int | 2 | Search depth (0-5). Higher = more expressions searched |
+| `max_matches` | int | 16 | Maximum number of matches to return |
+| `preset` | str | None | Domain preset: "analytic-nt", "elliptic", "combinatorics", "physics", "number-theory", "calculus" |
+| `parallel` | bool | True | Use parallel search (recommended) |
+
 #### PyMatch Properties
 
 | Property | Type | Description |
@@ -333,6 +343,79 @@ print(ries_rs.version())
 | `error` | float | Error (x_value - target) |
 | `complexity` | int | Complexity score (lower = simpler) |
 | `is_exact` | bool | True if error < 1e-12 |
+
+#### PyMatch Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `to_dict()` | dict | Convert match to a Python dictionary |
+| `__repr__()` | str | Developer-friendly representation |
+| `__str__()` | str | Human-readable string with equation and error |
+
+#### Python Examples
+
+**Find equations for mathematical constants:**
+```python
+import ries_rs
+
+# Find equations for π
+for m in ries_rs.search(3.141592653589793, level=2):
+    print(f"{m.lhs} = {m.rhs}  [{m.error:.2e}]")
+
+# Find equations for Euler's number
+for m in ries_rs.search(2.718281828459045, level=3):
+    print(m)
+```
+
+**Use domain presets for targeted searches:**
+```python
+# Physics preset includes common physical constants
+results = ries_rs.search(137.035999, preset="physics", level=2)
+
+# Number theory preset focuses on integer/rational relationships
+results = ries_rs.search(2.678938534707747, preset="number-theory")
+```
+
+**Export results for analysis:**
+```python
+import json
+
+results = ries_rs.search(1.618033988749895)  # Golden ratio
+
+# Convert to list of dicts for JSON export
+data = [m.to_dict() for m in results]
+print(json.dumps(data, indent=2))
+```
+
+**Filter results by quality:**
+```python
+results = ries_rs.search(2.5066282746310002, level=4, max_matches=50)
+
+# Get only exact matches
+exact = [m for m in results if m.is_exact]
+
+# Get matches with error below threshold
+good = [m for m in results if abs(m.error) < 1e-10]
+
+# Get simplest matches
+simplest = sorted(results, key=lambda m: m.complexity)[:10]
+```
+
+#### Troubleshooting
+
+**ImportError: cannot import name 'ries_rs'**
+- Make sure you built with maturin: `maturin develop --features python`
+- Check that you're using the same Python environment where maturin was run
+
+**Build fails with linking errors**
+- Ensure Python development headers are installed:
+  - Ubuntu/Debian: `sudo apt install python3-dev`
+  - macOS: `xcode-select --install`
+  - Windows: Install Python from python.org (includes dev headers)
+
+**Performance is slower than CLI**
+- Make sure `parallel=True` (default)
+- For batch processing, reuse results rather than calling search multiple times
 
 ## How to Cite
 
