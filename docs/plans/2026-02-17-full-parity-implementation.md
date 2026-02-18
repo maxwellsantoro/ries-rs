@@ -1,5 +1,7 @@
 # Full Parity Implementation Plan
 
+> Historical planning document: paths, repository metadata, and license snippets in this file reflect its drafting date and may be outdated. Current source-of-truth is `Cargo.toml`, `README.md`, and `src/`.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Achieve full parity between ries-rs and original RIES across output formatting, diagnostics, algorithm options, and search quality.

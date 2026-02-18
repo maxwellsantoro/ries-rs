@@ -1,7 +1,7 @@
 # RIES-RS Parity: Remaining Gaps
 
 Date: 2026-02-18 (Updated)
-Scope: `/Users/maxwell/Apps/ries/ries/ries-rs` vs `/Users/maxwell/Apps/ries/ries/ries-original/ries` and `ries.1`.
+Scope: `ries-rs` vs a reference original `ries` binary and `ries.1`.
 
 ## 1. Executive Summary
 
@@ -131,7 +131,7 @@ Status: **RESOLVED**
 
 Status: **RESOLVED**
 
-Still no-op in `/Users/maxwell/Apps/ries/ries/ries-rs/src/main.rs`:
+Still no-op in `src/main.rs`:
 - None of the previously listed parity-gap compatibility options remain pure placeholders.
 
 **Now implemented (removed from no-op list):**
@@ -203,7 +203,7 @@ Current behavior now performs safe solve-for-x transformation for supported inve
 
 ### 5.1 CLI Regression Tests - Comprehensive
 
-Location: `/Users/maxwell/Apps/ries/ries/ries-rs/tests/cli_regression_tests.rs`
+Location: `tests/cli_regression_tests.rs` (harness) and `tests/cli/*.rs` (topic modules)
 
 **Tests added in earlier session:**
 - `test_s_flag_shows_equation_form_not_misleading_x_equals`
@@ -243,11 +243,13 @@ Location: `/Users/maxwell/Apps/ries/ries/ries-rs/tests/cli_regression_tests.rs`
 
 ### 5.2 Comparison Script
 
-Location: `/Users/maxwell/Apps/ries/ries/ries-rs/tests/compare_with_original.sh`
+Location: `tests/compare_with_original.sh`
 
 Usage:
 ```bash
 ./tests/compare_with_original.sh [target] [level] [max_matches]
+# optional arg 4: /path/to/original/ries
+# or set RIES_ORIGINAL_BIN=/path/to/original/ries
 ```
 
 ---

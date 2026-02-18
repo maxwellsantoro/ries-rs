@@ -1,5 +1,7 @@
 # RIES-RS Code Quality Improvements Design
 
+> Historical planning document: paths, repository metadata, and license snippets in this file reflect its drafting date and may be outdated. Current source-of-truth is `Cargo.toml`, `README.md`, and `src/`.
+
 **Date:** 2026-02-16
 **Status:** Approved
 **Approach:** Incremental Polish

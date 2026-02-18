@@ -256,103 +256,103 @@ struct Args {
     #[arg(long)]
     zero_threshold: Option<f64>,
 
-    /// Compatibility no-op for wide output formatting
+    /// Compatibility alias for wide output formatting (accepted for parity; no-op)
     #[arg(long)]
     wide: bool,
 
-    /// Compatibility no-op for wide output formatting
+    /// Compatibility alias for wide output formatting (accepted for parity; no-op)
     #[arg(long = "wide-output")]
     wide_output: bool,
 
-    /// Compatibility option: prefer relative roots display
+    /// Compatibility alias for relative roots display (accepted for parity; no-op)
     #[arg(long = "relative-roots")]
     relative_roots: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Disable rational-exponents filtering when combined with --rational-exponents
     #[arg(long = "any-exponents")]
     any_exponents: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Clear numeric-type subexpression restrictions (-a/-c/-r/-i/--liouvillian-subexpressions)
     #[arg(long = "any-subexpressions")]
     any_subexpressions: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Disable rational-trig-args filtering when combined with --rational-trig-args
     #[arg(long = "any-trig-args")]
     any_trig_args: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Canonical reduction mode used by compatibility dedupe pass
     #[arg(long = "canon-reduction")]
     canon_reduction: Option<String>,
 
-    /// Compatibility option (currently no-op)
+    /// Enable canonical simplification pass for match deduplication
     #[arg(long = "canon-simplify")]
     canon_simplify: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Override Newton derivative threshold used to detect degenerate derivatives
     #[arg(long = "derivative-margin")]
     derivative_margin: Option<f64>,
 
-    /// Compatibility option (currently no-op)
+    /// Force explicit '*' in infix display output
     #[arg(long = "explicit-multiply")]
     explicit_multiply: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Require matches to agree with target precision (uses target significant digits)
     #[arg(long = "match-all-digits")]
     match_all_digits: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Reject matches where either side exceeds this value
     #[arg(long = "max-equate-value")]
     max_equate_value: Option<f64>,
 
-    /// Compatibility option (currently no-op)
+    /// Memory budget hint used by streaming fallback heuristics (e.g. 512M, 2G)
     #[arg(long = "max-memory")]
     max_memory: Option<String>,
 
-    /// Compatibility option (currently no-op)
+    /// Threshold used with --max-memory to trigger streaming fallback
     #[arg(long = "memory-abort-threshold")]
     memory_abort_threshold: Option<f64>,
 
-    /// Compatibility option (currently no-op)
+    /// Maximum number of trig operators allowed in accepted matches
     #[arg(long = "max-trig-cycles")]
     max_trig_cycles: Option<u32>,
 
-    /// Compatibility option (currently no-op)
+    /// Reject matches where either side is below this value
     #[arg(long = "min-equate-value")]
     min_equate_value: Option<f64>,
 
-    /// Compatibility option (currently no-op)
+    /// Lower memory bound hint used by streaming fallback heuristics
     #[arg(long = "min-memory")]
     min_memory: Option<String>,
 
-    /// Compatibility option (currently no-op)
+    /// Disable canonical simplification even if requested elsewhere
     #[arg(long = "no-canon-simplify")]
     no_canon_simplify: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Suppress compatibility warnings and slow-path informational warnings
     #[arg(long = "no-slow-messages")]
     no_slow_messages: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Restrict matches to those sharing target digit-anagram signature
     #[arg(long = "numeric-anagram")]
     numeric_anagram: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Restrict accepted matches to rational exponent forms
     #[arg(long = "rational-exponents")]
     rational_exponents: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Restrict accepted matches to rational trig arguments
     #[arg(long = "rational-trig-args")]
     rational_trig_args: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Compatibility alias for diagnostics channel -Ds (show work)
     #[arg(long = "show-work")]
     show_work: bool,
 
-    /// Compatibility option (currently no-op)
+    /// Legacy alias for derivative margin when --derivative-margin is not set
     #[arg(long = "significance-loss-margin")]
     significance_loss_margin: Option<f64>,
 
-    /// Compatibility option (currently no-op)
+    /// Scale factor applied to trig arguments during evaluation
     #[arg(long = "trig-argument-scale")]
     trig_argument_scale: Option<f64>,
 
