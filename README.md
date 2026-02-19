@@ -283,6 +283,11 @@ maturin develop --features python
 maturin build --features python --release
 ```
 
+> **Note:** `cargo build --features python` will fail at the link step because pyo3
+> requires the Python shared library, which bare `cargo` does not locate automatically.
+> Always use `maturin` for Python builds. `cargo check --features python` still works
+> for type-checking without linking.
+
 #### Python Usage
 
 ```python
