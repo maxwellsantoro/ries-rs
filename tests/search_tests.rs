@@ -8,8 +8,10 @@ use ries_rs::gen::{generate_all, GenConfig};
 use ries_rs::profile::UserConstant;
 use ries_rs::search::{search_with_stats_and_options, ExprDatabase};
 use ries_rs::symbol::{NumType, Symbol};
+use ries_rs::symbol_table::SymbolTable;
 use ries_rs::udf::UserFunction;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 mod common;
 
@@ -46,6 +48,7 @@ fn fast_config() -> GenConfig {
         user_constants: Vec::new(),
         user_functions: Vec::new(),
         show_pruned_arith: false,
+        symbol_table: Arc::new(SymbolTable::new()),
     }
 }
 
@@ -402,9 +405,14 @@ fn test_user_function_in_search() {
         min_num_type: NumType::Transcendental,
         generate_lhs: true,
         generate_rhs: true,
-        user_constants: vec![uc],
-        user_functions: vec![udf],
+        user_constants: vec![uc.clone()],
+        user_functions: vec![udf.clone()],
         show_pruned_arith: false,
+        symbol_table: Arc::new(SymbolTable::from_parts(
+            &ries_rs::profile::Profile::new(),
+            &[uc],
+            &[udf],
+        )),
     };
 
     let (matches, _stats) = search_with_stats_and_options(2.0, &config, 50, false, None);

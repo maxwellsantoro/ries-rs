@@ -133,63 +133,36 @@ fn evaluate_highprec(
     precision_bits: u32,
     user_constants: &[HighPrec],
 ) -> Option<HighPrec> {
-    let zero = HighPrec::from_f64_with_prec(0.0, precision_bits);
-    let one = HighPrec::from_f64_with_prec(1.0, precision_bits);
-    let trig_scale = HighPrec::from_f64_with_prec(std::f64::consts::PI, precision_bits);
+    // Use precision-aware constructors for full accuracy beyond f64 limits
+    let zero = HighPrec::zero_with_prec(precision_bits);
+    let one = HighPrec::one_with_prec(precision_bits);
+    let trig_scale = HighPrec::pi_with_prec(precision_bits); // High-prec π for trig
     let x_hp = HighPrec::from_f64_with_prec(x, precision_bits);
 
     let mut stack: Vec<HighPrec> = Vec::with_capacity(32);
 
     for sym in expr.symbols() {
         match sym {
-            // Numbers
+            // Numbers - use string-based construction for consistency
             Symbol::One => stack.push(one.clone()),
-            Symbol::Two => stack.push(HighPrec::from_f64_with_prec(2.0, precision_bits)),
-            Symbol::Three => stack.push(HighPrec::from_f64_with_prec(3.0, precision_bits)),
-            Symbol::Four => stack.push(HighPrec::from_f64_with_prec(4.0, precision_bits)),
-            Symbol::Five => stack.push(HighPrec::from_f64_with_prec(5.0, precision_bits)),
-            Symbol::Six => stack.push(HighPrec::from_f64_with_prec(6.0, precision_bits)),
-            Symbol::Seven => stack.push(HighPrec::from_f64_with_prec(7.0, precision_bits)),
-            Symbol::Eight => stack.push(HighPrec::from_f64_with_prec(8.0, precision_bits)),
-            Symbol::Nine => stack.push(HighPrec::from_f64_with_prec(9.0, precision_bits)),
+            Symbol::Two => stack.push(HighPrec::from_str_with_prec("2", precision_bits)),
+            Symbol::Three => stack.push(HighPrec::from_str_with_prec("3", precision_bits)),
+            Symbol::Four => stack.push(HighPrec::from_str_with_prec("4", precision_bits)),
+            Symbol::Five => stack.push(HighPrec::from_str_with_prec("5", precision_bits)),
+            Symbol::Six => stack.push(HighPrec::from_str_with_prec("6", precision_bits)),
+            Symbol::Seven => stack.push(HighPrec::from_str_with_prec("7", precision_bits)),
+            Symbol::Eight => stack.push(HighPrec::from_str_with_prec("8", precision_bits)),
+            Symbol::Nine => stack.push(HighPrec::from_str_with_prec("9", precision_bits)),
 
-            // Variables and constants
+            // Variables and constants - use precision-aware constructors
             Symbol::X => stack.push(x_hp.clone()),
-            Symbol::Pi => stack.push(HighPrec::from_f64_with_prec(
-                std::f64::consts::PI,
-                precision_bits,
-            )),
-            Symbol::E => stack.push(HighPrec::from_f64_with_prec(
-                std::f64::consts::E,
-                precision_bits,
-            )),
-            Symbol::Phi => {
-                let sqrt5 = HighPrec::from_f64_with_prec(5.0, precision_bits).sqrt();
-                stack
-                    .push((one.clone() + sqrt5) / HighPrec::from_f64_with_prec(2.0, precision_bits))
-            }
-            Symbol::Gamma => {
-                // Euler-Mascheroni constant
-                stack.push(HighPrec::from_f64_with_prec(
-                    0.5772156649015329,
-                    precision_bits,
-                ))
-            }
-            Symbol::Apery => {
-                // ζ(3)
-                stack.push(HighPrec::from_f64_with_prec(
-                    1.2020569031595942,
-                    precision_bits,
-                ))
-            }
-            Symbol::Catalan => stack.push(HighPrec::from_f64_with_prec(
-                0.915965594177219,
-                precision_bits,
-            )),
-            Symbol::Plastic => stack.push(HighPrec::from_f64_with_prec(
-                1.324717957244746,
-                precision_bits,
-            )),
+            Symbol::Pi => stack.push(HighPrec::pi_with_prec(precision_bits)),
+            Symbol::E => stack.push(HighPrec::e_with_prec(precision_bits)),
+            Symbol::Phi => stack.push(HighPrec::phi_with_prec(precision_bits)),
+            Symbol::Gamma => stack.push(HighPrec::gamma_with_prec(precision_bits)),
+            Symbol::Apery => stack.push(HighPrec::apery_with_prec(precision_bits)),
+            Symbol::Catalan => stack.push(HighPrec::catalan_with_prec(precision_bits)),
+            Symbol::Plastic => stack.push(HighPrec::plastic_with_prec(precision_bits)),
 
             // Binary operators
             Symbol::Add => {
@@ -395,6 +368,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_format_verification_report() {
         let m = crate::search::Match {
             lhs: crate::expr::EvaluatedExpr::new(

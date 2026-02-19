@@ -1449,6 +1449,7 @@ mod tests {
             user_constants: Vec::new(),
             user_functions: Vec::new(),
             show_pruned_arith: false,
+            symbol_table: std::sync::Arc::new(crate::symbol_table::SymbolTable::new()),
         }
     }
 
