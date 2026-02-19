@@ -14,6 +14,30 @@
 //! as they're generated rather than accumulating them.
 
 use crate::eval::evaluate_fast_with_constants_and_functions;
+
+// =============================================================================
+// NAMED CONSTANTS FOR QUANTIZATION AND VALUE LIMITS
+// =============================================================================
+
+/// Scale factor for quantizing floating-point values to integers.
+///
+/// This preserves approximately 8 significant digits, which is sufficient
+/// for deduplication while avoiding overflow when converting to i64.
+/// Values are quantized as: `(v * QUANTIZE_SCALE).round() as i64`
+const QUANTIZE_SCALE: f64 = 1e8;
+
+/// Maximum absolute value for quantization before using sentinel values.
+///
+/// Values larger than this threshold are represented by sentinel values
+/// (i64::MAX - 1 for positive, i64::MIN + 1 for negative) to avoid
+/// overflow during the quantization calculation.
+const MAX_QUANTIZED_VALUE: f64 = 1e10;
+
+/// Maximum absolute value for generated expressions.
+///
+/// Expressions with values larger than this are considered overflow-prone
+/// and unlikely to be useful, so they are filtered out during generation.
+const MAX_GENERATED_VALUE: f64 = 1e12;
 use crate::expr::{EvaluatedExpr, Expression, MAX_EXPR_LEN};
 use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
@@ -108,17 +132,17 @@ pub struct StreamingCallbacks<'a> {
 /// Uses ~8 significant digits for deduplication
 #[inline]
 fn quantize_value(v: f64) -> i64 {
-    if !v.is_finite() || v.abs() > 1e10 {
+    if !v.is_finite() || v.abs() > MAX_QUANTIZED_VALUE {
         // For very large values, use a different quantization to avoid overflow
-        if v > 1e10 {
+        if v > MAX_QUANTIZED_VALUE {
             return i64::MAX - 1;
-        } else if v < -1e10 {
+        } else if v < -MAX_QUANTIZED_VALUE {
             return i64::MIN + 1;
         }
         return i64::MAX;
     }
     // Scale to preserve ~8 significant digits (avoid overflow)
-    (v * 1e8).round() as i64
+    (v * QUANTIZE_SCALE).round() as i64
 }
 
 /// Key for LHS deduplication: (quantized value, quantized derivative)
@@ -320,7 +344,7 @@ fn generate_recursive_streaming(
             Ok(result) => {
                 // Skip expressions with extreme values (overflow-prone, unlikely useful)
                 if result.value.is_finite()
-                    && result.value.abs() <= 1e12
+                    && result.value.abs() <= MAX_GENERATED_VALUE
                     && result.num_type >= config.min_num_type
                 {
                     let expr = current.clone();
@@ -492,7 +516,7 @@ fn generate_recursive(
         ) {
             Ok(result) => {
                 // Skip expressions with extreme values (overflow-prone, unlikely useful)
-                if !result.value.is_finite() || result.value.abs() > 1e12 {
+                if !result.value.is_finite() || result.value.abs() > MAX_GENERATED_VALUE {
                     // Skip infinite or very large values
                 } else if result.num_type >= config.min_num_type {
                     let expr = current.clone();
