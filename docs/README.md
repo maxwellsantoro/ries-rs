@@ -4,6 +4,7 @@ This directory is split into current reference docs and historical implementatio
 
 ## Current Reference
 
+- `ARCHITECTURE.md`: System architecture including streaming vs batch generation trade-offs
 - `COMPLEXITY.md`: Symbol weight model and ranking rationale used by `ries-rs`
 - `PERFORMANCE.md`: Benchmarking, profiling, and performance guidance
 
