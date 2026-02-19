@@ -1,12 +1,12 @@
 [package]
-name = "ries-rs"
+name = "ries"
 version = "0.1.0"
 edition = "2021"
-authors = ["RIES Contributors"]
+authors = ["Maxwell Santoro"]
 description = "Find algebraic equations given their solution - Rust implementation"
 license = "MIT"
 repository = "https://github.com/maxwellsantoro/ries-rs.git"
-documentation = "https://docs.rs/ries-rs"
+documentation = "https://docs.rs/ries"
 readme = "README.md"
 keywords = ["math", "equation", "solver", "algebraic", "ries"]
 categories = ["mathematics", "science"]

@@ -207,6 +207,32 @@ impl Expression {
         Some(sym)
     }
 
+    /// Append a symbol using a symbol table for weight lookup
+    ///
+    /// This is the table-driven version that uses per-run configuration
+    /// instead of global overrides.
+    pub fn push_with_table(&mut self, sym: Symbol, table: &crate::symbol_table::SymbolTable) {
+        self.complexity += table.weight(sym);
+        if sym == Symbol::X {
+            self.contains_x = true;
+        }
+        self.symbols.push(sym);
+    }
+
+    /// Remove the last symbol using a symbol table for weight lookup
+    ///
+    /// This is the table-driven version that uses per-run configuration
+    /// instead of global overrides.
+    pub fn pop_with_table(&mut self, table: &crate::symbol_table::SymbolTable) -> Option<Symbol> {
+        let sym = self.symbols.pop()?;
+        self.complexity -= table.weight(sym);
+        // Recompute contains_x after popping
+        if sym == Symbol::X {
+            self.contains_x = self.symbols.contains(&Symbol::X);
+        }
+        Some(sym)
+    }
+
     /// Get the postfix string representation
     pub fn to_postfix(&self) -> String {
         self.symbols.iter().map(|s| *s as u8 as char).collect()
@@ -358,6 +384,147 @@ impl Expression {
                             // Left operand needs parens if lower precedence
                             let a_s = maybe_paren_prec(&a, a_prec, PREC_POWER, true, false);
                             // Right operand needs parens if same or lower precedence (due to right-assoc)
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_POWER, true, true);
+                            (format!("{}^{}", a_s, b_s), PREC_POWER)
+                        }
+                        Symbol::Root => (format!("{}\"/{}", a, b), PREC_POWER),
+                        Symbol::Log => (format!("log_{}({})", a, b), PREC_ATOM),
+                        Symbol::Atan2 => (format!("atan2({}, {})", a, b), PREC_ATOM),
+                        _ => unreachable!(),
+                    };
+                    stack.push((result, prec));
+                }
+            }
+        }
+
+        stack.pop().map(|(s, _)| s).unwrap_or_else(|| "?".into())
+    }
+
+    /// Convert to infix notation using a symbol table for display names
+    ///
+    /// This is the table-driven version that uses per-run configuration
+    /// instead of global overrides for symbol display names.
+    pub fn to_infix_with_table(&self, table: &crate::symbol_table::SymbolTable) -> String {
+        /// Precedence levels for operators
+        const PREC_ATOM: u8 = 100; // Constants, x, function calls
+        const PREC_POWER: u8 = 9; // ^ (right-associative)
+        const PREC_UNARY: u8 = 8; // Unary minus, reciprocal
+        const PREC_MUL: u8 = 6; // *, /
+        const PREC_ADD: u8 = 4; // +, -
+
+        /// Check if we need parentheses around an operand
+        fn needs_paren(
+            parent_prec: u8,
+            child_prec: u8,
+            is_right_assoc: bool,
+            is_right_operand: bool,
+        ) -> bool {
+            if child_prec < parent_prec {
+                return true;
+            }
+            if is_right_assoc && is_right_operand && child_prec == parent_prec {
+                return true;
+            }
+            false
+        }
+
+        /// Wrap in parentheses if needed
+        fn maybe_paren_prec(
+            s: &str,
+            prec: u8,
+            parent_prec: u8,
+            is_right_assoc: bool,
+            is_right: bool,
+        ) -> String {
+            if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
+                format!("({})", s)
+            } else {
+                s.to_string()
+            }
+        }
+
+        let mut stack: Vec<(String, u8)> = Vec::new();
+
+        for &sym in &self.symbols {
+            match sym.seft() {
+                Seft::A => {
+                    stack.push((table.name(sym).to_string(), PREC_ATOM));
+                }
+                Seft::B => {
+                    let (arg, arg_prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let result = match sym {
+                        Symbol::Neg => {
+                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_UNARY, false, false);
+                            format!("-{}", arg_s)
+                        }
+                        Symbol::Recip => {
+                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_MUL, false, false);
+                            format!("1/{}", arg_s)
+                        }
+                        Symbol::Sqrt => format!("sqrt({})", arg),
+                        Symbol::Square => {
+                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_POWER, false, false);
+                            format!("{}^2", arg_s)
+                        }
+                        Symbol::Ln => format!("ln({})", arg),
+                        Symbol::Exp => {
+                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_POWER, true, true);
+                            format!("e^{}", arg_s)
+                        }
+                        Symbol::SinPi => format!("sinpi({})", arg),
+                        Symbol::CosPi => format!("cospi({})", arg),
+                        Symbol::TanPi => format!("tanpi({})", arg),
+                        Symbol::LambertW => format!("W({})", arg),
+                        Symbol::UserFunction0
+                        | Symbol::UserFunction1
+                        | Symbol::UserFunction2
+                        | Symbol::UserFunction3
+                        | Symbol::UserFunction4
+                        | Symbol::UserFunction5
+                        | Symbol::UserFunction6
+                        | Symbol::UserFunction7
+                        | Symbol::UserFunction8
+                        | Symbol::UserFunction9
+                        | Symbol::UserFunction10
+                        | Symbol::UserFunction11
+                        | Symbol::UserFunction12
+                        | Symbol::UserFunction13
+                        | Symbol::UserFunction14
+                        | Symbol::UserFunction15 => format!("{}({})", table.name(sym), arg),
+                        _ => "?".to_string(),
+                    };
+                    stack.push((result, PREC_ATOM));
+                }
+                Seft::C => {
+                    let (b, b_prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (a, a_prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (result, prec) = match sym {
+                        Symbol::Add => {
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
+                            (format!("{}+{}", a, b_s), PREC_ADD)
+                        }
+                        Symbol::Sub => {
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
+                            (format!("{}-{}", a, b_s), PREC_ADD)
+                        }
+                        Symbol::Mul => {
+                            let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL, false, true);
+                            if a_s.chars().last().is_some_and(|c| c.is_ascii_digit())
+                                && b_s.chars().next().is_some_and(|c| c.is_alphabetic())
+                            {
+                                (format!("{} {}", a_s, b_s), PREC_MUL)
+                            } else {
+                                (format!("{}*{}", a_s, b_s), PREC_MUL)
+                            }
+                        }
+                        Symbol::Div => {
+                            let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL + 1, false, true);
+                            (format!("{}/{}", a_s, b_s), PREC_MUL)
+                        }
+                        Symbol::Pow => {
+                            let a_s = maybe_paren_prec(&a, a_prec, PREC_POWER, true, false);
                             let b_s = maybe_paren_prec(&b, b_prec, PREC_POWER, true, true);
                             (format!("{}^{}", a_s, b_s), PREC_POWER)
                         }
