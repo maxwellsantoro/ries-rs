@@ -36,7 +36,7 @@ flowchart TD
 
 ### Batch Generation
 
-**Entry Point**: [`generate_all()`](../src/gen.rs:152)
+**Entry Point**: [`generate_all()`](../src/gen.rs:157)
 
 Batch generation collects all valid expressions into memory before returning them.
 
@@ -69,7 +69,7 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
 
 ### Streaming Generation
 
-**Entry Point**: [`generate_streaming()`](../src/gen.rs:266)
+**Entry Point**: [`generate_streaming()`](../src/gen.rs:271)
 
 Streaming generation processes expressions via callbacks as they are generated,
 eliminating the need to store all expressions simultaneously.
@@ -188,14 +188,14 @@ Both approaches share the same recursive structure:
 
 The key difference is what happens at the base case:
 
-**Batch** ([`generate_recursive()`](../src/gen.rs:500)):
+**Batch** ([`generate_recursive()`](../src/gen.rs:509)):
 ```rust,ignore
 if stack_depth == 1 && !current.is_empty() {
     lhs_out.push(eval_expr);  // or rhs_out.push()
 }
 ```
 
-**Streaming** ([`generate_recursive_streaming()`](../src/gen.rs:328)):
+**Streaming** ([`generate_recursive_streaming()`](../src/gen.rs:333)):
 ```rust,ignore
 if stack_depth == 1 && !current.is_empty() {
     if !(callbacks.on_lhs)(&eval_expr) {

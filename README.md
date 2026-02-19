@@ -1,6 +1,6 @@
 # RIES-RS
 
-**R**everse **I**nteger **E**quation **S**earch - A Rust implementation of Robert Munafo's RIES program.
+**R**ILYBOT **I**nverse **E**quation **S**olver — a Rust implementation of Robert Munafo's RIES program.
 
 RIES finds algebraic equations given their solution. Given a target number, it searches for equations that have that number as a solution.
 
@@ -28,7 +28,6 @@ This project compares behavior against two historical references:
 In this repository, parity and compatibility tracking is documented in:
 
 - `PARITY_REMAINING_REPORT.md`
-- `docs/README.md`
 
 ## Compatibility Snapshot
 

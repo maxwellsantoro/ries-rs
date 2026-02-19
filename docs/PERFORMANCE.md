@@ -71,11 +71,11 @@ Search time scales with complexity level:
 With the `parallel` feature (default), generation and search can use multiple cores:
 
 ```bash
-# Sequential
+# Parallel (default — parallel feature is on by default)
 cargo run --release -- 2.5 -l2
 
-# Parallel (default)
-cargo run --release --features parallel -- 2.5 -l2
+# Sequential (disable default parallel feature)
+cargo run --release --no-default-features -- 2.5 -l2
 ```
 
 ## Memory Usage
