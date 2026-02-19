@@ -33,11 +33,11 @@ mod cli;
 use clap::Parser;
 use cli::{
     build_gen_config, canon_reduction_enabled, compute_significant_digits_tolerance, format_value,
-    parse_diagnostics, parse_display_format, parse_memory_size_bytes, parse_symbol_names_from_cli,
-    parse_symbol_sets, parse_symbol_weights_from_cli, parse_user_constant_from_cli,
-    parse_user_function_from_cli, print_footer, print_header, print_match_absolute,
-    print_match_relative, print_show_work_details, print_symbol_table, run_search, Args,
-    DisplayFormat,
+    normalize_legacy_args, parse_diagnostics, parse_display_format, parse_memory_size_bytes,
+    parse_symbol_names_from_cli, parse_symbol_sets, parse_symbol_weights_from_cli,
+    parse_user_constant_from_cli, parse_user_function_from_cli, print_footer, print_header,
+    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table,
+    run_search, Args, DisplayFormat, NormalizedArgs,
 };
 use manifest::{MatchInfo, RunManifest, SearchConfigInfo};
 use profile::Profile;
@@ -641,73 +641,19 @@ fn main() {
         }
     }
 
-    // Handle -p legacy semantics: if profile looks like a number and no target, treat as target
-    // Original ries behavior: "ries -p 2.5" means "use default profile and search for 2.5"
-    let (profile_arg, resolved_target) = if let Some(ref profile_path) = args.profile {
-        if args.target.is_none() {
-            // Check if profile argument looks like a target (numeric)
-            if let Ok(val) = profile_path.to_string_lossy().parse::<f64>() {
-                // It's a number, treat as target and use default profile
-                (None, Some(val))
-            } else {
-                // Not a number, use as profile path
-                (args.profile.clone(), args.target)
-            }
-        } else {
-            // Both -p and target provided, use both normally
-            (args.profile.clone(), args.target)
-        }
-    } else {
-        (None, args.target)
-    };
-
-    // Handle -E legacy semantics: if enable looks like a number and no target, treat as target
-    // Original ries behavior: "ries -E 2.5" means "enable all and search for 2.5"
-    let (enable_arg, resolved_target) = if let Some(ref enable_str) = args.enable {
-        if resolved_target.is_none() {
-            // Check if enable argument looks like a target (numeric)
-            if let Ok(val) = enable_str.parse::<f64>() {
-                // It's a number, treat as target and use "all" for enable
-                (Some("all".to_string()), Some(val))
-            } else {
-                // Not a number, use as enable string
-                (args.enable.clone(), resolved_target)
-            }
-        } else {
-            // Both -E and target provided, use both normally
-            (args.enable.clone(), resolved_target)
-        }
-    } else {
-        (None, resolved_target)
-    };
-
-    // Handle -l legacy semantics: if level looks like a float and no target, treat as target + liouvillian
-    // Original ries: "-l 2.5" means liouvillian mode + target 2.5
-    // "-l3" or "--level 3" with an explicit target means level 3
-    let (level_value, liouvillian_override, final_target) = if resolved_target.is_some() {
-        // Target was explicitly provided, use -l as level
-        let level = args.level.parse::<f32>().unwrap_or(2.0);
-        (level, None, resolved_target)
-    } else {
-        // No explicit target - check if "level" looks like a target (has decimal point)
-        if args.level.contains('.') {
-            // Legacy: -l 2.5 means liouvillian + target 2.5
-            if let Ok(target_val) = args.level.parse::<f64>() {
-                (2.0, Some(true), Some(target_val))
-            } else {
-                // Parse error, let it fail later with proper error
-                let level = args.level.parse::<f32>().unwrap_or(2.0);
-                (level, None, None)
-            }
-        } else {
-            // It's an integer level, but no target - still an error later
-            let level = args.level.parse::<f32>().unwrap_or(2.0);
-            (level, None, None)
-        }
-    };
-
-    // Use final_target instead of resolved_target from here on
-    let resolved_target = final_target;
+    // Handle legacy argument semantics using the normalize_legacy_args function
+    let NormalizedArgs {
+        target: resolved_target,
+        profile: profile_arg,
+        enable: enable_arg,
+        level: level_value,
+        liouvillian: liouvillian_override,
+    } = normalize_legacy_args(
+        args.profile.as_deref().map(|p| p.to_string_lossy()).as_deref(),
+        args.enable.as_deref(),
+        &args.level,
+        args.target,
+    );
 
     // Load profile early (needed for both --eval-expression and search modes)
     let mut profile = if let Some(profile_path) = profile_arg.as_deref() {
@@ -939,7 +885,7 @@ fn main() {
         symbol::NumType::Constructible
     } else if args.algebraic {
         symbol::NumType::Algebraic
-    } else if args.liouvillian || liouvillian_override.unwrap_or(false) {
+    } else if args.liouvillian || liouvillian_override {
         symbol::NumType::Liouvillian
     } else {
         symbol::NumType::Transcendental
