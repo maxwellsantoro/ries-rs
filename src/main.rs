@@ -241,6 +241,7 @@ fn perform_search(
         }
         #[cfg(not(feature = "parallel"))]
         {
+            let _ = parallel;
             search::search_with_stats_and_config(gen_config, search_config)
         }
     }
