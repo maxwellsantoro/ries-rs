@@ -6,6 +6,7 @@
 //! - Diagnostics flag handling
 //! - Search orchestration
 //! - Configuration building
+//! - Legacy argument handling
 //!
 //! # Structure
 //!
@@ -14,10 +15,12 @@
 //! - [`diagnostics`] - `-D` flag handling for diagnostic output channels
 //! - [`search_runner`] - Search execution and orchestration
 //! - [`config_builder`] - Configuration building from CLI arguments
+//! - [`legacy`] - Legacy argument normalization for backward compatibility
 
 pub mod args;
 pub mod config_builder;
 pub mod diagnostics;
+pub mod legacy;
 pub mod output;
 pub mod search_runner;
 
@@ -39,3 +42,5 @@ pub use output::{
 pub use search_runner::run_search;
 
 pub use config_builder::build_gen_config;
+
+pub use legacy::{normalize_legacy_args, NormalizedArgs};
