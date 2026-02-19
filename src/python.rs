@@ -258,7 +258,6 @@ fn search(
         })?;
         profile = profile.merge(parsed.to_profile());
     }
-    apply_profile_overrides(&profile);
 
     // Build generation config
     let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, &profile);
