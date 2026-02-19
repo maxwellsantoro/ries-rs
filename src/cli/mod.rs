@@ -4,16 +4,19 @@
 //! - Argument parsing with clap
 //! - Output formatting and display
 //! - Diagnostics flag handling
+//! - Search orchestration
 //!
 //! # Structure
 //!
 //! - [`args`] - Command-line argument definitions and parsing helpers
 //! - [`output`] - Output formatting functions for matches and expressions
 //! - [`diagnostics`] - `-D` flag handling for diagnostic output channels
+//! - [`search_runner`] - Search execution and orchestration
 
 pub mod args;
 pub mod diagnostics;
 pub mod output;
+pub mod search_runner;
 
 // Re-export the main public API
 pub use args::{
@@ -29,3 +32,5 @@ pub use output::{
     print_header, print_match_absolute, print_match_relative, print_show_work_details,
     DisplayFormat,
 };
+
+pub use search_runner::{run_search, SearchResult};
