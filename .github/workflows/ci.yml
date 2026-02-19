@@ -86,7 +86,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --all-targets --locked
+        run: cargo test --tests --locked
 
   test-highprec:
     name: Test (highprec feature)
@@ -105,4 +105,4 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgmp-dev libmpfr-dev
 
       - name: Run tests with highprec feature
-        run: cargo test --all-targets --features highprec --locked
+        run: cargo test --tests --features highprec --locked

@@ -1,0 +1,49 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: "Baseline name to compare against (leave empty to just save as 'main')"
+        required: false
+        default: ""
+  schedule:
+    # Run weekly on Monday at 00:00 UTC to track long-term trends
+    - cron: "0 0 * * 1"
+
+jobs:
+  bench:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run benchmarks (compare against baseline)
+        if: inputs.baseline != ''
+        env:
+          BASELINE: ${{ inputs.baseline }}
+        run: |
+          cargo bench --bench evaluation -- --baseline "$BASELINE"
+          cargo bench --bench search    -- --baseline "$BASELINE"
+          cargo bench --bench generation -- --baseline "$BASELINE"
+
+      - name: Run benchmarks (save as 'main' baseline)
+        if: inputs.baseline == ''
+        run: |
+          cargo bench --bench evaluation -- --save-baseline main
+          cargo bench --bench search    -- --save-baseline main
+          cargo bench --bench generation -- --save-baseline main
+
+      - name: Upload criterion report
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report-${{ github.sha }}
+          path: target/criterion/
+          retention-days: 90
