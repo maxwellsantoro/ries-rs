@@ -134,53 +134,205 @@ impl Match {
     }
 }
 
-/// Search configuration
+/// Configuration for the search process.
+///
+/// Controls matching thresholds, result limits, symbol filtering, and search behavior.
+/// This struct is the main entry point for customizing how RIES searches for equations.
+///
+/// # Example
+///
+/// ```rust
+/// use ries_rs::search::SearchConfig;
+/// use ries_rs::pool::RankingMode;
+///
+/// let config = SearchConfig {
+///     target: std::f64::consts::PI,
+///     max_matches: 50,
+///     max_error: 1e-10,
+///     stop_at_exact: true,
+///     ranking_mode: RankingMode::Complexity,
+///     ..SearchConfig::default()
+/// };
+/// ```
+///
+/// # Fields Overview
+///
+/// - **Target**: `target` - the value to search for equations matching it
+/// - **Limits**: `max_matches`, `max_error` - control result quantity and quality
+/// - **Stopping**: `stop_at_exact`, `stop_below` - early termination conditions
+/// - **Refinement**: `newton_iterations`, `refine_with_newton`, `derivative_margin` - Newton-Raphson settings
+/// - **Filtering**: `zero_value_threshold`, `rhs_allowed_symbols`, `rhs_excluded_symbols` - prune unwanted results
+/// - **Extensions**: `user_constants`, `user_functions` - custom symbols
+/// - **Diagnostics**: `show_newton`, `show_match_checks`, etc. - debug output
+/// - **Ranking**: `ranking_mode` - how to order results
 #[derive(Clone)]
 pub struct SearchConfig {
-    /// Target value
+    /// Target value to find equations for.
+    ///
+    /// The search will find equations where LHS ≈ RHS ≈ target.
+    /// This is the number you're trying to "solve" or represent symbolically.
+    ///
+    /// Default: 0.0
     pub target: f64,
-    /// Maximum number of matches to return
+
+    /// Maximum number of matches to return in results.
+    ///
+    /// Once this many matches are found and confirmed, the pool will start
+    /// evicting lower-quality matches to make room for better ones.
+    ///
+    /// Default: 100
     pub max_matches: usize,
-    /// Maximum acceptable error
+
+    /// Maximum acceptable error for a match to be included.
+    ///
+    /// Only expressions within this absolute error from the target are considered matches.
+    /// Smaller values give more precise but fewer results.
+    ///
+    /// Default: 1.0
     pub max_error: f64,
-    /// Stop search when exact match is found
+
+    /// Stop search when an exact match is found.
+    ///
+    /// When true and an expression matches within the exact match tolerance,
+    /// the search terminates early. Useful when you only need one good solution.
+    ///
+    /// Default: false
     pub stop_at_exact: bool,
-    /// Stop search when error goes below this threshold
+
+    /// Stop search when error goes below this threshold.
+    ///
+    /// If set, the search will terminate once a match is found with error
+    /// below this value. Set to `Some(1e-12)` for high-precision early stopping.
+    ///
+    /// Default: None
     pub stop_below: Option<f64>,
-    /// Threshold for pruning LHS expressions with near-zero values
-    /// (prevents flooding with trivial matches like cospi(2.5)=0)
+
+    /// Threshold for pruning LHS expressions with near-zero values.
+    ///
+    /// LHS expressions with absolute values below this threshold are pruned
+    /// to prevent flooding results with trivial matches like `cospi(2.5) = 0`.
+    /// Set to 0.0 to disable this filtering.
+    ///
+    /// Default: 1e-4
     pub zero_value_threshold: f64,
-    /// Maximum Newton-Raphson iterations for root refinement
+
+    /// Maximum Newton-Raphson iterations for root refinement.
+    ///
+    /// Controls how many iterations are used to refine candidate solutions.
+    /// Higher values may find more precise roots but take longer.
+    ///
+    /// Default: 15
     pub newton_iterations: usize,
-    /// User-defined constants for evaluation
+
+    /// User-defined constants for evaluation.
+    ///
+    /// Custom constants that can be used in expressions, defined via `-N\'name=value\'`.
+    /// Each constant has a name, value, and optional description.
+    ///
+    /// Default: empty
     pub user_constants: Vec<UserConstant>,
-    /// User-defined functions for evaluation
+
+    /// User-defined functions for evaluation.
+    ///
+    /// Custom functions that can be used in expressions, defined via `-F\'name:formula\'`.
+    /// These extend the built-in functions (sin, cos, etc.).
+    ///
+    /// Default: empty
     pub user_functions: Vec<crate::udf::UserFunction>,
-    /// Whether to refine candidate roots with Newton-Raphson
+
+    /// Whether to refine candidate roots with Newton-Raphson iteration.
+    ///
+    /// When true, initial coarse matches are refined using Newton-Raphson
+    /// to find more precise solutions. Disable for faster but less precise search.
+    ///
+    /// Default: true
     pub refine_with_newton: bool,
-    /// Optional RHS-only allowed symbol set (if set, all RHS symbols must be in set)
+
+    /// Optional RHS-only allowed symbol set.
+    ///
+    /// If set, all symbols used on the RHS must be in this set (specified as ASCII bytes).
+    /// This allows restricting RHS expressions to a subset of available symbols.
+    /// Combined with `rhs_excluded_symbols`, both filters apply.
+    ///
+    /// Default: None (all symbols allowed)
     pub rhs_allowed_symbols: Option<HashSet<u8>>,
-    /// Optional RHS-only excluded symbol set (if set, RHS symbols in set are rejected)
+
+    /// Optional RHS-only excluded symbol set.
+    ///
+    /// If set, RHS expressions using any of these symbols are rejected.
+    /// This allows excluding specific symbols from RHS expressions.
+    /// Combined with `rhs_allowed_symbols`, both filters apply.
+    ///
+    /// Default: None (no symbols excluded)
     pub rhs_excluded_symbols: Option<HashSet<u8>>,
-    /// Show Newton-Raphson iteration diagnostic output (-Dn)
+
+    /// Show Newton-Raphson iteration diagnostic output.
+    ///
+    /// When true, prints detailed information about each Newton-Raphson iteration.
+    /// Enabled by `-Dn` command-line flag. Useful for debugging convergence issues.
+    ///
+    /// Default: false
     pub show_newton: bool,
-    /// Show match check diagnostic output (-Do)
+
+    /// Show match check diagnostic output.
+    ///
+    /// When true, prints information about each candidate match evaluation.
+    /// Enabled by `-Do` command-line flag.
+    ///
+    /// Default: false
     pub show_match_checks: bool,
-    /// Show pruned arithmetic diagnostic output (-DA)
+
+    /// Show pruned arithmetic diagnostic output.
+    ///
+    /// When true, prints information about arithmetic expressions that were pruned.
+    /// Enabled by `-DA` command-line flag.
+    ///
+    /// Default: false
     #[allow(dead_code)]
     pub show_pruned_arith: bool,
-    /// Show pruned range/zero diagnostic output (-DB)
+
+    /// Show pruned range/zero diagnostic output.
+    ///
+    /// When true, prints information about expressions pruned due to range
+    /// constraints or near-zero values. Enabled by `-DB` command-line flag.
+    ///
+    /// Default: false
     pub show_pruned_range: bool,
-    /// Show database adds diagnostic output (-DG)
+
+    /// Show database adds diagnostic output.
+    ///
+    /// When true, prints information about expressions added to the database.
+    /// Enabled by `-DG` command-line flag.
+    ///
+    /// Default: false
     pub show_db_adds: bool,
-    /// When true, matches must match all significant digits of the target
-    /// (tolerance is computed in main.rs and passed as max_error)
+
+    /// When true, matches must match all significant digits of the target.
+    ///
+    /// When enabled, the tolerance is computed based on the magnitude of the
+    /// target value to require full precision matching. The actual tolerance
+    /// is computed in `main.rs` and passed as `max_error`.
+    ///
+    /// Default: false
     #[allow(dead_code)]
     pub match_all_digits: bool,
-    /// Threshold below which derivative is considered degenerate in Newton-Raphson
-    /// If |derivative| < this threshold, Newton-Raphson is skipped
+
+    /// Threshold below which derivative is considered degenerate in Newton-Raphson.
+    ///
+    /// If `|derivative| < derivative_margin` during Newton-Raphson iteration,
+    /// the refinement is skipped to avoid numerical instability and division
+    /// by near-zero values.
+    ///
+    /// Default: 1e-12 (from `DEGENERATE_DERIVATIVE` constant)
     pub derivative_margin: f64,
-    /// Ranking mode for pool ordering/eviction
+
+    /// Ranking mode for pool ordering and eviction.
+    ///
+    /// Determines how matches are ranked in the result pool:
+    /// - `Complexity`: Sort by expression complexity (simpler is better)
+    /// - `Error`: Sort by match error (more precise is better)
+    ///
+    /// Default: `RankingMode::Complexity`
     pub ranking_mode: RankingMode,
 }
 

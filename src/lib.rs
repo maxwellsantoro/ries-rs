@@ -106,6 +106,10 @@ pub mod udf;
 #[cfg(feature = "wasm")]
 mod wasm;
 
+// WASM re-exports (when feature is enabled)
+#[cfg(feature = "wasm")]
+pub use wasm::{init, list_presets, search as wasm_search, version, SearchOptions, WasmMatch};
+
 // =============================================================================
 // Type Aliases
 // =============================================================================

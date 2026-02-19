@@ -19,7 +19,12 @@ jobs:
         uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Generate coverage
-        run: cargo tarpaulin --locked --out Xml --output-dir ./coverage --timeout 300
+        run: cargo tarpaulin --locked --out Xml --output-dir ./coverage --timeout 300 --fail-under 70
+
+      - name: Report coverage summary
+        run: |
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "Coverage report generated and uploaded as artifact." >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

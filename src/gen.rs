@@ -47,43 +47,198 @@ use crate::udf::UserFunction;
 use std::collections::HashMap;
 
 /// Configuration for expression generation
+///
+/// Controls which symbols are available, complexity limits,
+/// and various generation options for creating candidate expressions
+/// that may solve a given equation.
+///
+/// # Architecture
+///
+/// Expressions are generated in two categories:
+/// - **LHS (Left-Hand Side)**: Expressions containing `x`, representing functions like `f(x)`
+/// - **RHS (Right-Hand Side)**: Constant expressions not containing `x`, like `π²` or `sqrt(2)`
+///
+/// The generator creates all valid expressions up to the configured complexity limits,
+/// then the solver finds pairs where `LHS(target) ≈ RHS`.
+///
+/// # Example
+///
+/// ```rust
+/// use ries_rs::gen::GenConfig;
+/// use ries_rs::symbol::Symbol;
+/// use std::collections::HashMap;
+///
+/// let config = GenConfig {
+///     max_lhs_complexity: 50,
+///     max_rhs_complexity: 30,
+///     max_length: 12,
+///     constants: vec![Symbol::One, Symbol::Two, Symbol::Pi, Symbol::E],
+///     unary_ops: vec![Symbol::Neg, Symbol::Sqrt, Symbol::Square],
+///     binary_ops: vec![Symbol::Add, Symbol::Sub, Symbol::Mul, Symbol::Div],
+///     ..GenConfig::default()
+/// };
+/// ```
 #[derive(Clone)]
 pub struct GenConfig {
-    /// Maximum complexity for LHS expressions (containing x)
+    /// Maximum complexity score for left-hand-side expressions.
+    ///
+    /// LHS expressions contain `x` and represent the function side of equations.
+    /// Higher values allow more complex expressions (e.g., `sin(x) + x²`), but
+    /// exponentially increase search time and memory usage.
+    ///
+    /// Default: 128 (allows fairly complex expressions)
     pub max_lhs_complexity: u32,
-    /// Maximum complexity for RHS expressions (constants only)
+
+    /// Maximum complexity score for right-hand-side expressions.
+    ///
+    /// RHS expressions are constants not containing `x`. Since they don't need
+    /// to be solved for, they can typically use lower complexity limits than LHS.
+    ///
+    /// Default: 128
     pub max_rhs_complexity: u32,
-    /// Maximum expression length
+
+    /// Maximum number of symbols in a single expression.
+    ///
+    /// This is a hard limit on expression length regardless of complexity score.
+    /// Prevents pathological cases with many low-complexity symbols.
+    ///
+    /// Default: `MAX_EXPR_LEN` (255)
     pub max_length: usize,
-    /// Symbols to use for constants (Seft::A)
+
+    /// Symbols available for constants and variables (Seft::A type).
+    ///
+    /// These push a value onto the expression stack. Typically includes:
+    /// - `One`, `Two`, `Three`, etc. (numeric constants)
+    /// - `Pi`, `E` (mathematical constants)
+    /// - `X` (the variable to solve for)
+    ///
+    /// Default: All built-in constants from `Symbol::constants()`
     pub constants: Vec<Symbol>,
-    /// Symbols to use for unary ops (Seft::B)
+
+    /// Symbols available for unary operations (Seft::B type).
+    ///
+    /// These transform a single value: `f(a)`. Includes operations like:
+    /// - `Neg` (negation: `-a`)
+    /// - `Sqrt`, `Square` (powers and roots)
+    /// - `SinPi`, `CosPi` (trigonometric functions)
+    /// - `Ln`, `Exp` (logarithmic and exponential)
+    /// - `Recip` (reciprocal: `1/a`)
+    ///
+    /// Default: All built-in unary operators from `Symbol::unary_ops()`
     pub unary_ops: Vec<Symbol>,
-    /// Symbols to use for binary ops (Seft::C)
+
+    /// Symbols available for binary operations (Seft::C type).
+    ///
+    /// These combine two values: `f(a, b)`. Includes operations like:
+    /// - `Add`, `Sub`, `Mul`, `Div` (arithmetic)
+    /// - `Pow`, `Root`, `Log` (power functions and logarithms)
+    ///
+    /// Default: All built-in binary operators from `Symbol::binary_ops()`
     pub binary_ops: Vec<Symbol>,
-    /// Optional RHS-only constants override
+
+    /// Optional override for RHS-only constant symbols.
+    ///
+    /// When set, RHS expressions use these symbols instead of `constants`.
+    /// Useful for generating LHS with more symbols but keeping RHS simple.
+    ///
+    /// Default: `None` (use `constants` for both LHS and RHS)
     pub rhs_constants: Option<Vec<Symbol>>,
-    /// Optional RHS-only unary ops override
+
+    /// Optional override for RHS-only unary operators.
+    ///
+    /// When set, RHS expressions use these operators instead of `unary_ops`.
+    /// Example: allow Lambert W in LHS only, exclude from RHS constants.
+    ///
+    /// Default: `None` (use `unary_ops` for both LHS and RHS)
     pub rhs_unary_ops: Option<Vec<Symbol>>,
-    /// Optional RHS-only binary ops override
+
+    /// Optional override for RHS-only binary operators.
+    ///
+    /// When set, RHS expressions use these operators instead of `binary_ops`.
+    ///
+    /// Default: `None` (use `binary_ops` for both LHS and RHS)
     pub rhs_binary_ops: Option<Vec<Symbol>>,
-    /// Maximum per-expression symbol counts (for -O style limits)
+
+    /// Maximum usage count per symbol within a single expression.
+    ///
+    /// Maps each symbol to the maximum number of times it can appear.
+    /// Useful for limiting redundancy (e.g., max 2 uses of `Pi`).
+    /// Corresponds to the `-O` command-line option.
+    ///
+    /// Default: Empty (no limits)
     pub symbol_max_counts: HashMap<Symbol, u32>,
-    /// Optional RHS-only symbol count limits (for --O-RHS)
+
+    /// Optional RHS-only symbol count limits.
+    ///
+    /// When set, applies different symbol count limits to RHS expressions.
+    /// Corresponds to the `--O-RHS` command-line option.
+    ///
+    /// Default: `None` (use `symbol_max_counts` for both)
     pub rhs_symbol_max_counts: Option<HashMap<Symbol, u32>>,
-    /// Minimum numeric type required
+
+    /// Minimum numeric type required for generated expressions.
+    ///
+    /// Filters expressions by the "sophistication" of numbers they produce:
+    /// - `Integer`: Only integer results
+    /// - `Rational`: Rational numbers (fractions)
+    /// - `Algebraic`: Algebraic numbers (roots of polynomials)
+    /// - `Transcendental`: Any real number (including π, e, trig)
+    ///
+    /// Lower values restrict output to simpler mathematical constructs.
+    ///
+    /// Default: `NumType::Transcendental` (accept all)
     pub min_num_type: NumType,
-    /// Whether to generate LHS expressions (containing x)
+
+    /// Whether to generate LHS expressions containing `x`.
+    ///
+    /// Set to `false` if you only need constant RHS expressions.
+    /// Can significantly reduce generation time when LHS is not needed.
+    ///
+    /// Default: `true`
     pub generate_lhs: bool,
-    /// Whether to generate RHS expressions (no x)
+
+    /// Whether to generate RHS constant expressions.
+    ///
+    /// Set to `false` if you only need LHS expressions.
+    /// Useful for specific analysis tasks.
+    ///
+    /// Default: `true`
     pub generate_rhs: bool,
-    /// User-defined constants (for evaluation during generation)
+
+    /// User-defined constants for custom searches.
+    ///
+    /// These constants are available during expression evaluation,
+    /// allowing searches involving domain-specific values.
+    /// Defined via `-N` command-line option.
+    ///
+    /// Default: Empty
     pub user_constants: Vec<UserConstant>,
-    /// User-defined functions (for evaluation during generation)
+
+    /// User-defined functions for custom searches.
+    ///
+    /// Custom functions that can appear in generated expressions,
+    /// extending the available operations beyond built-in symbols.
+    /// Defined via `-F` command-line option.
+    ///
+    /// Default: Empty
     pub user_functions: Vec<UserFunction>,
-    /// Show pruned arithmetic diagnostic output (-DA)
+
+    /// Enable diagnostic output for arithmetic pruning.
+    ///
+    /// When `true`, prints information about expressions that were
+    /// discarded due to arithmetic errors (overflow, domain errors, etc.).
+    /// Useful for debugging generation behavior.
+    ///
+    /// Default: `false`
     pub show_pruned_arith: bool,
-    /// Symbol table for weights and names (per-run configuration)
+
+    /// Symbol table with weights and display names.
+    ///
+    /// Provides complexity weights for each symbol and custom display
+    /// names. Weights control how "expensive" each symbol is toward
+    /// the complexity limit.
+    ///
+    /// Default: Empty table (uses built-in default weights)
     pub symbol_table: Arc<SymbolTable>,
 }
 
@@ -299,6 +454,43 @@ fn has_rhs_symbol_overrides(config: &GenConfig) -> bool {
         || config.rhs_symbol_max_counts.is_some()
 }
 
+/// Check if an evaluated expression meets generation criteria
+///
+/// This shared helper function is used by both batch and streaming generation
+/// to validate expressions before including them in results.
+#[inline]
+fn should_include_expression(
+    result: &crate::eval::EvalResult,
+    config: &GenConfig,
+    complexity: u32,
+    contains_x: bool,
+) -> bool {
+    result.value.is_finite()
+        && result.value.abs() <= MAX_GENERATED_VALUE
+        && result.num_type >= config.min_num_type
+        && if contains_x {
+            config.generate_lhs && complexity <= config.max_lhs_complexity
+        } else {
+            config.generate_rhs && complexity <= config.max_rhs_complexity
+        }
+}
+
+/// Calculate the appropriate complexity limit based on whether expression contains x
+///
+/// For expressions containing x, uses LHS limit.
+/// For RHS-only paths, uses RHS limit.
+/// For paths that might still add x, uses the max of both limits.
+#[inline]
+fn get_max_complexity(config: &GenConfig, contains_x: bool) -> u32 {
+    if contains_x {
+        config.max_lhs_complexity
+    } else {
+        // For RHS-only paths, use RHS limit
+        // For paths that might still add x, use the max of both
+        std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
+    }
+}
+
 fn rhs_only_config(config: &GenConfig) -> GenConfig {
     let mut rhs_config = config.clone();
     rhs_config.generate_lhs = false;
@@ -347,30 +539,20 @@ fn generate_recursive_streaming(
             &config.user_functions,
         ) {
             Ok(result) => {
-                // Skip expressions with extreme values (overflow-prone, unlikely useful)
-                if result.value.is_finite()
-                    && result.value.abs() <= MAX_GENERATED_VALUE
-                    && result.num_type >= config.min_num_type
-                {
+                // Use shared validation helper
+                if should_include_expression(&result, config, current.complexity(), current.contains_x()) {
                     let expr = current.clone();
                     let eval_expr =
                         EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
 
-                    if current.contains_x() {
-                        if config.generate_lhs && current.complexity() <= config.max_lhs_complexity
-                        {
-                            // Call the LHS callback; return false if it signals stop
-                            if !(callbacks.on_lhs)(&eval_expr) {
-                                return false;
-                            }
-                        }
-                    } else if config.generate_rhs
-                        && current.complexity() <= config.max_rhs_complexity
-                    {
-                        // Call the RHS callback; return false if it signals stop
-                        if !(callbacks.on_rhs)(&eval_expr) {
-                            return false;
-                        }
+                    // Call the appropriate callback; return false if it signals stop
+                    let should_continue = if current.contains_x() {
+                        (callbacks.on_lhs)(&eval_expr)
+                    } else {
+                        (callbacks.on_rhs)(&eval_expr)
+                    };
+                    if !should_continue {
+                        return false;
                     }
                 }
             }
@@ -392,14 +574,8 @@ fn generate_recursive_streaming(
         return true;
     }
 
-    // Use appropriate complexity limit based on whether expression contains x
-    let max_complexity = if current.contains_x() {
-        config.max_lhs_complexity
-    } else {
-        // For RHS-only paths, use RHS limit
-        // For paths that might still add x, use the max of both
-        std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
-    };
+    // Use shared helper for complexity limit calculation
+    let max_complexity = get_max_complexity(config, current.contains_x());
 
     if current.complexity() >= max_complexity {
         return true;
@@ -524,23 +700,16 @@ fn generate_recursive(
             &config.user_functions,
         ) {
             Ok(result) => {
-                // Skip expressions with extreme values (overflow-prone, unlikely useful)
-                if !result.value.is_finite() || result.value.abs() > MAX_GENERATED_VALUE {
-                    // Skip infinite or very large values
-                } else if result.num_type >= config.min_num_type {
+                // Use shared validation helper
+                if should_include_expression(&result, config, current.complexity(), current.contains_x()) {
                     let expr = current.clone();
                     let eval_expr =
                         EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
 
+                    // Keep all LHS expressions; derivative≈0 cases handled in search
                     if current.contains_x() {
-                        if config.generate_lhs && current.complexity() <= config.max_lhs_complexity
-                        {
-                            // Keep all LHS expressions; derivative≈0 cases handled in search
-                            lhs_out.push(eval_expr);
-                        }
-                    } else if config.generate_rhs
-                        && current.complexity() <= config.max_rhs_complexity
-                    {
+                        lhs_out.push(eval_expr);
+                    } else {
                         rhs_out.push(eval_expr);
                     }
                 }
@@ -563,14 +732,8 @@ fn generate_recursive(
         return;
     }
 
-    // Use appropriate complexity limit based on whether expression contains x
-    let max_complexity = if current.contains_x() {
-        config.max_lhs_complexity
-    } else {
-        // For RHS-only paths, use RHS limit
-        // For paths that might still add x, use the max of both
-        std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
-    };
+    // Use shared helper for complexity limit calculation
+    let max_complexity = get_max_complexity(config, current.contains_x());
 
     if current.complexity() >= max_complexity {
         return;
