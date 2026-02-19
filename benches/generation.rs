@@ -6,7 +6,9 @@
 #![allow(clippy::field_reassign_with_default)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use ries_rs::gen::{generate_all, generate_all_parallel, GenConfig};
+use ries_rs::gen::{generate_all, GenConfig};
+#[cfg(feature = "parallel")]
+use ries_rs::gen::generate_all_parallel;
 
 fn bench_lhs_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("lhs_generation");

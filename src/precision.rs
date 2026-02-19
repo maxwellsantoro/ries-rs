@@ -275,9 +275,7 @@ impl HighPrec {
     /// We compute e as exp(1) instead.
     pub fn e() -> Self {
         let one = rug::Float::with_val(DEFAULT_PRECISION, 1u32);
-        Self {
-            inner: one.exp()
-        }
+        Self { inner: one.exp() }
     }
 
     /// Get the golden ratio φ = (1 + √5) / 2
@@ -315,9 +313,7 @@ impl HighPrec {
     /// We compute e as exp(1) at the requested precision instead.
     pub fn e_with_prec(prec_bits: u32) -> Self {
         let one = rug::Float::with_val(prec_bits, 1u32);
-        Self {
-            inner: one.exp()
-        }
+        Self { inner: one.exp() }
     }
 
     /// Create from a decimal string at the specified precision (in bits)
@@ -325,8 +321,8 @@ impl HighPrec {
     /// This allows creating constants with more precision than f64 allows
     /// by parsing a long decimal string directly.
     pub fn from_str_with_prec(s: &str, prec_bits: u32) -> Self {
-        let parsed = rug::Float::parse(s)
-            .unwrap_or_else(|e| panic!("Invalid float literal {s:?}: {e}"));
+        let parsed =
+            rug::Float::parse(s).unwrap_or_else(|e| panic!("Invalid float literal {s:?}: {e}"));
         Self {
             inner: rug::Float::with_val(prec_bits, parsed),
         }
