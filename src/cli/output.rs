@@ -7,6 +7,7 @@ use crate::expr;
 use crate::profile;
 use crate::search;
 use crate::symbol;
+use crate::symbol_table::SymbolTable;
 use crate::thresholds::EXACT_MATCH_TOLERANCE;
 use crate::udf;
 
@@ -92,14 +93,25 @@ pub fn apply_explicit_multiply(infix: &str) -> String {
 }
 
 /// Format an expression for display using the specified format.
+///
+/// If a SymbolTable is provided, uses it for symbol names (table-driven formatting).
+/// Otherwise, falls back to default symbol names.
 pub fn format_expression_for_display(
     expression: &expr::Expression,
     format: DisplayFormat,
     explicit_multiply: bool,
+    table: Option<&SymbolTable>,
 ) -> String {
     match format {
         DisplayFormat::Infix(inner) => {
-            let infix = expression.to_infix_with_format(inner);
+            // Use table-driven formatting if a table is provided
+            let infix = if let Some(t) = table {
+                // For now, table-driven always uses default format
+                // TODO: Add to_infix_with_table_and_format for other formats
+                expression.to_infix_with_table(t)
+            } else {
+                expression.to_infix_with_format(inner)
+            };
             if explicit_multiply {
                 apply_explicit_multiply(&infix)
             } else {
@@ -123,6 +135,7 @@ pub fn print_match_relative(
     format: DisplayFormat,
     explicit_multiply: bool,
     solved_rhs: Option<&expr::Expression>,
+    table: Option<&SymbolTable>,
 ) {
     let lhs_expr = if solved_rhs.is_some() {
         let mut x_expr = expr::Expression::new();
@@ -133,8 +146,8 @@ pub fn print_match_relative(
     };
     let rhs_expr = solved_rhs.unwrap_or(&m.rhs.expr);
 
-    let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply);
-    let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply);
+    let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply, table);
+    let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply, table);
 
     let error_str = if m.error.abs() < EXACT_MATCH_TOLERANCE {
         "('exact' match)".to_string()
@@ -156,6 +169,7 @@ pub fn print_match_absolute(
     format: DisplayFormat,
     explicit_multiply: bool,
     solved_rhs: Option<&expr::Expression>,
+    table: Option<&SymbolTable>,
 ) {
     let lhs_expr = if solved_rhs.is_some() {
         let mut x_expr = expr::Expression::new();
@@ -166,8 +180,8 @@ pub fn print_match_absolute(
     };
     let rhs_expr = solved_rhs.unwrap_or(&m.rhs.expr);
 
-    let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply);
-    let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply);
+    let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply, table);
+    let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply, table);
 
     println!(
         "{:>24} = {:<24} for x = {:.15} {{{}}}",
@@ -246,6 +260,7 @@ fn decompose_subexpressions(expression: &expr::Expression) -> Vec<expr::Expressi
 }
 
 /// Print step-by-step evaluation details for an expression.
+#[allow(clippy::too_many_arguments)]
 fn print_expression_steps(
     label: &str,
     expression: &expr::Expression,
@@ -254,10 +269,11 @@ fn print_expression_steps(
     explicit_multiply: bool,
     user_constants: &[profile::UserConstant],
     user_functions: &[udf::UserFunction],
+    table: Option<&SymbolTable>,
 ) {
     println!("    {} steps:", label);
     for (idx, step_expr) in decompose_subexpressions(expression).iter().enumerate() {
-        let rendered = format_expression_for_display(step_expr, format, explicit_multiply);
+        let rendered = format_expression_for_display(step_expr, format, explicit_multiply, table);
         match crate::eval::evaluate_with_constants_and_functions(
             step_expr,
             x,
@@ -288,6 +304,7 @@ pub fn print_show_work_details(
     explicit_multiply: bool,
     user_constants: &[profile::UserConstant],
     user_functions: &[udf::UserFunction],
+    table: Option<&SymbolTable>,
 ) {
     if shown_matches.is_empty() {
         return;
@@ -305,6 +322,7 @@ pub fn print_show_work_details(
             explicit_multiply,
             user_constants,
             user_functions,
+            table,
         );
         print_expression_steps(
             "RHS",
@@ -314,6 +332,7 @@ pub fn print_show_work_details(
             explicit_multiply,
             user_constants,
             user_functions,
+            table,
         );
     }
 }
