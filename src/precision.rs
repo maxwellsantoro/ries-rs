@@ -270,9 +270,13 @@ impl HighPrec {
     }
 
     /// Get e (Euler's number) at the current precision
+    ///
+    /// Note: `rug::float::Constant::Euler` is the Euler-Mascheroni constant γ, not e.
+    /// We compute e as exp(1) instead.
     pub fn e() -> Self {
+        let one = rug::Float::with_val(DEFAULT_PRECISION, 1u32);
         Self {
-            inner: rug::Float::with_val(DEFAULT_PRECISION, rug::float::Constant::Euler),
+            inner: one.exp()
         }
     }
 
@@ -307,11 +311,12 @@ impl HighPrec {
 
     /// Get e (Euler's number) at the specified precision (in bits)
     ///
-    /// This uses rug's built-in constant computation to achieve full precision
-    /// rather than seeding from an f64 value.
+    /// Note: `rug::float::Constant::Euler` is the Euler-Mascheroni constant γ, not e.
+    /// We compute e as exp(1) at the requested precision instead.
     pub fn e_with_prec(prec_bits: u32) -> Self {
+        let one = rug::Float::with_val(prec_bits, 1u32);
         Self {
-            inner: rug::Float::with_val(prec_bits, rug::float::Constant::Euler),
+            inner: one.exp()
         }
     }
 
@@ -320,8 +325,10 @@ impl HighPrec {
     /// This allows creating constants with more precision than f64 allows
     /// by parsing a long decimal string directly.
     pub fn from_str_with_prec(s: &str, prec_bits: u32) -> Self {
+        let parsed = rug::Float::parse(s)
+            .unwrap_or_else(|e| panic!("Invalid float literal {s:?}: {e}"));
         Self {
-            inner: rug::Float::with_val(prec_bits, s),
+            inner: rug::Float::with_val(prec_bits, parsed),
         }
     }
 
@@ -656,8 +663,11 @@ mod tests {
         let hp_str = format!("{:.40}", e_hp.inner);
         let f64_str = format!("{:.40}", e_f64.inner);
 
-        // e = 2.7182818284590452353602874713526624977572...
-        assert!(hp_str.starts_with("2.7182818284590452353"));
+        // e = 2.71828182845904523536028747135266249775724709...
+        assert!(
+            hp_str.starts_with("2.71828182845904523536"),
+            "e hp_str was: {hp_str}"
+        );
 
         let common_prefix_len = hp_str
             .chars()
@@ -679,8 +689,12 @@ mod tests {
         let hp_str = format!("{:.40}", gamma_hp.inner);
         let f64_str = format!("{:.40}", gamma_f64.inner);
 
-        // γ = 0.5772156649015328606065120900824024310421...
-        assert!(hp_str.starts_with("0.57721566490153286060"));
+        // γ = 0.57721566490153286060651209008240243104215933...
+        // rug formats values < 1 in scientific notation with {:.N}: "5.772...e-1"
+        assert!(
+            hp_str.starts_with("5.7721566490153286060"),
+            "gamma hp_str was: {hp_str}"
+        );
 
         // The high-prec version should have more accurate digits
         let common_prefix_len = hp_str
@@ -720,8 +734,12 @@ mod tests {
         let catalan_hp = HighPrec::catalan_with_prec(256);
         let hp_str = format!("{:.40}", catalan_hp.inner);
 
-        // Catalan's constant G = 0.9159655941772190150546035149323841107741...
-        assert!(hp_str.starts_with("0.91596559417721901505"));
+        // Catalan's constant G = 0.91596559417721901505460351493238411077414937...
+        // rug formats values < 1 in scientific notation with {:.N}: "9.159...e-1"
+        assert!(
+            hp_str.starts_with("9.1596559417721901505"),
+            "catalan hp_str was: {hp_str}"
+        );
     }
 
     #[cfg(feature = "highprec")]
