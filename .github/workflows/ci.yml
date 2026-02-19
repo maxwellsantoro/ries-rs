@@ -37,8 +37,36 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
 
-      - name: Run clippy
+      - name: Run clippy (default features)
         run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Run clippy (no default features)
+        run: cargo clippy --all-targets --no-default-features --locked -- -D warnings
+
+  check-features:
+    name: Feature coverage check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check python feature
+        run: cargo check --features python --locked
+
+      - name: Check python + highprec features
+        run: cargo check --features "python highprec" --locked
+
+      - name: Build wasm feature
+        run: cargo build --features wasm --locked
+
+      - name: Build wasm + parallel features
+        run: cargo build --features "wasm parallel" --locked
 
   test:
     name: Test (${{ matrix.os }})
