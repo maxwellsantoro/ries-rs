@@ -415,7 +415,8 @@ fn generate_recursive_streaming(
 
     // Constants (Seft::A) - always increase stack by 1
     for &sym in &config.constants {
-        if current.complexity() + sym.weight() > max_complexity {
+        let sym_weight = config.symbol_table.weight(sym);
+        if current.complexity() + sym_weight > max_complexity {
             continue;
         }
         if exceeds_symbol_limit(config, current, sym) {
@@ -427,33 +428,35 @@ fn generate_recursive_streaming(
             continue;
         }
 
-        current.push(sym);
+        current.push_with_table(sym, &config.symbol_table);
         if !generate_recursive_streaming(config, target, current, stack_depth + 1, callbacks) {
-            current.pop();
+            current.pop_with_table(&config.symbol_table);
             return false;
         }
-        current.pop();
+        current.pop_with_table(&config.symbol_table);
     }
 
     // Also add x for LHS generation
     if config.generate_lhs && !config.constants.contains(&Symbol::X) {
         let sym = Symbol::X;
-        if current.complexity() + sym.weight() <= max_complexity
+        let sym_weight = config.symbol_table.weight(sym);
+        if current.complexity() + sym_weight <= max_complexity
             && !exceeds_symbol_limit(config, current, sym)
         {
-            current.push(sym);
+            current.push_with_table(sym, &config.symbol_table);
             if !generate_recursive_streaming(config, target, current, stack_depth + 1, callbacks) {
-                current.pop();
+                current.pop_with_table(&config.symbol_table);
                 return false;
             }
-            current.pop();
+            current.pop_with_table(&config.symbol_table);
         }
     }
 
     // Unary operators (Seft::B) - need at least 1 on stack
     if stack_depth >= 1 {
         for &sym in &config.unary_ops {
-            if current.complexity() + sym.weight() > max_complexity {
+            let sym_weight = config.symbol_table.weight(sym);
+            if current.complexity() + sym_weight > max_complexity {
                 continue;
             }
             if exceeds_symbol_limit(config, current, sym) {
@@ -465,19 +468,20 @@ fn generate_recursive_streaming(
                 continue;
             }
 
-            current.push(sym);
+            current.push_with_table(sym, &config.symbol_table);
             if !generate_recursive_streaming(config, target, current, stack_depth, callbacks) {
-                current.pop();
+                current.pop_with_table(&config.symbol_table);
                 return false;
             }
-            current.pop();
+            current.pop_with_table(&config.symbol_table);
         }
     }
 
     // Binary operators (Seft::C) - need at least 2 on stack
     if stack_depth >= 2 {
         for &sym in &config.binary_ops {
-            if current.complexity() + sym.weight() > max_complexity {
+            let sym_weight = config.symbol_table.weight(sym);
+            if current.complexity() + sym_weight > max_complexity {
                 continue;
             }
             if exceeds_symbol_limit(config, current, sym) {
@@ -489,12 +493,12 @@ fn generate_recursive_streaming(
                 continue;
             }
 
-            current.push(sym);
+            current.push_with_table(sym, &config.symbol_table);
             if !generate_recursive_streaming(config, target, current, stack_depth - 1, callbacks) {
-                current.pop();
+                current.pop_with_table(&config.symbol_table);
                 return false;
             }
-            current.pop();
+            current.pop_with_table(&config.symbol_table);
         }
     }
 
@@ -582,7 +586,8 @@ fn generate_recursive(
 
     // Constants (Seft::A) - always increase stack by 1
     for &sym in &config.constants {
-        if current.complexity() + sym.weight() > max_complexity {
+        let sym_weight = config.symbol_table.weight(sym);
+        if current.complexity() + sym_weight > max_complexity {
             continue;
         }
         if exceeds_symbol_limit(config, current, sym) {
@@ -594,27 +599,29 @@ fn generate_recursive(
             continue;
         }
 
-        current.push(sym);
+        current.push_with_table(sym, &config.symbol_table);
         generate_recursive(config, target, current, stack_depth + 1, lhs_out, rhs_out);
-        current.pop();
+        current.pop_with_table(&config.symbol_table);
     }
 
     // Also add x for LHS generation
     if config.generate_lhs && !config.constants.contains(&Symbol::X) {
         let sym = Symbol::X;
-        if current.complexity() + sym.weight() <= max_complexity
+        let sym_weight = config.symbol_table.weight(sym);
+        if current.complexity() + sym_weight <= max_complexity
             && !exceeds_symbol_limit(config, current, sym)
         {
-            current.push(sym);
+            current.push_with_table(sym, &config.symbol_table);
             generate_recursive(config, target, current, stack_depth + 1, lhs_out, rhs_out);
-            current.pop();
+            current.pop_with_table(&config.symbol_table);
         }
     }
 
     // Unary operators (Seft::B) - need at least 1 on stack
     if stack_depth >= 1 {
         for &sym in &config.unary_ops {
-            if current.complexity() + sym.weight() > max_complexity {
+            let sym_weight = config.symbol_table.weight(sym);
+            if current.complexity() + sym_weight > max_complexity {
                 continue;
             }
             if exceeds_symbol_limit(config, current, sym) {
@@ -626,16 +633,17 @@ fn generate_recursive(
                 continue;
             }
 
-            current.push(sym);
+            current.push_with_table(sym, &config.symbol_table);
             generate_recursive(config, target, current, stack_depth, lhs_out, rhs_out);
-            current.pop();
+            current.pop_with_table(&config.symbol_table);
         }
     }
 
     // Binary operators (Seft::C) - need at least 2 on stack
     if stack_depth >= 2 {
         for &sym in &config.binary_ops {
-            if current.complexity() + sym.weight() > max_complexity {
+            let sym_weight = config.symbol_table.weight(sym);
+            if current.complexity() + sym_weight > max_complexity {
                 continue;
             }
             if exceeds_symbol_limit(config, current, sym) {
@@ -647,9 +655,9 @@ fn generate_recursive(
                 continue;
             }
 
-            current.push(sym);
+            current.push_with_table(sym, &config.symbol_table);
             generate_recursive(config, target, current, stack_depth - 1, lhs_out, rhs_out);
-            current.pop();
+            current.pop_with_table(&config.symbol_table);
         }
     }
 }
@@ -664,7 +672,7 @@ fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u32 {
     let min_binary_weight = config
         .binary_ops
         .iter()
-        .map(|s| s.weight())
+        .map(|s| config.symbol_table.weight(*s))
         .min()
         .unwrap_or(4);
 
@@ -992,7 +1000,7 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
             let mut lhs = Vec::new();
             let mut rhs = Vec::new();
             let mut expr = Expression::new();
-            expr.push(first_sym);
+            expr.push_with_table(first_sym, &config.symbol_table);
 
             generate_recursive(config, target, &mut expr, 1, &mut lhs, &mut rhs);
 

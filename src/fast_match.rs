@@ -9,16 +9,17 @@ use crate::expr::{EvaluatedExpr, Expression};
 use crate::profile::UserConstant;
 use crate::search::Match;
 use crate::symbol::{NumType, Symbol};
+use crate::symbol_table::SymbolTable;
 use std::collections::HashSet;
 
 /// Tolerance for exact match detection
 const EXACT_TOLERANCE: f64 = 1e-14;
 
-/// Build an expression from symbols (internal helper)
-fn expr_from_symbols(symbols: &[Symbol]) -> Expression {
+/// Build an expression from symbols using table-based weights
+fn expr_from_symbols_with_table(symbols: &[Symbol], table: &SymbolTable) -> Expression {
     let mut expr = Expression::new();
     for &sym in symbols {
-        expr.push(sym);
+        expr.push_with_table(sym, table);
     }
     expr
 }
@@ -313,6 +314,7 @@ pub fn find_fast_match(
     target: f64,
     user_constants: &[UserConstant],
     config: &FastMatchConfig<'_>,
+    table: &SymbolTable,
 ) -> Option<Match> {
     // First check integers (fastest)
     if let Some((n, error)) = check_integer(target) {
@@ -334,7 +336,7 @@ pub fn find_fast_match(
             if passes_symbol_filters(symbols, config)
                 && get_num_type(symbols) >= config.min_num_type
             {
-                if let Some(m) = make_match(symbols, target, error) {
+                if let Some(m) = make_match(symbols, target, error, table) {
                     return Some(m);
                 }
             }
@@ -346,7 +348,7 @@ pub fn find_fast_match(
                     let symbols = [sym];
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
-                        if let Some(m) = make_match(&symbols, target, (uc.value - target).abs()) {
+                        if let Some(m) = make_match(&symbols, target, (uc.value - target).abs(), table) {
                             return Some(m);
                         }
                     }
@@ -364,7 +366,7 @@ pub fn find_fast_match(
             if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
                 let symbols = [sym];
                 if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type {
-                    if let Some(m) = make_match(&symbols, target, (uc.value - target).abs()) {
+                    if let Some(m) = make_match(&symbols, target, (uc.value - target).abs(), table) {
                         return Some(m);
                     }
                 }
@@ -384,11 +386,11 @@ pub fn find_fast_match(
             continue;
         }
 
-        let expr = expr_from_symbols(candidate.symbols);
+        let expr = expr_from_symbols_with_table(candidate.symbols, table);
         if let Ok(result) = evaluate(&expr, target) {
             let error = (result.value - target).abs();
             if error < EXACT_TOLERANCE {
-                if let Some(m) = make_match(candidate.symbols, target, error) {
+                if let Some(m) = make_match(candidate.symbols, target, error, table) {
                     return Some(m);
                 }
             }
@@ -408,7 +410,7 @@ pub fn find_fast_match(
                     let symbols = [sym, Symbol::Recip];
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
-                        if let Some(m) = make_match(&symbols, target, (recip_val - target).abs()) {
+                        if let Some(m) = make_match(&symbols, target, (recip_val - target).abs(), table) {
                             return Some(m);
                         }
                     }
@@ -421,7 +423,7 @@ pub fn find_fast_match(
                     let symbols = [sym, Symbol::Sqrt];
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
-                        if let Some(m) = make_match(&symbols, target, (sqrt_val - target).abs()) {
+                        if let Some(m) = make_match(&symbols, target, (sqrt_val - target).abs(), table) {
                             return Some(m);
                         }
                     }
@@ -434,9 +436,9 @@ pub fn find_fast_match(
 }
 
 /// Create a Match from symbols representing the RHS value
-fn make_match(symbols: &[Symbol], target: f64, error: f64) -> Option<Match> {
-    let lhs_expr = expr_from_symbols(&[Symbol::X]);
-    let rhs_expr = expr_from_symbols(symbols);
+fn make_match(symbols: &[Symbol], target: f64, error: f64, table: &SymbolTable) -> Option<Match> {
+    let lhs_expr = expr_from_symbols_with_table(&[Symbol::X], table);
+    let rhs_expr = expr_from_symbols_with_table(symbols, table);
     let complexity = lhs_expr.complexity() + rhs_expr.complexity();
 
     let lhs_eval = evaluate(&lhs_expr, target).ok()?;
@@ -475,9 +477,13 @@ mod tests {
         }
     }
 
+    fn default_table() -> SymbolTable {
+        SymbolTable::new()
+    }
+
     #[test]
     fn test_pi_match() {
-        let m = find_fast_match(std::f64::consts::PI, &[], &default_config());
+        let m = find_fast_match(std::f64::consts::PI, &[], &default_config(), &default_table());
         assert!(m.is_some());
         let m = m.unwrap();
         assert!(m.error.abs() < 1e-14);
@@ -492,7 +498,7 @@ mod tests {
             allowed_symbols: None,
             min_num_type: NumType::Transcendental,
         };
-        let m = find_fast_match(std::f64::consts::PI, &[], &config);
+        let m = find_fast_match(std::f64::consts::PI, &[], &config, &default_table());
         assert!(m.is_none(), "Should not find pi when it's excluded");
     }
 
@@ -505,7 +511,7 @@ mod tests {
             allowed_symbols: None,
             min_num_type: NumType::Algebraic,
         };
-        let m = find_fast_match(std::f64::consts::PI, &[], &config);
+        let m = find_fast_match(std::f64::consts::PI, &[], &config, &default_table());
         assert!(
             m.is_none(),
             "Should not find pi when only algebraic allowed"
@@ -521,13 +527,13 @@ mod tests {
             allowed_symbols: None,
             min_num_type: NumType::Algebraic,
         };
-        let m = find_fast_match(2.0_f64.sqrt(), &[], &config);
+        let m = find_fast_match(2.0_f64.sqrt(), &[], &config, &default_table());
         assert!(m.is_some(), "sqrt(2) should be found with algebraic-only");
     }
 
     #[test]
     fn test_e_match() {
-        let m = find_fast_match(std::f64::consts::E, &[], &default_config());
+        let m = find_fast_match(std::f64::consts::E, &[], &default_config(), &default_table());
         assert!(m.is_some());
         let m = m.unwrap();
         assert!(m.error.abs() < 1e-14);
@@ -536,7 +542,7 @@ mod tests {
 
     #[test]
     fn test_sqrt2_match() {
-        let m = find_fast_match(2.0_f64.sqrt(), &[], &default_config());
+        let m = find_fast_match(2.0_f64.sqrt(), &[], &default_config(), &default_table());
         assert!(m.is_some());
         let m = m.unwrap();
         assert!(m.error.abs() < 1e-14);
@@ -546,7 +552,7 @@ mod tests {
     #[test]
     fn test_phi_match() {
         let phi = (1.0 + 5.0_f64.sqrt()) / 2.0;
-        let m = find_fast_match(phi, &[], &default_config());
+        let m = find_fast_match(phi, &[], &default_config(), &default_table());
         assert!(m.is_some());
         let m = m.unwrap();
         assert!(m.error.abs() < 1e-14);
@@ -555,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_integer_match() {
-        let m = find_fast_match(5.0, &[], &default_config());
+        let m = find_fast_match(5.0, &[], &default_config(), &default_table());
         assert!(m.is_some());
         let m = m.unwrap();
         assert!(m.error.abs() < 1e-14);
@@ -565,7 +571,7 @@ mod tests {
     #[test]
     fn test_no_match_for_random() {
         // 2.506314 is not a simple constant
-        let m = find_fast_match(2.506314, &[], &default_config());
+        let m = find_fast_match(2.506314, &[], &default_config(), &default_table());
         assert!(m.is_none());
     }
 
@@ -578,7 +584,7 @@ mod tests {
             value: std::f64::consts::E,
             num_type: NumType::Transcendental,
         };
-        let m = find_fast_match(std::f64::consts::E, &[uc], &default_config());
+        let m = find_fast_match(std::f64::consts::E, &[uc], &default_config(), &default_table());
         assert!(m.is_some());
     }
 }
