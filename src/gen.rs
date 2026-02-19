@@ -14,6 +14,8 @@
 //! as they're generated rather than accumulating them.
 
 use crate::eval::evaluate_fast_with_constants_and_functions;
+use crate::symbol_table::SymbolTable;
+use std::sync::Arc;
 
 // =============================================================================
 // NAMED CONSTANTS FOR QUANTIZATION AND VALUE LIMITS
@@ -81,6 +83,8 @@ pub struct GenConfig {
     pub user_functions: Vec<UserFunction>,
     /// Show pruned arithmetic diagnostic output (-DA)
     pub show_pruned_arith: bool,
+    /// Symbol table for weights and names (per-run configuration)
+    pub symbol_table: Arc<SymbolTable>,
 }
 
 impl Default for GenConfig {
@@ -103,6 +107,7 @@ impl Default for GenConfig {
             user_constants: Vec::new(),
             user_functions: Vec::new(),
             show_pruned_arith: false,
+            symbol_table: Arc::new(SymbolTable::new()),
         }
     }
 }
@@ -1069,6 +1074,7 @@ mod tests {
             user_constants: Vec::new(),
             user_functions: Vec::new(),
             show_pruned_arith: false,
+            symbol_table: Arc::new(SymbolTable::new()),
         }
     }
 

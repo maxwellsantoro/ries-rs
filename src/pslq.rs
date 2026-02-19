@@ -8,6 +8,9 @@
 //!
 //! # References
 //!
+
+#![allow(clippy::needless_range_loop)]
+#![allow(dead_code)]
 //! - Ferguson, H.R.P., & Bailey, D.H. (1992). "A Polynomial Time, Numerically
 //!   Stable Integer Relation Algorithm"
 //! - Bailey, D.H., & Broadhurst, D. (2000). "Parallel Integer Relation Detection"
@@ -36,7 +39,7 @@ pub struct IntegerRelation {
 
 impl IntegerRelation {
     /// Format the relation as a human-readable string
-    pub fn to_string(&self) -> String {
+    pub fn format(&self) -> String {
         let terms: Vec<String> = self
             .coefficients
             .iter()
@@ -47,8 +50,6 @@ impl IntegerRelation {
                     name.clone()
                 } else if *c == -1 {
                     format!("-{}", name)
-                } else if *c > 0 {
-                    format!("{}*{}", c, name)
                 } else {
                     format!("{}*{}", c, name)
                 }
