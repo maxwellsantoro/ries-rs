@@ -36,8 +36,8 @@ use cli::{
     parse_display_format, parse_memory_size_bytes, parse_symbol_count_limits,
     parse_symbol_names_from_cli, parse_symbol_sets, parse_symbol_weights_from_cli,
     parse_user_constant_from_cli, parse_user_function_from_cli, print_footer, print_header,
-    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table, Args,
-    DisplayFormat,
+    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table,
+    run_search, Args, DisplayFormat,
 };
 use manifest::{MatchInfo, RunManifest, SearchConfigInfo};
 use profile::Profile;
@@ -215,36 +215,6 @@ fn eval_expression(
     use expr::Expression;
     let expr = Expression::parse(expr_str).ok_or(eval::EvalError::Invalid)?;
     eval::evaluate_with_constants_and_functions(&expr, x, user_constants, user_functions)
-}
-
-/// Perform the search (helper function to avoid code duplication)
-#[allow(clippy::too_many_arguments)]
-fn perform_search(
-    gen_config: &gen::GenConfig,
-    search_config: &search::SearchConfig,
-    streaming: bool,
-    parallel: bool,
-    one_sided: bool,
-) -> (Vec<search::Match>, search::SearchStats) {
-    if one_sided {
-        search::search_one_sided_with_stats_and_config(gen_config, search_config)
-    } else if streaming {
-        search::search_streaming_with_config(gen_config, search_config)
-    } else {
-        #[cfg(feature = "parallel")]
-        {
-            if parallel {
-                search::search_parallel_with_stats_and_config(gen_config, search_config)
-            } else {
-                search::search_with_stats_and_config(gen_config, search_config)
-            }
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            let _ = parallel;
-            search::search_with_stats_and_config(gen_config, search_config)
-        }
-    }
 }
 
 fn match_in_equate_bounds(
@@ -1329,25 +1299,27 @@ fn main() {
             // No fast match found, do full search
             // Deterministic mode disables parallelism for reproducible results
             let use_parallel = !args.deterministic && args.parallel;
-            perform_search(
+            let result = run_search(
                 &gen_config,
                 &search_config,
                 use_streaming,
                 use_parallel,
                 args.one_sided,
-            )
+            );
+            (result.matches, result.stats)
         }
     } else {
         // Not in quick mode, always do full search
         // Deterministic mode disables parallelism for reproducible results
         let use_parallel = !args.deterministic && args.parallel;
-        perform_search(
+        let result = run_search(
             &gen_config,
             &search_config,
             use_streaming,
             use_parallel,
             args.one_sided,
-        )
+        );
+        (result.matches, result.stats)
     };
 
     let mut matches = matches;
@@ -1379,14 +1351,14 @@ fn main() {
             let mut tighter_config = search_config.clone();
             tighter_config.max_error = base_error * factor;
 
-            let (level_matches, _) = perform_search(
+            let result = run_search(
                 &gen_config,
                 &tighter_config,
                 use_streaming,
                 use_parallel,
                 args.one_sided,
             );
-            analyzer.add_level(level_matches);
+            analyzer.add_level(result.matches);
         }
 
         Some(analyzer.analyze())
