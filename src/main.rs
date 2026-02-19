@@ -32,12 +32,12 @@ mod cli;
 
 use clap::Parser;
 use cli::{
-    canon_reduction_enabled, compute_significant_digits_tolerance, format_value, parse_diagnostics,
-    parse_display_format, parse_memory_size_bytes, parse_symbol_count_limits,
+    build_gen_config, canon_reduction_enabled, compute_significant_digits_tolerance, format_value,
+    normalize_legacy_args, parse_diagnostics, parse_display_format, parse_memory_size_bytes,
     parse_symbol_names_from_cli, parse_symbol_sets, parse_symbol_weights_from_cli,
     parse_user_constant_from_cli, parse_user_function_from_cli, print_footer, print_header,
-    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table, Args,
-    DisplayFormat,
+    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table,
+    run_search, Args, DisplayFormat, NormalizedArgs,
 };
 use manifest::{MatchInfo, RunManifest, SearchConfigInfo};
 use profile::Profile;
@@ -45,165 +45,6 @@ use report::{Report, ReportConfig};
 use std::time::Instant;
 
 // Args struct is now imported from cli::Args
-
-/// Build a GenConfig from CLI options
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::field_reassign_with_default)]
-fn build_gen_config(
-    max_lhs_complexity: u32,
-    max_rhs_complexity: u32,
-    min_type: symbol::NumType,
-    exclude: Option<&str>,
-    enable: Option<&str>,
-    only_symbols: Option<&str>,
-    exclude_rhs: Option<&str>,
-    enable_rhs: Option<&str>,
-    only_symbols_rhs: Option<&str>,
-    op_limits: Option<&str>,
-    op_limits_rhs: Option<&str>,
-    user_constants: Vec<profile::UserConstant>,
-    user_functions: Vec<udf::UserFunction>,
-    show_pruned_arith: bool,
-) -> Result<gen::GenConfig, String> {
-    let mut config = gen::GenConfig::default();
-    config.max_lhs_complexity = max_lhs_complexity;
-    config.max_rhs_complexity = max_rhs_complexity;
-    config.min_num_type = min_type;
-    config.user_constants = user_constants.clone();
-    config.user_functions = user_functions.clone();
-    config.show_pruned_arith = show_pruned_arith;
-
-    // Helper to filter symbols
-    fn filter_symbols(
-        symbols: &[symbol::Symbol],
-        allowed: Option<&std::collections::HashSet<u8>>,
-        excluded: Option<&std::collections::HashSet<u8>>,
-    ) -> Vec<symbol::Symbol> {
-        let mut result: Vec<symbol::Symbol> = symbols.to_vec();
-
-        if let Some(allow_set) = allowed {
-            result.retain(|s| allow_set.contains(&(*s as u8)));
-        }
-
-        if let Some(excl_set) = excluded {
-            result.retain(|s| !excl_set.contains(&(*s as u8)));
-        }
-
-        result
-    }
-
-    // Parse effective symbol sets (with -E/--enable support).
-    let (allowed, excluded) = parse_symbol_sets(only_symbols, exclude, enable);
-    let (allowed_rhs, excluded_rhs) = parse_symbol_sets(only_symbols_rhs, exclude_rhs, enable_rhs);
-
-    // Apply LHS symbol filtering
-    config.constants = filter_symbols(
-        symbol::Symbol::constants(),
-        allowed.as_ref(),
-        excluded.as_ref(),
-    );
-    config.unary_ops = filter_symbols(
-        symbol::Symbol::unary_ops(),
-        allowed.as_ref(),
-        excluded.as_ref(),
-    );
-    config.binary_ops = filter_symbols(
-        symbol::Symbol::binary_ops(),
-        allowed.as_ref(),
-        excluded.as_ref(),
-    );
-
-    // Parse -O/--op-limits into per-expression max symbol counts.
-    if let Some(spec) = op_limits {
-        config.symbol_max_counts = parse_symbol_count_limits(spec)?;
-    }
-    if let Some(spec_rhs) = op_limits_rhs {
-        config.rhs_symbol_max_counts = Some(parse_symbol_count_limits(spec_rhs)?);
-    }
-
-    // Add user constant symbols to the constants pool
-    // Map each user constant to its corresponding symbol (UserConstant0, UserConstant1, etc.)
-    for (idx, _uc) in user_constants.iter().enumerate() {
-        if idx < 16 {
-            if let Some(sym) = symbol::Symbol::from_byte(128 + idx as u8) {
-                // Only add if not excluded
-                let is_excluded = excluded
-                    .as_ref()
-                    .is_some_and(|excl| excl.contains(&(128 + idx as u8)));
-                if !is_excluded {
-                    config.constants.push(sym);
-                }
-            }
-        }
-    }
-
-    // Add user function symbols to the unary_ops pool
-    // Map each user function to its corresponding symbol (UserFunction0, UserFunction1, etc.)
-    for (idx, _uf) in user_functions.iter().enumerate() {
-        if idx < 16 {
-            if let Some(sym) = symbol::Symbol::from_byte(144 + idx as u8) {
-                // Only add if not excluded
-                let is_excluded = excluded
-                    .as_ref()
-                    .is_some_and(|excl| excl.contains(&(144 + idx as u8)));
-                if !is_excluded {
-                    config.unary_ops.push(sym);
-                }
-            }
-        }
-    }
-
-    // Build full symbol sets including user symbols for RHS overrides.
-    let mut all_constants = symbol::Symbol::constants().to_vec();
-    let mut all_unary = symbol::Symbol::unary_ops().to_vec();
-    let all_binary = symbol::Symbol::binary_ops().to_vec();
-    for idx in 0..user_constants.len().min(16) {
-        if let Some(sym) = symbol::Symbol::from_byte(128 + idx as u8) {
-            all_constants.push(sym);
-        }
-    }
-    for idx in 0..user_functions.len().min(16) {
-        if let Some(sym) = symbol::Symbol::from_byte(144 + idx as u8) {
-            all_unary.push(sym);
-        }
-    }
-
-    if allowed_rhs.is_some() || excluded_rhs.is_some() || op_limits_rhs.is_some() {
-        let constants_base = if allowed_rhs.is_some() {
-            all_constants
-        } else {
-            config.constants.clone()
-        };
-        let unary_base = if allowed_rhs.is_some() {
-            all_unary
-        } else {
-            config.unary_ops.clone()
-        };
-        let binary_base = if allowed_rhs.is_some() {
-            all_binary
-        } else {
-            config.binary_ops.clone()
-        };
-
-        config.rhs_constants = Some(filter_symbols(
-            &constants_base,
-            allowed_rhs.as_ref(),
-            excluded_rhs.as_ref(),
-        ));
-        config.rhs_unary_ops = Some(filter_symbols(
-            &unary_base,
-            allowed_rhs.as_ref(),
-            excluded_rhs.as_ref(),
-        ));
-        config.rhs_binary_ops = Some(filter_symbols(
-            &binary_base,
-            allowed_rhs.as_ref(),
-            excluded_rhs.as_ref(),
-        ));
-    }
-
-    Ok(config)
-}
 
 /// Evaluate an expression string and return the result
 fn eval_expression(
@@ -215,36 +56,6 @@ fn eval_expression(
     use expr::Expression;
     let expr = Expression::parse(expr_str).ok_or(eval::EvalError::Invalid)?;
     eval::evaluate_with_constants_and_functions(&expr, x, user_constants, user_functions)
-}
-
-/// Perform the search (helper function to avoid code duplication)
-#[allow(clippy::too_many_arguments)]
-fn perform_search(
-    gen_config: &gen::GenConfig,
-    search_config: &search::SearchConfig,
-    streaming: bool,
-    parallel: bool,
-    one_sided: bool,
-) -> (Vec<search::Match>, search::SearchStats) {
-    if one_sided {
-        search::search_one_sided_with_stats_and_config(gen_config, search_config)
-    } else if streaming {
-        search::search_streaming_with_config(gen_config, search_config)
-    } else {
-        #[cfg(feature = "parallel")]
-        {
-            if parallel {
-                search::search_parallel_with_stats_and_config(gen_config, search_config)
-            } else {
-                search::search_with_stats_and_config(gen_config, search_config)
-            }
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            let _ = parallel;
-            search::search_with_stats_and_config(gen_config, search_config)
-        }
-    }
 }
 
 fn match_in_equate_bounds(
@@ -830,73 +641,19 @@ fn main() {
         }
     }
 
-    // Handle -p legacy semantics: if profile looks like a number and no target, treat as target
-    // Original ries behavior: "ries -p 2.5" means "use default profile and search for 2.5"
-    let (profile_arg, resolved_target) = if let Some(ref profile_path) = args.profile {
-        if args.target.is_none() {
-            // Check if profile argument looks like a target (numeric)
-            if let Ok(val) = profile_path.to_string_lossy().parse::<f64>() {
-                // It's a number, treat as target and use default profile
-                (None, Some(val))
-            } else {
-                // Not a number, use as profile path
-                (args.profile.clone(), args.target)
-            }
-        } else {
-            // Both -p and target provided, use both normally
-            (args.profile.clone(), args.target)
-        }
-    } else {
-        (None, args.target)
-    };
-
-    // Handle -E legacy semantics: if enable looks like a number and no target, treat as target
-    // Original ries behavior: "ries -E 2.5" means "enable all and search for 2.5"
-    let (enable_arg, resolved_target) = if let Some(ref enable_str) = args.enable {
-        if resolved_target.is_none() {
-            // Check if enable argument looks like a target (numeric)
-            if let Ok(val) = enable_str.parse::<f64>() {
-                // It's a number, treat as target and use "all" for enable
-                (Some("all".to_string()), Some(val))
-            } else {
-                // Not a number, use as enable string
-                (args.enable.clone(), resolved_target)
-            }
-        } else {
-            // Both -E and target provided, use both normally
-            (args.enable.clone(), resolved_target)
-        }
-    } else {
-        (None, resolved_target)
-    };
-
-    // Handle -l legacy semantics: if level looks like a float and no target, treat as target + liouvillian
-    // Original ries: "-l 2.5" means liouvillian mode + target 2.5
-    // "-l3" or "--level 3" with an explicit target means level 3
-    let (level_value, liouvillian_override, final_target) = if resolved_target.is_some() {
-        // Target was explicitly provided, use -l as level
-        let level = args.level.parse::<f32>().unwrap_or(2.0);
-        (level, None, resolved_target)
-    } else {
-        // No explicit target - check if "level" looks like a target (has decimal point)
-        if args.level.contains('.') {
-            // Legacy: -l 2.5 means liouvillian + target 2.5
-            if let Ok(target_val) = args.level.parse::<f64>() {
-                (2.0, Some(true), Some(target_val))
-            } else {
-                // Parse error, let it fail later with proper error
-                let level = args.level.parse::<f32>().unwrap_or(2.0);
-                (level, None, None)
-            }
-        } else {
-            // It's an integer level, but no target - still an error later
-            let level = args.level.parse::<f32>().unwrap_or(2.0);
-            (level, None, None)
-        }
-    };
-
-    // Use final_target instead of resolved_target from here on
-    let resolved_target = final_target;
+    // Handle legacy argument semantics using the normalize_legacy_args function
+    let NormalizedArgs {
+        target: resolved_target,
+        profile: profile_arg,
+        enable: enable_arg,
+        level: level_value,
+        liouvillian: liouvillian_override,
+    } = normalize_legacy_args(
+        args.profile.as_deref().map(|p| p.to_string_lossy()).as_deref(),
+        args.enable.as_deref(),
+        &args.level,
+        args.target,
+    );
 
     // Load profile early (needed for both --eval-expression and search modes)
     let mut profile = if let Some(profile_path) = profile_arg.as_deref() {
@@ -1128,7 +885,7 @@ fn main() {
         symbol::NumType::Constructible
     } else if args.algebraic {
         symbol::NumType::Algebraic
-    } else if args.liouvillian || liouvillian_override.unwrap_or(false) {
+    } else if args.liouvillian || liouvillian_override {
         symbol::NumType::Liouvillian
     } else {
         symbol::NumType::Transcendental
@@ -1329,25 +1086,27 @@ fn main() {
             // No fast match found, do full search
             // Deterministic mode disables parallelism for reproducible results
             let use_parallel = !args.deterministic && args.parallel;
-            perform_search(
+            let result = run_search(
                 &gen_config,
                 &search_config,
                 use_streaming,
                 use_parallel,
                 args.one_sided,
-            )
+            );
+            (result.matches, result.stats)
         }
     } else {
         // Not in quick mode, always do full search
         // Deterministic mode disables parallelism for reproducible results
         let use_parallel = !args.deterministic && args.parallel;
-        perform_search(
+        let result = run_search(
             &gen_config,
             &search_config,
             use_streaming,
             use_parallel,
             args.one_sided,
-        )
+        );
+        (result.matches, result.stats)
     };
 
     let mut matches = matches;
@@ -1379,14 +1138,14 @@ fn main() {
             let mut tighter_config = search_config.clone();
             tighter_config.max_error = base_error * factor;
 
-            let (level_matches, _) = perform_search(
+            let result = run_search(
                 &gen_config,
                 &tighter_config,
                 use_streaming,
                 use_parallel,
                 args.one_sided,
             );
-            analyzer.add_level(level_matches);
+            analyzer.add_level(result.matches);
         }
 
         Some(analyzer.analyze())
