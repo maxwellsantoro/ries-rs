@@ -4,6 +4,8 @@
 
 // Allow field reassignment with default in test code - common pattern for config building
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+// Allow unused code in main - some helper functions are kept for future use
+#![allow(dead_code)]
 
 mod eval;
 mod expr;
@@ -22,6 +24,7 @@ mod report;
 mod search;
 mod stability;
 mod symbol;
+mod symbol_table;
 mod thresholds;
 mod udf;
 
@@ -29,13 +32,12 @@ mod cli;
 
 use clap::Parser;
 use cli::{
-    Args, DisplayFormat, canon_reduction_enabled,
-    compute_significant_digits_tolerance, format_value,
-    parse_diagnostics, parse_display_format, parse_memory_size_bytes, parse_symbol_count_limits,
+    canon_reduction_enabled, compute_significant_digits_tolerance, format_value, parse_diagnostics,
+    parse_display_format, parse_memory_size_bytes, parse_symbol_count_limits,
     parse_symbol_names_from_cli, parse_symbol_sets, parse_symbol_weights_from_cli,
     parse_user_constant_from_cli, parse_user_function_from_cli, print_footer, print_header,
-    print_match_absolute, print_match_relative, print_show_work_details,
-    print_symbol_table,
+    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table, Args,
+    DisplayFormat,
 };
 use manifest::{MatchInfo, RunManifest, SearchConfigInfo};
 use profile::Profile;
@@ -407,7 +409,6 @@ fn expression_respects_constraints(
         .is_none_or(|max_cycles| trig_ops <= max_cycles)
 }
 
-
 #[derive(Clone)]
 enum SolveNodeKind {
     Atom,
@@ -674,7 +675,6 @@ fn canonical_expression_key(expression: &expr::Expression) -> Option<String> {
     let node = build_solve_ast(expression)?;
     Some(canonical_node_key(&node))
 }
-
 
 fn digit_signature(expression: &expr::Expression) -> String {
     let mut digits: Vec<char> = expression
@@ -970,33 +970,8 @@ fn main() {
         }
     }
 
-    // Apply symbol weight overrides globally (used by complexity calculations).
-    let mut weight_overrides = profile.symbol_weights.clone();
-    for (idx, user_constant) in profile.constants.iter().enumerate().take(16) {
-        if let Some(sym) = symbol::Symbol::from_byte(128 + idx as u8) {
-            weight_overrides.insert(sym, user_constant.weight);
-        }
-    }
-    for (idx, user_function) in profile.functions.iter().enumerate().take(16) {
-        if let Some(sym) = symbol::Symbol::from_byte(144 + idx as u8) {
-            weight_overrides.insert(sym, user_function.weight as u32);
-        }
-    }
-    symbol::set_weight_overrides(weight_overrides);
-
-    // Apply symbol display-name overrides globally.
-    let mut name_overrides = profile.symbol_names.clone();
-    for (idx, user_constant) in profile.constants.iter().enumerate().take(16) {
-        if let Some(sym) = symbol::Symbol::from_byte(128 + idx as u8) {
-            name_overrides.insert(sym, user_constant.name.clone());
-        }
-    }
-    for (idx, user_function) in profile.functions.iter().enumerate().take(16) {
-        if let Some(sym) = symbol::Symbol::from_byte(144 + idx as u8) {
-            name_overrides.insert(sym, user_function.name.clone());
-        }
-    }
-    symbol::set_name_overrides(name_overrides);
+    // Build the symbol table from the profile for per-run configuration
+    let symbol_table = symbol_table::SymbolTable::from_profile(&profile);
 
     // Handle --eval-expression mode (evaluate and exit)
     if let Some(expr_str) = &args.find_expression {
@@ -1061,11 +1036,15 @@ fn main() {
         println!();
 
         // Try to find rational approximation first
-        if let Some((num, den)) = pslq::find_rational_approximation(target, config.max_coefficient) {
+        if let Some((num, den)) = pslq::find_rational_approximation(target, config.max_coefficient)
+        {
             let approx = num as f64 / den as f64;
             let error = (approx - target).abs();
             println!("   Rational approximation:");
-            println!("   {} / {} = {:.15}  (error: {:.2e})", num, den, approx, error);
+            println!(
+                "   {} / {} = {:.15}  (error: {:.2e})",
+                num, den, approx, error
+            );
             println!();
         }
 
@@ -1073,7 +1052,7 @@ fn main() {
         match pslq::find_integer_relation(target, &config) {
             Some(relation) => {
                 println!("   Integer relation found:");
-                println!("   {}", relation.to_string());
+                println!("   {}", relation.format());
                 println!("   Residual: {:.2e}", relation.residual);
                 if relation.is_exact {
                     println!("   (exact match)");
@@ -1158,7 +1137,7 @@ fn main() {
     }
 
     // Build generation config with CLI options
-    let gen_config = match build_gen_config(
+    let mut gen_config = match build_gen_config(
         max_lhs_complexity,
         max_rhs_complexity,
         min_type,
@@ -1180,6 +1159,9 @@ fn main() {
             std::process::exit(2);
         }
     };
+
+    // Set the symbol table from the profile (for per-run weights and names)
+    gen_config.symbol_table = std::sync::Arc::new(symbol_table);
 
     // Determine pool size based on mode
     let use_report = args.report && !args.classic;
@@ -1277,11 +1259,13 @@ fn main() {
             }
         }
         // Check memory abort threshold for auto-switching to streaming
-        if let (Some(max_bytes), Some(threshold)) = (parsed_max_memory, args.memory_abort_threshold) {
+        if let (Some(max_bytes), Some(threshold)) = (parsed_max_memory, args.memory_abort_threshold)
+        {
             if (0.0..=1.0).contains(&threshold) {
                 let budget = (max_bytes as f64 * threshold) as u64;
                 let estimate = (pool_size as u64).saturating_mul(4096).saturating_add(
-                    (max_lhs_complexity as u64 + max_rhs_complexity as u64).saturating_mul(1_000_000),
+                    (max_lhs_complexity as u64 + max_rhs_complexity as u64)
+                        .saturating_mul(1_000_000),
                 );
                 if estimate > budget {
                     use_streaming = true;
@@ -1682,7 +1666,6 @@ fn build_manifest(
 
     RunManifest::new(config, results)
 }
-
 
 #[cfg(test)]
 mod tests {

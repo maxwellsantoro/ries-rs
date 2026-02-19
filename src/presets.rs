@@ -49,6 +49,7 @@ impl Preset {
     }
 
     /// Parse from string (for CLI)
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "analytic-nt" | "ant" | "analytic" => Some(Preset::AnalyticNT),
@@ -62,6 +63,7 @@ impl Preset {
     }
 
     /// Generate the profile for this preset
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_profile(&self) -> Profile {
         let mut profile = Profile::new();
 
@@ -256,6 +258,7 @@ impl Preset {
 }
 
 /// Print available presets (for --list-presets)
+#[allow(clippy::print_literal)]
 pub fn print_presets() {
     println!("Available domain presets:");
     println!();

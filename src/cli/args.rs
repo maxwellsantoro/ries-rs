@@ -391,7 +391,10 @@ pub struct Args {
 
 /// Parse a user constant from CLI argument.
 /// Format: "weight:name:description:value"
-pub fn parse_user_constant_from_cli(profile: &mut profile::Profile, spec: &str) -> Result<(), String> {
+pub fn parse_user_constant_from_cli(
+    profile: &mut profile::Profile,
+    spec: &str,
+) -> Result<(), String> {
     use profile::UserConstant;
     use symbol::NumType;
 
@@ -460,7 +463,10 @@ fn is_rational(v: f64) -> bool {
 
 /// Parse a user-defined function from CLI argument.
 /// Format: "weight:name:description:formula"
-pub fn parse_user_function_from_cli(profile: &mut profile::Profile, spec: &str) -> Result<(), String> {
+pub fn parse_user_function_from_cli(
+    profile: &mut profile::Profile,
+    spec: &str,
+) -> Result<(), String> {
     let udf = udf::UserFunction::parse(spec)?;
     profile.functions.push(udf);
     Ok(())
@@ -468,7 +474,10 @@ pub fn parse_user_function_from_cli(profile: &mut profile::Profile, spec: &str) 
 
 /// Parse symbol names from CLI argument.
 /// Format: ":p:PI :e:EULER"
-pub fn parse_symbol_names_from_cli(profile: &mut profile::Profile, spec: &str) -> Result<(), String> {
+pub fn parse_symbol_names_from_cli(
+    profile: &mut profile::Profile,
+    spec: &str,
+) -> Result<(), String> {
     for part in spec.split_whitespace() {
         if !part.starts_with(':') {
             continue;
@@ -503,7 +512,10 @@ pub fn parse_symbol_names_from_cli(profile: &mut profile::Profile, spec: &str) -
 
 /// Parse symbol weights from CLI argument.
 /// Format: ":W:20 :p:25"
-pub fn parse_symbol_weights_from_cli(profile: &mut profile::Profile, spec: &str) -> Result<(), String> {
+pub fn parse_symbol_weights_from_cli(
+    profile: &mut profile::Profile,
+    spec: &str,
+) -> Result<(), String> {
     for part in spec.split_whitespace() {
         if !part.starts_with(':') {
             continue;

@@ -288,6 +288,115 @@ impl HighPrec {
     pub fn format(&self, decimal_places: u32) -> String {
         format!("{:.1$}", self.inner, decimal_places as usize)
     }
+
+    // =========================================================================
+    // Precision-aware constant constructors
+    // =========================================================================
+    // These methods create constants at a specified precision without
+    // seeding from f64 (which would limit precision to ~16 decimal digits).
+
+    /// Get π (pi) at the specified precision (in bits)
+    ///
+    /// This uses rug's built-in constant computation to achieve full precision
+    /// rather than seeding from an f64 value.
+    pub fn pi_with_prec(prec_bits: u32) -> Self {
+        Self {
+            inner: rug::Float::with_val(prec_bits, rug::float::Constant::Pi),
+        }
+    }
+
+    /// Get e (Euler's number) at the specified precision (in bits)
+    ///
+    /// This uses rug's built-in constant computation to achieve full precision
+    /// rather than seeding from an f64 value.
+    pub fn e_with_prec(prec_bits: u32) -> Self {
+        Self {
+            inner: rug::Float::with_val(prec_bits, rug::float::Constant::Euler),
+        }
+    }
+
+    /// Create from a decimal string at the specified precision (in bits)
+    ///
+    /// This allows creating constants with more precision than f64 allows
+    /// by parsing a long decimal string directly.
+    pub fn from_str_with_prec(s: &str, prec_bits: u32) -> Self {
+        Self {
+            inner: rug::Float::with_val(prec_bits, s),
+        }
+    }
+
+    /// Get the golden ratio φ = (1 + √5) / 2 at the specified precision
+    ///
+    /// Computed using high-precision arithmetic to avoid f64 seeding.
+    pub fn phi_with_prec(prec_bits: u32) -> Self {
+        let five = Self::from_str_with_prec("5", prec_bits);
+        let two = Self::from_str_with_prec("2", prec_bits);
+        let one = Self::one_with_prec(prec_bits);
+        let sqrt5 = five.sqrt();
+        (one + sqrt5) / two
+    }
+
+    /// Get 1 at the specified precision
+    pub fn one_with_prec(prec_bits: u32) -> Self {
+        Self::from_str_with_prec("1", prec_bits)
+    }
+
+    /// Get 0 at the specified precision
+    pub fn zero_with_prec(prec_bits: u32) -> Self {
+        Self::from_str_with_prec("0", prec_bits)
+    }
+
+    /// Get the Euler-Mascheroni constant γ ≈ 0.5772... at the specified precision
+    ///
+    /// Uses a 120-digit decimal string for full precision beyond f64 limits.
+    /// γ is the limiting difference between the harmonic series and natural logarithm.
+    pub fn gamma_with_prec(prec_bits: u32) -> Self {
+        // 120+ digits of Euler-Mascheroni constant γ
+        // Source: https://oeis.org/A001620
+        Self::from_str_with_prec(
+            "0.5772156649015328606065120900824024310421593359399235988057672348848677267776646709369470632917467495",
+            prec_bits,
+        )
+    }
+
+    /// Get Apéry's constant ζ(3) ≈ 1.2020... at the specified precision
+    ///
+    /// Uses a 120-digit decimal string for full precision beyond f64 limits.
+    /// ζ(3) = Σ(1/n³) is the value of the Riemann zeta function at 3.
+    pub fn apery_with_prec(prec_bits: u32) -> Self {
+        // 120+ digits of Apéry's constant ζ(3)
+        // Source: https://oeis.org/A002117
+        Self::from_str_with_prec(
+            "1.2020569031595942853997381615114499907649862923404988817922715553418382057863130901864558736093352581",
+            prec_bits,
+        )
+    }
+
+    /// Get Catalan's constant G ≈ 0.9159... at the specified precision
+    ///
+    /// Uses a 120-digit decimal string for full precision beyond f64 limits.
+    /// G = Σ((-1)^n / (2n+1)²) is a constant appearing in combinatorics.
+    pub fn catalan_with_prec(prec_bits: u32) -> Self {
+        // 120+ digits of Catalan's constant G
+        // Source: https://oeis.org/A006752
+        Self::from_str_with_prec(
+            "0.9159655941772190150546035149323841107741493742816721342664981196217630197762547694793565129261151062",
+            prec_bits,
+        )
+    }
+
+    /// Get the plastic constant ρ ≈ 1.3247... at the specified precision
+    ///
+    /// Uses a 120-digit decimal string for full precision beyond f64 limits.
+    /// ρ is the real root of x³ = x + 1, related to the Padovan sequence.
+    pub fn plastic_with_prec(prec_bits: u32) -> Self {
+        // 120+ digits of plastic constant ρ
+        // Source: https://oeis.org/A060006
+        Self::from_str_with_prec(
+            "1.3247179572447460259609088544780973407344040569017333645340150503028278512455475940546993479817872807",
+            prec_bits,
+        )
+    }
 }
 
 #[cfg(feature = "highprec")]
@@ -503,5 +612,135 @@ mod tests {
 
         let ln2 = HighPrec::from_f64(2.0).ln();
         assert!((ln2.to_f64() - 2.0_f64.ln()).abs() < 1e-15);
+    }
+
+    // ========================================================================
+    // Precision-aware constant tests
+    // These tests verify that precision-aware constructors provide
+    // accuracy beyond f64's ~16 decimal digit limit.
+    // ========================================================================
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_pi_precision_exceeds_f64() {
+        // π at 256-bit precision should differ from f64-seeded value beyond 16 digits
+        let pi_hp = HighPrec::pi_with_prec(256);
+        let pi_f64 = HighPrec::from_f64_with_prec(std::f64::consts::PI, 256);
+
+        // Format both to 40 decimal places
+        let hp_str = format!("{:.40}", pi_hp.inner);
+        let f64_str = format!("{:.40}", pi_f64.inner);
+
+        // The high-precision π should start with known digits
+        // π = 3.1415926535897932384626433832795028841971...
+        assert!(hp_str.starts_with("3.14159265358979323846"));
+
+        // After ~16 digits, f64 version loses accuracy but high-prec continues
+        // The two strings should be identical up to ~16 digits
+        let common_prefix_len = hp_str
+            .chars()
+            .zip(f64_str.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        // f64 has ~15-16 significant digits, so they match up to about 17 chars (including "3.")
+        assert!(common_prefix_len >= 17 && common_prefix_len < 25);
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_e_precision_exceeds_f64() {
+        // e at 256-bit precision should differ from f64-seeded value beyond 16 digits
+        let e_hp = HighPrec::e_with_prec(256);
+        let e_f64 = HighPrec::from_f64_with_prec(std::f64::consts::E, 256);
+
+        let hp_str = format!("{:.40}", e_hp.inner);
+        let f64_str = format!("{:.40}", e_f64.inner);
+
+        // e = 2.7182818284590452353602874713526624977572...
+        assert!(hp_str.starts_with("2.7182818284590452353"));
+
+        let common_prefix_len = hp_str
+            .chars()
+            .zip(f64_str.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        assert!(common_prefix_len >= 17 && common_prefix_len < 25);
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_gamma_precision_exceeds_f64() {
+        // Euler-Mascheroni constant at 256-bit precision
+        let gamma_hp = HighPrec::gamma_with_prec(256);
+        // f64 only has about 16 digits of this constant
+        let gamma_f64_approx = 0.5772156649015329;
+        let gamma_f64 = HighPrec::from_f64_with_prec(gamma_f64_approx, 256);
+
+        let hp_str = format!("{:.40}", gamma_hp.inner);
+        let f64_str = format!("{:.40}", gamma_f64.inner);
+
+        // γ = 0.5772156649015328606065120900824024310421...
+        assert!(hp_str.starts_with("0.57721566490153286060"));
+
+        // The high-prec version should have more accurate digits
+        let common_prefix_len = hp_str
+            .chars()
+            .zip(f64_str.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        // They should diverge somewhere after 16-17 digits
+        assert!(common_prefix_len >= 16 && common_prefix_len < 22);
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_apery_precision_exceeds_f64() {
+        // Apéry's constant ζ(3) at 256-bit precision
+        let apery_hp = HighPrec::apery_with_prec(256);
+        let apery_f64_approx = 1.2020569031595942;
+        let apery_f64 = HighPrec::from_f64_with_prec(apery_f64_approx, 256);
+
+        let hp_str = format!("{:.40}", apery_hp.inner);
+        let f64_str = format!("{:.40}", apery_f64.inner);
+
+        // ζ(3) = 1.2020569031595942853997381615114499907649...
+        assert!(hp_str.starts_with("1.2020569031595942853"));
+
+        let common_prefix_len = hp_str
+            .chars()
+            .zip(f64_str.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        assert!(common_prefix_len >= 16 && common_prefix_len < 22);
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_catalan_precision() {
+        let catalan_hp = HighPrec::catalan_with_prec(256);
+        let hp_str = format!("{:.40}", catalan_hp.inner);
+
+        // Catalan's constant G = 0.9159655941772190150546035149323841107741...
+        assert!(hp_str.starts_with("0.91596559417721901505"));
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_plastic_precision() {
+        let plastic_hp = HighPrec::plastic_with_prec(256);
+        let hp_str = format!("{:.40}", plastic_hp.inner);
+
+        // Plastic constant ρ = 1.3247179572447460259609088544780973407344...
+        assert!(hp_str.starts_with("1.32471795724474602596"));
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_phi_with_prec() {
+        let phi_hp = HighPrec::phi_with_prec(256);
+        let hp_str = format!("{:.40}", phi_hp.inner);
+
+        // Golden ratio φ = (1 + √5) / 2 = 1.6180339887498948482045868343656381177203...
+        assert!(hp_str.starts_with("1.61803398874989484820"));
     }
 }

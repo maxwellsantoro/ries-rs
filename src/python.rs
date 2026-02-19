@@ -151,34 +151,8 @@ impl From<crate::search::Match> for PyMatch {
     }
 }
 
-fn apply_profile_overrides(profile: &crate::profile::Profile) {
-    use std::collections::HashMap;
-
-    let mut weight_overrides: HashMap<crate::symbol::Symbol, u32> = profile.symbol_weights.clone();
-    for (idx, user_constant) in profile.constants.iter().enumerate().take(16) {
-        if let Some(sym) = crate::symbol::Symbol::from_byte(128 + idx as u8) {
-            weight_overrides.insert(sym, user_constant.weight);
-        }
-    }
-    for (idx, user_function) in profile.functions.iter().enumerate().take(16) {
-        if let Some(sym) = crate::symbol::Symbol::from_byte(144 + idx as u8) {
-            weight_overrides.insert(sym, user_function.weight as u32);
-        }
-    }
-    crate::symbol::set_weight_overrides(weight_overrides);
-
-    let mut name_overrides: HashMap<crate::symbol::Symbol, String> = profile.symbol_names.clone();
-    for (idx, user_constant) in profile.constants.iter().enumerate().take(16) {
-        if let Some(sym) = crate::symbol::Symbol::from_byte(128 + idx as u8) {
-            name_overrides.insert(sym, user_constant.name.clone());
-        }
-    }
-    for (idx, user_function) in profile.functions.iter().enumerate().take(16) {
-        if let Some(sym) = crate::symbol::Symbol::from_byte(144 + idx as u8) {
-            name_overrides.insert(sym, user_function.name.clone());
-        }
-    }
-    crate::symbol::set_name_overrides(name_overrides);
+fn build_symbol_table(profile: &crate::profile::Profile) -> crate::symbol_table::SymbolTable {
+    crate::symbol_table::SymbolTable::from_profile(profile)
 }
 
 /// Build a GenConfig from simple parameters
@@ -189,6 +163,7 @@ fn build_gen_config(
 ) -> crate::gen::GenConfig {
     use crate::symbol::{NumType, Symbol};
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     let mut constants: Vec<Symbol> = Symbol::constants().to_vec();
     let mut unary_ops: Vec<Symbol> = Symbol::unary_ops().to_vec();
@@ -204,6 +179,8 @@ fn build_gen_config(
             unary_ops.push(sym);
         }
     }
+
+    let symbol_table = build_symbol_table(profile);
 
     crate::gen::GenConfig {
         max_lhs_complexity,
@@ -223,6 +200,7 @@ fn build_gen_config(
         user_constants: profile.constants.clone(),
         user_functions: profile.functions.clone(),
         show_pruned_arith: false,
+        symbol_table: Arc::new(symbol_table),
     }
 }
 

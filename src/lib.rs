@@ -92,14 +92,15 @@ pub mod pool;
 #[cfg(feature = "highprec")]
 pub mod precision;
 pub mod presets;
-pub mod pslq;
 pub mod profile;
+pub mod pslq;
 #[cfg(feature = "python")]
 mod python;
 pub mod report;
 pub mod search;
 pub mod stability;
 pub mod symbol;
+pub mod symbol_table;
 pub mod thresholds;
 pub mod udf;
 #[cfg(feature = "wasm")]
@@ -134,7 +135,8 @@ pub use expr::{Expression, OutputFormat};
 pub use gen::GenConfig;
 pub use profile::{Profile, UserConstant};
 pub use search::{Match, SearchConfig, SearchStats};
-pub use symbol::{set_weight_overrides, NumType, Symbol};
+pub use symbol::{NumType, Symbol};
+pub use symbol_table::SymbolTable;
 pub use udf::UserFunction;
 
 // Threshold constants
