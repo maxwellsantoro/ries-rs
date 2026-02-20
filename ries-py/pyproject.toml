@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "ries-rs"
 version = "0.1.0"
 description = "Find algebraic equations given their solution"
-readme = "README.md"
+readme = "../README.md"
 license = {text = "MIT"}
 authors = [
     {name = "RIES Contributors"}
@@ -33,5 +33,4 @@ Documentation = "https://github.com/maxwellsantoro/ries-rs#readme"
 Repository = "https://github.com/maxwellsantoro/ries-rs.git"
 
 [tool.maturin]
-features = ["python"]
 strip = true

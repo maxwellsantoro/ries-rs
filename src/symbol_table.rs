@@ -297,7 +297,7 @@ pub fn user_constant_symbol(index: usize) -> Symbol {
         13 => Symbol::UserConstant13,
         14 => Symbol::UserConstant14,
         15 => Symbol::UserConstant15,
-        _ => Symbol::UserConstant0, // Fallback
+        _ => panic!("User constant index out of bounds: {}", index),
     }
 }
 
@@ -321,7 +321,7 @@ pub fn user_function_symbol(index: usize) -> Symbol {
         13 => Symbol::UserFunction13,
         14 => Symbol::UserFunction14,
         15 => Symbol::UserFunction15,
-        _ => Symbol::UserFunction0, // Fallback
+        _ => panic!("User function index out of bounds: {}", index),
     }
 }
 

@@ -77,6 +77,14 @@ pub const NEWTON_FINAL_TOLERANCE: f64 = 1e-10;
 /// Value: 1e-10
 pub const DEGENERATE_TEST_THRESHOLD: f64 = 1e-10;
 
+/// Tolerance for checking degenerate matches
+///
+/// If an expression is degenerate, we still check if its value matches
+/// an RHS expression within this tolerance to catch true repeated roots.
+///
+/// Value: 0.01
+pub const DEGENERATE_RANGE_TOLERANCE: f64 = 0.01;
+
 /// Maximum x value magnitude before Newton-Raphson is considered diverged
 ///
 /// Value: 1e100

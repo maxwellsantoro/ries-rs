@@ -1,0 +1,20 @@
+[package]
+name = "ries-py"
+version = "0.1.0"
+edition = "2021"
+authors = ["Maxwell Santoro"]
+description = "Find algebraic equations given their solution - Python bindings"
+license = "MIT"
+publish = false
+
+[lib]
+name = "ries_rs"
+crate-type = ["cdylib"]
+
+[features]
+default = ["parallel"]
+parallel = ["ries_core/parallel"]
+
+[dependencies]
+ries_core = { package = "ries", path = ".." }
+pyo3 = { version = "0.22", features = ["extension-module"] }

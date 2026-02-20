@@ -94,8 +94,6 @@ pub mod precision;
 pub mod presets;
 pub mod profile;
 pub mod pslq;
-#[cfg(feature = "python")]
-mod python;
 pub mod report;
 pub mod search;
 pub mod stability;

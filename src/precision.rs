@@ -646,7 +646,7 @@ mod tests {
             .take_while(|(a, b)| a == b)
             .count();
         // f64 has ~15-16 significant digits, so they match up to about 17 chars (including "3.")
-        assert!(common_prefix_len >= 17 && common_prefix_len < 25);
+        assert!((17..25).contains(&common_prefix_len));
     }
 
     #[cfg(feature = "highprec")]
@@ -670,7 +670,7 @@ mod tests {
             .zip(f64_str.chars())
             .take_while(|(a, b)| a == b)
             .count();
-        assert!(common_prefix_len >= 17 && common_prefix_len < 25);
+        assert!((17..25).contains(&common_prefix_len));
     }
 
     #[cfg(feature = "highprec")]
@@ -699,7 +699,7 @@ mod tests {
             .take_while(|(a, b)| a == b)
             .count();
         // They should diverge somewhere after 16-17 digits
-        assert!(common_prefix_len >= 16 && common_prefix_len < 22);
+        assert!((16..22).contains(&common_prefix_len));
     }
 
     #[cfg(feature = "highprec")]
@@ -721,7 +721,7 @@ mod tests {
             .zip(f64_str.chars())
             .take_while(|(a, b)| a == b)
             .count();
-        assert!(common_prefix_len >= 16 && common_prefix_len < 22);
+        assert!((16..22).contains(&common_prefix_len));
     }
 
     #[cfg(feature = "highprec")]

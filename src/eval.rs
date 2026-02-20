@@ -11,7 +11,6 @@ use crate::expr::Expression;
 use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::{UdfOp, UserFunction};
-use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Result of evaluating an expression
@@ -29,55 +28,76 @@ pub struct EvalResult {
 ///
 /// These errors indicate what went wrong during expression evaluation.
 /// For more detailed context, use the error message methods.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EvalError {
     /// Stack underflow during evaluation
+    #[error("Stack underflow: not enough operands on stack")]
     StackUnderflow,
     /// Division by zero
+    #[error("Division by zero: divisor was zero or near-zero")]
     DivisionByZero,
     /// Logarithm of non-positive number
+    #[error("Logarithm domain error: argument was non-positive")]
     LogDomain,
     /// Square root of negative number
+    #[error("Square root domain error: argument was negative")]
     SqrtDomain,
     /// Overflow or NaN result
+    #[error("Overflow: result is infinite or NaN")]
     Overflow,
     /// Invalid expression
+    #[error("Invalid expression: malformed or incomplete")]
     Invalid,
+    /// Error with position context
+    #[error("{err} at position {pos}")]
+    WithPosition {
+        #[source]
+        err: Box<EvalError>,
+        pos: usize,
+    },
+    /// Error with value context
+    #[error("{err} (value: {val})")]
+    WithValue {
+        #[source]
+        err: Box<EvalError>,
+        val: ordered_float::OrderedFloat<f64>,
+    },
+    /// Error with expression context
+    #[error("{err} in expression '{expr}'")]
+    WithExpression {
+        #[source]
+        err: Box<EvalError>,
+        expr: String,
+    },
 }
 
 impl EvalError {
-    /// Get a human-readable description of this error
-    pub fn description(&self) -> &'static str {
-        match self {
-            EvalError::StackUnderflow => "Stack underflow: not enough operands on stack",
-            EvalError::DivisionByZero => "Division by zero: divisor was zero or near-zero",
-            EvalError::LogDomain => "Logarithm domain error: argument was non-positive",
-            EvalError::SqrtDomain => "Square root domain error: argument was negative",
-            EvalError::Overflow => "Overflow: result is infinite or NaN",
-            EvalError::Invalid => "Invalid expression: malformed or incomplete",
-        }
-    }
-
-    /// Create a detailed error message with context
-    pub fn with_context(&self, position: Option<usize>, value: Option<f64>) -> String {
-        let mut msg = self.description().to_string();
+    /// Create a detailed error message with context (backward compatibility)
+    pub fn with_context(self, position: Option<usize>, value: Option<f64>) -> Self {
+        let mut err = self;
         if let Some(pos) = position {
-            msg.push_str(&format!(" at position {}", pos));
+            err = EvalError::WithPosition {
+                err: Box::new(err),
+                pos,
+            };
         }
         if let Some(val) = value {
-            msg.push_str(&format!(" (value: {})", val));
+            err = EvalError::WithValue {
+                err: Box::new(err),
+                val: ordered_float::OrderedFloat(val),
+            };
         }
-        msg
+        err
+    }
+    
+    /// Add expression context
+    pub fn with_expression(self, expr: String) -> Self {
+        EvalError::WithExpression {
+            err: Box::new(self),
+            expr,
+        }
     }
 }
-
-impl fmt::Display for EvalError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.description())
-    }
-}
-
-impl std::error::Error for EvalError {}
 
 /// Mathematical constants
 pub mod constants {

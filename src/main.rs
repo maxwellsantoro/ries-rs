@@ -1071,9 +1071,12 @@ fn main() {
     // This handles cases like pi, e, sqrt(2), phi, integers, etc. instantly
     let (matches, stats) = if stop_at_exact || args.classic {
         // Only use fast path when we're looking for quick results
-        if let Some(fast_match) =
-            fast_match::find_fast_match(target, &profile.constants, &fast_config, &gen_config.symbol_table)
-        {
+        if let Some(fast_match) = fast_match::find_fast_match(
+            target,
+            &profile.constants,
+            &fast_config,
+            &gen_config.symbol_table,
+        ) {
             use search::SearchStats;
             let fast_stats = SearchStats {
                 lhs_count: 1,
@@ -1233,9 +1236,23 @@ fn main() {
         for m in shown.iter().copied() {
             let show_solve = args.solve && !args.no_solve;
             if args.absolute {
-                print_match_absolute(m, show_solve, output_format, args.explicit_multiply, None, Some(&gen_config.symbol_table));
+                print_match_absolute(
+                    m,
+                    show_solve,
+                    output_format,
+                    args.explicit_multiply,
+                    None,
+                    Some(&gen_config.symbol_table),
+                );
             } else {
-                print_match_relative(m, show_solve, output_format, args.explicit_multiply, None, Some(&gen_config.symbol_table));
+                print_match_relative(
+                    m,
+                    show_solve,
+                    output_format,
+                    args.explicit_multiply,
+                    None,
+                    Some(&gen_config.symbol_table),
+                );
             }
         }
 
