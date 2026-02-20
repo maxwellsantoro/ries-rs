@@ -1139,12 +1139,17 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
         return generate_all(config, target);
     }
 
-    // Split work by first symbol
+    // Generate valid prefixes of length 1 and 2 to create smaller,
+    // more evenly distributed tasks for Rayon to schedule.
+    let mut prefixes: Vec<(Expression, usize)> = Vec::new();
+    let mut immediate_results_lhs = Vec::new();
+    let mut immediate_results_rhs = Vec::new();
+
     let first_symbols: Vec<Symbol> = config
         .constants
         .iter()
         .copied()
-        .chain(if config.generate_lhs {
+        .chain(if config.generate_lhs && !config.constants.contains(&Symbol::X) {
             Some(Symbol::X)
         } else {
             None
@@ -1157,23 +1162,108 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
         })
         .collect();
 
-    let results: Vec<(Vec<EvaluatedExpr>, Vec<EvaluatedExpr>)> = first_symbols
-        .par_iter()
-        .map(|&first_sym| {
+    for sym1 in first_symbols {
+        let mut expr1 = Expression::new();
+        expr1.push_with_table(sym1, &config.symbol_table);
+        
+        let max_complexity = if expr1.contains_x() {
+            config.max_lhs_complexity
+        } else {
+            std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
+        };
+        
+        if expr1.complexity() > max_complexity {
+            continue;
+        }
+
+        // 1. Evaluate length-1 prefix (simulate top of generate_recursive)
+        if let Ok(result) = evaluate_fast_with_constants_and_functions(
+            &expr1,
+            target,
+            &config.user_constants,
+            &config.user_functions,
+        ) {
+            if result.value.is_finite()
+                && result.value.abs() <= MAX_GENERATED_VALUE
+                && result.num_type >= config.min_num_type
+            {
+                let eval_expr = EvaluatedExpr::new(
+                    expr1.clone(),
+                    result.value,
+                    result.derivative,
+                    result.num_type,
+                );
+                
+                if expr1.contains_x() {
+                    if config.generate_lhs && expr1.complexity() <= config.max_lhs_complexity {
+                        immediate_results_lhs.push(eval_expr);
+                    }
+                } else if config.generate_rhs && expr1.complexity() <= config.max_rhs_complexity {
+                    immediate_results_rhs.push(eval_expr);
+                }
+            }
+        }
+        
+        if expr1.len() >= config.max_length {
+            continue;
+        }
+
+        // 2. Add next symbols (simulate bottom of generate_recursive)
+        
+        // Constants (+1 stack)
+        let mut next_constants = config.constants.clone();
+        if config.generate_lhs && !next_constants.contains(&Symbol::X) {
+            next_constants.push(Symbol::X);
+        }
+        
+        for &sym2 in &next_constants {
+            let sym2_weight = config.symbol_table.weight(sym2);
+            let next_max = if expr1.contains_x() || sym2 == Symbol::X {
+                config.max_lhs_complexity
+            } else {
+                std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
+            };
+            
+            if expr1.complexity() + sym2_weight <= next_max && !exceeds_symbol_limit(config, &expr1, sym2) {
+                let mut expr2 = expr1.clone();
+                expr2.push_with_table(sym2, &config.symbol_table);
+                // Min complexity check: for stack depth 2, we need at least 1 binary op
+                let min_remaining = min_complexity_to_complete(2, config);
+                if expr2.complexity() + min_remaining <= next_max {
+                    prefixes.push((expr2, 2));
+                }
+            }
+        }
+        
+        // Unary ops (+0 stack)
+        for &sym2 in &config.unary_ops {
+            let sym2_weight = config.symbol_table.weight(sym2);
+            if expr1.complexity() + sym2_weight <= max_complexity && !exceeds_symbol_limit(config, &expr1, sym2) {
+                if !should_prune_unary(&expr1, sym2) {
+                    let mut expr2 = expr1.clone();
+                    expr2.push_with_table(sym2, &config.symbol_table);
+                    let min_remaining = min_complexity_to_complete(1, config);
+                    if expr2.complexity() + min_remaining <= max_complexity {
+                        prefixes.push((expr2, 1));
+                    }
+                }
+            }
+        }
+    }
+
+    let results: Vec<(Vec<EvaluatedExpr>, Vec<EvaluatedExpr>)> = prefixes
+        .into_par_iter()
+        .map(|(mut expr, depth)| {
             let mut lhs = Vec::new();
             let mut rhs = Vec::new();
-            let mut expr = Expression::new();
-            expr.push_with_table(first_sym, &config.symbol_table);
-
-            generate_recursive(config, target, &mut expr, 1, &mut lhs, &mut rhs);
-
+            generate_recursive(config, target, &mut expr, depth, &mut lhs, &mut rhs);
             (lhs, rhs)
         })
         .collect();
 
     // Merge results
-    let mut lhs_raw = Vec::new();
-    let mut rhs_raw = Vec::new();
+    let mut lhs_raw = immediate_results_lhs;
+    let mut rhs_raw = immediate_results_rhs;
     for (lhs, rhs) in results {
         lhs_raw.extend(lhs);
         rhs_raw.extend(rhs);

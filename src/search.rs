@@ -7,9 +7,10 @@ use crate::pool::{RankingMode, TopKPool};
 use crate::profile::UserConstant;
 use crate::thresholds::{
     ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
-    BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_DERIVATIVE, DEGENERATE_TEST_THRESHOLD,
-    EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR, NEWTON_DIVERGENCE_THRESHOLD,
-    NEWTON_FINAL_TOLERANCE, NEWTON_TOLERANCE, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
+    BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_DERIVATIVE, DEGENERATE_RANGE_TOLERANCE,
+    DEGENERATE_TEST_THRESHOLD, EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR,
+    NEWTON_DIVERGENCE_THRESHOLD, NEWTON_FINAL_TOLERANCE, NEWTON_TOLERANCE, TIER_0_MAX,
+    TIER_1_MAX, TIER_2_MAX,
 };
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -733,7 +734,7 @@ impl ExprDatabase {
                 }
                 // Derivative is non-zero at test_x, so this might be a true repeated root
                 // Check if LHS(target) ≈ some RHS
-                let val_error = 0.01;
+                let val_error = DEGENERATE_RANGE_TOLERANCE;
                 let low = lhs.value - val_error;
                 let high = lhs.value + val_error;
 
@@ -1217,7 +1218,10 @@ pub fn search_streaming_with_config(
 
             // Check for value match
             stats.lhs_tested += 1;
-            for rhs in rhs_db.iter_tiers_in_range(lhs.value - 0.01, lhs.value + 0.01) {
+            for rhs in rhs_db.iter_tiers_in_range(
+                lhs.value - DEGENERATE_RANGE_TOLERANCE,
+                lhs.value + DEGENERATE_RANGE_TOLERANCE,
+            ) {
                 if !search_config.rhs_symbol_allowed(&rhs.expr) {
                     continue;
                 }
@@ -1229,7 +1233,7 @@ pub fn search_streaming_with_config(
                     );
                 }
                 let val_diff = (lhs.value - rhs.value).abs();
-                if val_diff < 0.01 && pool.would_accept(0.0, true) {
+                if val_diff < DEGENERATE_RANGE_TOLERANCE && pool.would_accept(0.0, true) {
                     let m = Match {
                         lhs: lhs.clone(),
                         rhs: rhs.clone(),

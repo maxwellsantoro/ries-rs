@@ -75,6 +75,7 @@ impl From<crate::search::Match> for WasmMatch {
 #[wasm_bindgen]
 impl WasmMatch {
     /// Get a string representation
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         format!(
             "{} = {}  [error: {:.2e}] {{{}}}",

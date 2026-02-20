@@ -348,7 +348,9 @@ pub fn find_fast_match(
                     let symbols = [sym];
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
-                        if let Some(m) = make_match(&symbols, target, (uc.value - target).abs(), table) {
+                        if let Some(m) =
+                            make_match(&symbols, target, (uc.value - target).abs(), table)
+                        {
                             return Some(m);
                         }
                     }
@@ -366,7 +368,8 @@ pub fn find_fast_match(
             if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
                 let symbols = [sym];
                 if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type {
-                    if let Some(m) = make_match(&symbols, target, (uc.value - target).abs(), table) {
+                    if let Some(m) = make_match(&symbols, target, (uc.value - target).abs(), table)
+                    {
                         return Some(m);
                     }
                 }
@@ -410,7 +413,9 @@ pub fn find_fast_match(
                     let symbols = [sym, Symbol::Recip];
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
-                        if let Some(m) = make_match(&symbols, target, (recip_val - target).abs(), table) {
+                        if let Some(m) =
+                            make_match(&symbols, target, (recip_val - target).abs(), table)
+                        {
                             return Some(m);
                         }
                     }
@@ -423,7 +428,9 @@ pub fn find_fast_match(
                     let symbols = [sym, Symbol::Sqrt];
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
-                        if let Some(m) = make_match(&symbols, target, (sqrt_val - target).abs(), table) {
+                        if let Some(m) =
+                            make_match(&symbols, target, (sqrt_val - target).abs(), table)
+                        {
                             return Some(m);
                         }
                     }
@@ -483,7 +490,12 @@ mod tests {
 
     #[test]
     fn test_pi_match() {
-        let m = find_fast_match(std::f64::consts::PI, &[], &default_config(), &default_table());
+        let m = find_fast_match(
+            std::f64::consts::PI,
+            &[],
+            &default_config(),
+            &default_table(),
+        );
         assert!(m.is_some());
         let m = m.unwrap();
         assert!(m.error.abs() < 1e-14);
@@ -533,7 +545,12 @@ mod tests {
 
     #[test]
     fn test_e_match() {
-        let m = find_fast_match(std::f64::consts::E, &[], &default_config(), &default_table());
+        let m = find_fast_match(
+            std::f64::consts::E,
+            &[],
+            &default_config(),
+            &default_table(),
+        );
         assert!(m.is_some());
         let m = m.unwrap();
         assert!(m.error.abs() < 1e-14);
@@ -584,7 +601,12 @@ mod tests {
             value: std::f64::consts::E,
             num_type: NumType::Transcendental,
         };
-        let m = find_fast_match(std::f64::consts::E, &[uc], &default_config(), &default_table());
+        let m = find_fast_match(
+            std::f64::consts::E,
+            &[uc],
+            &default_config(),
+            &default_table(),
+        );
         assert!(m.is_some());
     }
 }

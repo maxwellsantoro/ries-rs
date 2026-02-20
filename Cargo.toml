@@ -25,7 +25,6 @@ path = "src/main.rs"
 default = ["parallel"]
 parallel = ["rayon"]
 highprec = ["rug"]
-python = ["pyo3"]
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen"]
 
 [dependencies]
@@ -41,8 +40,6 @@ rayon = { version = "1.10", optional = true }
 # Arbitrary precision (optional)
 rug = { version = "1.24", optional = true }
 
-# Python bindings (optional)
-pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 
 # WASM bindings (optional)
 wasm-bindgen = { version = "0.2", optional = true }

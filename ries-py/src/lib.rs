@@ -136,8 +136,8 @@ impl PyMatch {
     }
 }
 
-impl From<crate::search::Match> for PyMatch {
-    fn from(m: crate::search::Match) -> Self {
+impl From<ries_core::search::Match> for PyMatch {
+    fn from(m: ries_core::search::Match) -> Self {
         Self {
             lhs: m.lhs.expr.to_infix(),
             rhs: m.rhs.expr.to_infix(),
@@ -146,22 +146,24 @@ impl From<crate::search::Match> for PyMatch {
             x_value: m.x_value,
             error: m.error,
             complexity: m.complexity,
-            is_exact: m.error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
+            is_exact: m.error.abs() < ries_core::thresholds::EXACT_MATCH_TOLERANCE,
         }
     }
 }
 
-fn build_symbol_table(profile: &crate::profile::Profile) -> crate::symbol_table::SymbolTable {
-    crate::symbol_table::SymbolTable::from_profile(profile)
+fn build_symbol_table(
+    profile: &ries_core::profile::Profile,
+) -> ries_core::symbol_table::SymbolTable {
+    ries_core::symbol_table::SymbolTable::from_profile(profile)
 }
 
 /// Build a GenConfig from simple parameters
 fn build_gen_config(
     max_lhs_complexity: u32,
     max_rhs_complexity: u32,
-    profile: &crate::profile::Profile,
-) -> crate::gen::GenConfig {
-    use crate::symbol::{NumType, Symbol};
+    profile: &ries_core::profile::Profile,
+) -> ries_core::gen::GenConfig {
+    use ries_core::symbol::{NumType, Symbol};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -182,7 +184,7 @@ fn build_gen_config(
 
     let symbol_table = build_symbol_table(profile);
 
-    crate::gen::GenConfig {
+    ries_core::gen::GenConfig {
         max_lhs_complexity,
         max_rhs_complexity,
         max_length: 21, // Default max length
@@ -248,9 +250,9 @@ fn search(
     let max_lhs_complexity = base_lhs + level_factor;
     let max_rhs_complexity = base_rhs + level_factor;
 
-    let mut profile = crate::profile::Profile::new();
+    let mut profile = ries_core::profile::Profile::new();
     if let Some(preset_name) = preset {
-        let parsed = crate::presets::Preset::from_str(preset_name).ok_or_else(|| {
+        let parsed = ries_core::presets::Preset::from_str(preset_name).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!(
                 "Unknown preset '{}'. Use list_presets() for available options.",
                 preset_name
@@ -264,7 +266,7 @@ fn search(
 
     // Build search config
     let max_error = (target.abs() * 0.01).max(1e-12);
-    let search_config = crate::search::SearchConfig {
+    let search_config = ries_core::search::SearchConfig {
         target,
         max_matches: max_matches * 2, // Get more to filter later
         max_error,
@@ -283,22 +285,22 @@ fn search(
         show_pruned_range: false,
         show_db_adds: false,
         match_all_digits: false,
-        derivative_margin: crate::thresholds::DEGENERATE_DERIVATIVE,
-        ranking_mode: crate::pool::RankingMode::Complexity,
+        derivative_margin: ries_core::thresholds::DEGENERATE_DERIVATIVE,
+        ranking_mode: ries_core::pool::RankingMode::Complexity,
     };
 
     // Perform search
     let (matches, _stats) = if parallel {
         #[cfg(feature = "parallel")]
         {
-            crate::search::search_parallel_with_stats_and_config(&gen_config, &search_config)
+            ries_core::search::search_parallel_with_stats_and_config(&gen_config, &search_config)
         }
         #[cfg(not(feature = "parallel"))]
         {
-            crate::search::search_with_stats_and_config(&gen_config, &search_config)
+            ries_core::search::search_with_stats_and_config(&gen_config, &search_config)
         }
     } else {
-        crate::search::search_with_stats_and_config(&gen_config, &search_config)
+        ries_core::search::search_with_stats_and_config(&gen_config, &search_config)
     };
 
     // Convert to PyMatch and limit to max_matches
@@ -321,7 +323,7 @@ fn search(
 fn list_presets() -> PyResult<Py<PyDict>> {
     Python::with_gil(|py| {
         let dict = PyDict::new_bound(py);
-        for preset in crate::presets::Preset::all() {
+        for preset in ries_core::presets::Preset::all() {
             dict.set_item(preset.name(), preset.description())?;
         }
         Ok(dict.unbind())
@@ -372,8 +374,8 @@ mod tests {
 
     #[test]
     fn test_build_gen_config_includes_preset_user_constants() {
-        let profile =
-            crate::profile::Profile::new().merge(crate::presets::Preset::AnalyticNT.to_profile());
+        let profile = ries_core::profile::Profile::new()
+            .merge(ries_core::presets::Preset::AnalyticNT.to_profile());
         let config = build_gen_config(18, 20, &profile);
 
         assert!(
@@ -383,15 +385,14 @@ mod tests {
         assert!(
             config
                 .constants
-                .iter()
-                .any(|sym| *sym == crate::symbol::Symbol::UserConstant0),
+                .contains(&ries_core::symbol::Symbol::UserConstant0),
             "user constant symbol slots should be added to generation constants"
         );
     }
 
     #[test]
     fn test_search_rejects_unknown_preset() {
-        let result = search(3.14159, 2, 8, Some("does-not-exist"), false);
+        let result = search(std::f64::consts::PI, 2, 8, Some("does-not-exist"), false);
         assert!(
             result.is_err(),
             "unknown preset should return a Python error"
