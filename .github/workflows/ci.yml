@@ -140,3 +140,41 @@ jobs:
 
       - name: Run security audit
         run: cargo audit
+
+  parity-check:
+    name: Parity Check (Original RIES)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ries-rs
+        uses: actions/checkout@v4
+
+      - name: Setup C Compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc
+
+      - name: Download Original RIES
+        run: |
+          mkdir -p ries-original
+          curl -O https://mrob.com/pub/ries/ries.c
+          mv ries.c ries-original/ries.c
+
+      - name: Compile Original RIES
+        run: gcc ries-original/ries.c -lm -o ries-original/ries
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build ries-rs
+        run: cargo build --release
+
+      - name: Run Parity Checks
+        run: |
+          chmod +x tests/compare_with_original.sh
+          # Test Pi
+          ./tests/compare_with_original.sh 3.1415926535 2 6 ./ries-original/ries
+          # Test e
+          ./tests/compare_with_original.sh 2.7182818284 2 6 ./ries-original/ries
+          # Test Golden Ratio
+          ./tests/compare_with_original.sh 1.6180339887 2 6 ./ries-original/ries

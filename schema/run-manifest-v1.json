@@ -1,0 +1,184 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://raw.githubusercontent.com/maxwellsantoro/ries-rs/main/schema/run-manifest-v1.json",
+    "title": "RIES-RS Run Manifest",
+    "description": "Schema for the ries-rs deterministic run manifest",
+    "type": "object",
+    "required": [
+        "version",
+        "timestamp",
+        "platform",
+        "config",
+        "results"
+    ],
+    "properties": {
+        "version": {
+            "type": "string",
+            "description": "RIES-RS crate version"
+        },
+        "git_hash": {
+            "type": [
+                "string",
+                "null"
+            ],
+            "description": "Git commit hash of the ries-rs build, if available"
+        },
+        "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO-8601 timestamp of the run"
+        },
+        "platform": {
+            "type": "object",
+            "required": [
+                "os",
+                "arch",
+                "rust_version"
+            ],
+            "properties": {
+                "os": {
+                    "type": "string"
+                },
+                "arch": {
+                    "type": "string"
+                },
+                "rust_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "config": {
+            "type": "object",
+            "required": [
+                "target",
+                "level",
+                "max_lhs_complexity",
+                "max_rhs_complexity",
+                "deterministic",
+                "parallel",
+                "max_error",
+                "max_matches",
+                "ranking_mode",
+                "user_constants",
+                "excluded_symbols"
+            ],
+            "properties": {
+                "target": {
+                    "type": "number",
+                    "description": "The target value searched for"
+                },
+                "level": {
+                    "type": "number",
+                    "description": "Search depth level"
+                },
+                "max_lhs_complexity": {
+                    "type": "integer"
+                },
+                "max_rhs_complexity": {
+                    "type": "integer"
+                },
+                "deterministic": {
+                    "type": "boolean",
+                    "description": "Whether the run was strictly deterministic"
+                },
+                "parallel": {
+                    "type": "boolean",
+                    "description": "Whether multithreading was enabled"
+                },
+                "max_error": {
+                    "type": "number",
+                    "description": "Maximum allowed error for search results"
+                },
+                "max_matches": {
+                    "type": "integer",
+                    "description": "Maximum hits allowed to be returned"
+                },
+                "ranking_mode": {
+                    "type": "string",
+                    "enum": [
+                        "complexity",
+                        "parity"
+                    ],
+                    "description": "The sort order strategy applied to the output pool"
+                },
+                "user_constants": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "excluded_symbols": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_symbols": {
+                    "type": [
+                        "array",
+                        "null"
+                    ],
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "results": {
+            "type": "array",
+            "description": "Equations matched during search",
+            "items": {
+                "type": "object",
+                "required": [
+                    "lhs_postfix",
+                    "rhs_postfix",
+                    "lhs_infix",
+                    "rhs_infix",
+                    "error",
+                    "is_exact",
+                    "complexity",
+                    "x_value",
+                    "stability"
+                ],
+                "properties": {
+                    "lhs_postfix": {
+                        "type": "string",
+                        "description": "Postfix representation of the left side of the equation"
+                    },
+                    "rhs_postfix": {
+                        "type": "string",
+                        "description": "Postfix representation of the right side of the equation"
+                    },
+                    "lhs_infix": {
+                        "type": "string",
+                        "description": "Infix formatting of the left side"
+                    },
+                    "rhs_infix": {
+                        "type": "string",
+                        "description": "Infix formatting of the right side"
+                    },
+                    "error": {
+                        "type": "number",
+                        "description": "Calculated deviance from the original target"
+                    },
+                    "is_exact": {
+                        "type": "boolean",
+                        "description": "True if error is tightly zero or within exactness tolerance"
+                    },
+                    "complexity": {
+                        "type": "integer",
+                        "description": "Internal algorithmic complexity bounds"
+                    },
+                    "x_value": {
+                        "type": "number",
+                        "description": "The evaluated exact value of X that yields equality"
+                    },
+                    "stability": {
+                        "type": "number",
+                        "description": "Measure of how stable the root is (1.0 = highly stable)"
+                    }
+                }
+            }
+        }
+    }
+}
