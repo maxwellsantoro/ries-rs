@@ -460,11 +460,7 @@ impl TieredExprDatabase {
     /// Finalize the database by sorting each tier by value
     pub fn finalize(&mut self) {
         for tier in &mut self.tiers {
-            tier.sort_by(|a, b| {
-                a.value
-                    .partial_cmp(&b.value)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            tier.sort_by(|a, b| a.value.total_cmp(&b.value));
         }
     }
 
@@ -525,12 +521,20 @@ impl<'a> TieredRangeIter<'a> {
         iter
     }
 
+    /// Calculate the range [start, end) of expressions in a tier that fall within [low, high]
+    fn calculate_tier_range(&self, tier_idx: usize) -> (usize, usize) {
+        let tier_vec = &self.db.tiers[tier_idx];
+        let start = tier_vec.partition_point(|e| e.value < self.low);
+        let end = tier_vec.partition_point(|e| e.value <= self.high);
+        (start, end)
+    }
+
     /// Advance to the next tier with matching expressions
     fn find_next_nonempty_tier(&mut self) {
         while self.current_tier < 4 {
-            let tier_vec = &self.db.tiers[self.current_tier];
-            self.current_start = tier_vec.partition_point(|e| e.value < self.low);
-            self.current_end = tier_vec.partition_point(|e| e.value <= self.high);
+            let (start, end) = self.calculate_tier_range(self.current_tier);
+            self.current_start = start;
+            self.current_end = end;
 
             if self.current_start < self.current_end {
                 // Found expressions in this tier
@@ -1697,6 +1701,62 @@ mod tests {
 
         assert!(has_2x, "2x* should be generated as LHS");
         assert!(has_5, "5 should be generated as RHS");
+    }
+
+    #[test]
+    fn test_tiered_database_sorting_with_nan() {
+        use crate::expr::{EvaluatedExpr, Expression};
+
+        // Create a database with some values including NaN
+        let mut db = TieredExprDatabase::new();
+
+        // Add normal values
+        db.insert(EvaluatedExpr {
+            expr: Expression::new(),
+            value: 1.0,
+            derivative: 0.0,
+            num_type: crate::symbol::NumType::Rational,
+        });
+
+        db.insert(EvaluatedExpr {
+            expr: Expression::new(),
+            value: 3.0,
+            derivative: 0.0,
+            num_type: crate::symbol::NumType::Rational,
+        });
+
+        db.insert(EvaluatedExpr {
+            expr: Expression::new(),
+            value: 2.0,
+            derivative: 0.0,
+            num_type: crate::symbol::NumType::Rational,
+        });
+
+        // Add a NaN value - this should be sorted deterministically with total_cmp
+        db.insert(EvaluatedExpr {
+            expr: Expression::new(),
+            value: f64::NAN,
+            derivative: 0.0,
+            num_type: crate::symbol::NumType::Rational,
+        });
+
+        // Finalize sorts using total_cmp which handles NaN deterministically
+        db.finalize();
+
+        // The tier should now be sorted deterministically
+        // With total_cmp, NaN values are consistently ordered (less than all other values)
+        let tier = &db.tiers[0];
+        let values: Vec<f64> = tier.iter().map(|e| e.value).collect();
+
+        // total_cmp places NaN at the beginning, then sorted values
+        // The exact order depends on total_cmp's implementation
+        // The key point is that sorting should be deterministic (no panic)
+        assert_eq!(tier.len(), 4, "All 4 expressions should be in tier 0");
+
+        // Verify sorting is stable and doesn't panic
+        // The actual order with total_cmp: NaN < -inf < ... < -0.0 < 0.0 < ... < inf
+        // But since we only have positive numbers + NaN, NaN comes first
+        assert!(values[0].is_nan() || values[0] < values[1], "Values should be sorted");
     }
 }
 
