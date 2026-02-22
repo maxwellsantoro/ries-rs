@@ -940,7 +940,7 @@ impl Default for ExprDatabase {
 /// Uses configurable max iterations - balances speed vs. convergence
 ///
 /// Uses thread-local workspace for zero heap allocations in hot loop.
-#[allow(dead_code)]
+#[cfg(test)]
 fn newton_raphson(
     lhs: &crate::expr::Expression,
     rhs_value: f64,

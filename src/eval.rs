@@ -419,12 +419,6 @@ pub fn evaluate_fast_with_constants_and_functions(
     })
 }
 
-/// Evaluate a constant or variable symbol (without user constants)
-#[allow(dead_code)]
-fn eval_constant(sym: Symbol, x: f64) -> StackEntry {
-    eval_constant_with_user(sym, x, &[])
-}
-
 /// Evaluate a constant or variable symbol with user constant lookup
 fn eval_constant_with_user(sym: Symbol, x: f64, user_constants: &[UserConstant]) -> StackEntry {
     use Symbol::*;
