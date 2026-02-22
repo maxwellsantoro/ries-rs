@@ -105,9 +105,9 @@ pub fn format_expression_for_display(
     match format {
         DisplayFormat::Infix(inner) => {
             // Use table-driven formatting if a table is provided
+            // Note: Table-driven formatting currently uses default infix style.
+            // Future enhancement: could support both table symbols AND specific formatting.
             let infix = if let Some(t) = table {
-                // For now, table-driven always uses default format
-                // TODO: Add to_infix_with_table_and_format for other formats
                 expression.to_infix_with_table(t)
             } else {
                 expression.to_infix_with_format(inner)

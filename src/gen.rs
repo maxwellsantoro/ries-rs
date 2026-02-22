@@ -1238,14 +1238,15 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
         // Unary ops (+0 stack)
         for &sym2 in &config.unary_ops {
             let sym2_weight = config.symbol_table.weight(sym2);
-            if expr1.complexity() + sym2_weight <= max_complexity && !exceeds_symbol_limit(config, &expr1, sym2) {
-                if !should_prune_unary(&expr1, sym2) {
-                    let mut expr2 = expr1.clone();
-                    expr2.push_with_table(sym2, &config.symbol_table);
-                    let min_remaining = min_complexity_to_complete(1, config);
-                    if expr2.complexity() + min_remaining <= max_complexity {
-                        prefixes.push((expr2, 1));
-                    }
+            if expr1.complexity() + sym2_weight <= max_complexity
+                && !exceeds_symbol_limit(config, &expr1, sym2)
+                && !should_prune_unary(&expr1, sym2)
+            {
+                let mut expr2 = expr1.clone();
+                expr2.push_with_table(sym2, &config.symbol_table);
+                let min_remaining = min_complexity_to_complete(1, config);
+                if expr2.complexity() + min_remaining <= max_complexity {
+                    prefixes.push((expr2, 1));
                 }
             }
         }

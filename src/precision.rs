@@ -43,6 +43,15 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 #[cfg(feature = "highprec")]
 use rug::ops::Pow;
 
+/// Error type for parsing high-precision floats from strings
+#[cfg(feature = "highprec")]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ParseError {
+    /// Invalid float literal - the string could not be parsed as a valid number
+    #[error("Invalid float literal: {0}")]
+    InvalidFloatLiteral(String),
+}
+
 /// Default precision for high-precision calculations (bits)
 ///
 /// 256 bits provides approximately 77 decimal digits of precision,
@@ -320,12 +329,29 @@ impl HighPrec {
     ///
     /// This allows creating constants with more precision than f64 allows
     /// by parsing a long decimal string directly.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input string is not a valid float literal.
+    /// Use `try_from_str_with_prec` for a non-panicking version.
     pub fn from_str_with_prec(s: &str, prec_bits: u32) -> Self {
-        let parsed =
-            rug::Float::parse(s).unwrap_or_else(|e| panic!("Invalid float literal {s:?}: {e}"));
-        Self {
+        Self::try_from_str_with_prec(s, prec_bits)
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Create from a decimal string at the specified precision (in bits)
+    ///
+    /// This allows creating constants with more precision than f64 allows
+    /// by parsing a long decimal string directly.
+    ///
+    /// Returns a `Result` for graceful error handling.
+    pub fn try_from_str_with_prec(s: &str, prec_bits: u32) -> Result<Self, ParseError> {
+        let parsed = rug::Float::parse(s).map_err(|e| {
+            ParseError::InvalidFloatLiteral(format!("{s:?}: {e}"))
+        })?;
+        Ok(Self {
             inner: rug::Float::with_val(prec_bits, parsed),
-        }
+        })
     }
 
     /// Get the golden ratio φ = (1 + √5) / 2 at the specified precision
@@ -756,5 +782,42 @@ mod tests {
 
         // Golden ratio φ = (1 + √5) / 2 = 1.6180339887498948482045868343656381177203...
         assert!(hp_str.starts_with("1.61803398874989484820"));
+    }
+
+    // =========================================================================
+    // Error handling tests
+    // =========================================================================
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_from_str_with_prec_invalid_input() {
+        // This test demonstrates that from_str_with_prec should gracefully
+        // handle invalid input rather than panicking
+        let result = HighPrec::try_from_str_with_prec("not_a_number", 256);
+
+        assert!(result.is_err(), "Should return error for invalid float literal");
+        if let Err(e) = result {
+            assert!(e.to_string().contains("Invalid float literal"));
+        }
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_from_str_with_prec_valid_input() {
+        // Valid input should work
+        let result = HighPrec::try_from_str_with_prec("3.14159", 256);
+        assert!(result.is_ok(), "Should succeed for valid float literal");
+
+        let hp = result.unwrap();
+        let value = hp.to_f64();
+        assert!((value - 3.14159).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn test_from_str_with_prec_empty_string() {
+        // Empty string should be an error
+        let result = HighPrec::try_from_str_with_prec("", 256);
+        assert!(result.is_err(), "Should return error for empty string");
     }
 }

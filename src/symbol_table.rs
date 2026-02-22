@@ -278,50 +278,72 @@ impl SymbolTable {
 }
 
 /// Get the user constant symbol for an index (0-15)
+///
+/// # Panics
+///
+/// Panics if index >= 16. Use `user_constant_symbol_opt` for a non-panicking version.
 #[inline]
 pub fn user_constant_symbol(index: usize) -> Symbol {
+    user_constant_symbol_opt(index)
+        .unwrap_or_else(|| panic!("User constant index out of bounds: {}", index))
+}
+
+/// Get the user constant symbol for an index (0-15), returning None if out of bounds
+#[inline]
+pub fn user_constant_symbol_opt(index: usize) -> Option<Symbol> {
     match index {
-        0 => Symbol::UserConstant0,
-        1 => Symbol::UserConstant1,
-        2 => Symbol::UserConstant2,
-        3 => Symbol::UserConstant3,
-        4 => Symbol::UserConstant4,
-        5 => Symbol::UserConstant5,
-        6 => Symbol::UserConstant6,
-        7 => Symbol::UserConstant7,
-        8 => Symbol::UserConstant8,
-        9 => Symbol::UserConstant9,
-        10 => Symbol::UserConstant10,
-        11 => Symbol::UserConstant11,
-        12 => Symbol::UserConstant12,
-        13 => Symbol::UserConstant13,
-        14 => Symbol::UserConstant14,
-        15 => Symbol::UserConstant15,
-        _ => panic!("User constant index out of bounds: {}", index),
+        0 => Some(Symbol::UserConstant0),
+        1 => Some(Symbol::UserConstant1),
+        2 => Some(Symbol::UserConstant2),
+        3 => Some(Symbol::UserConstant3),
+        4 => Some(Symbol::UserConstant4),
+        5 => Some(Symbol::UserConstant5),
+        6 => Some(Symbol::UserConstant6),
+        7 => Some(Symbol::UserConstant7),
+        8 => Some(Symbol::UserConstant8),
+        9 => Some(Symbol::UserConstant9),
+        10 => Some(Symbol::UserConstant10),
+        11 => Some(Symbol::UserConstant11),
+        12 => Some(Symbol::UserConstant12),
+        13 => Some(Symbol::UserConstant13),
+        14 => Some(Symbol::UserConstant14),
+        15 => Some(Symbol::UserConstant15),
+        _ => None,
     }
 }
 
 /// Get the user function symbol for an index (0-15)
+///
+/// # Panics
+///
+/// Panics if index >= 16. Use `user_function_symbol_opt` for a non-panicking version.
 #[inline]
 pub fn user_function_symbol(index: usize) -> Symbol {
+    user_function_symbol_opt(index)
+        .unwrap_or_else(|| panic!("User function index out of bounds: {}", index))
+}
+
+/// Get the user function symbol for an index (0-15), returning None if out of bounds
+#[inline]
+pub fn user_function_symbol_opt(index: usize) -> Option<Symbol> {
     match index {
-        0 => Symbol::UserFunction0,
-        1 => Symbol::UserFunction1,
-        2 => Symbol::UserFunction2,
-        3 => Symbol::UserFunction3,
-        4 => Symbol::UserFunction4,
-        5 => Symbol::UserFunction5,
-        6 => Symbol::UserFunction6,
-        7 => Symbol::UserFunction7,
-        8 => Symbol::UserFunction8,
-        9 => Symbol::UserFunction9,
-        10 => Symbol::UserFunction10,
-        11 => Symbol::UserFunction11,
-        12 => Symbol::UserFunction12,
-        13 => Symbol::UserFunction13,
-        14 => Symbol::UserFunction14,
-        15 => Symbol::UserFunction15,
-        _ => panic!("User function index out of bounds: {}", index),
+        0 => Some(Symbol::UserFunction0),
+        1 => Some(Symbol::UserFunction1),
+        2 => Some(Symbol::UserFunction2),
+        3 => Some(Symbol::UserFunction3),
+        4 => Some(Symbol::UserFunction4),
+        5 => Some(Symbol::UserFunction5),
+        6 => Some(Symbol::UserFunction6),
+        7 => Some(Symbol::UserFunction7),
+        8 => Some(Symbol::UserFunction8),
+        9 => Some(Symbol::UserFunction9),
+        10 => Some(Symbol::UserFunction10),
+        11 => Some(Symbol::UserFunction11),
+        12 => Some(Symbol::UserFunction12),
+        13 => Some(Symbol::UserFunction13),
+        14 => Some(Symbol::UserFunction14),
+        15 => Some(Symbol::UserFunction15),
+        _ => None,
     }
 }
 
@@ -471,5 +493,39 @@ mod tests {
         // Same symbols, different complexity due to different tables
         assert_eq!(expr1.complexity(), 17);
         assert_eq!(expr2.complexity(), 29);
+    }
+
+    #[test]
+    fn test_user_constant_symbol_out_of_bounds() {
+        // Test that out-of-bounds indices return None instead of panicking
+        let result = user_constant_symbol_opt(16);
+        assert!(result.is_none(), "Index 16 should return None");
+
+        let result = user_constant_symbol_opt(100);
+        assert!(result.is_none(), "Index 100 should return None");
+
+        // Valid indices should work
+        let result = user_constant_symbol_opt(0);
+        assert_eq!(result, Some(Symbol::UserConstant0));
+
+        let result = user_constant_symbol_opt(15);
+        assert_eq!(result, Some(Symbol::UserConstant15));
+    }
+
+    #[test]
+    fn test_user_function_symbol_out_of_bounds() {
+        // Test that out-of-bounds indices return None instead of panicking
+        let result = user_function_symbol_opt(16);
+        assert!(result.is_none(), "Index 16 should return None");
+
+        let result = user_function_symbol_opt(100);
+        assert!(result.is_none(), "Index 100 should return None");
+
+        // Valid indices should work
+        let result = user_function_symbol_opt(0);
+        assert_eq!(result, Some(Symbol::UserFunction0));
+
+        let result = user_function_symbol_opt(15);
+        assert_eq!(result, Some(Symbol::UserFunction15));
     }
 }
