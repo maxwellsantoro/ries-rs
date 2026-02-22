@@ -19,7 +19,7 @@ pub struct SearchResult {
 /// Orchestrates the search process
 ///
 /// This function handles the complexity of choosing the appropriate search mode
-/// (streaming, parallel, one-sided) based on the configuration flags.
+/// (adaptive, streaming, parallel, one-sided) based on the configuration flags.
 #[allow(clippy::too_many_arguments)]
 pub fn run_search(
     gen_config: &crate::gen::GenConfig,
@@ -27,11 +27,15 @@ pub fn run_search(
     streaming: bool,
     parallel: bool,
     one_sided: bool,
+    adaptive: bool,
+    level: u32,
 ) -> SearchResult {
     let start = Instant::now();
 
     let (matches, stats) = if one_sided {
         crate::search::search_one_sided_with_stats_and_config(gen_config, search_config)
+    } else if adaptive {
+        crate::search::search_adaptive(gen_config, search_config, level)
     } else if streaming {
         crate::search::search_streaming_with_config(gen_config, search_config)
     } else {

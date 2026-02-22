@@ -128,6 +128,12 @@ pub struct Args {
     #[arg(long)]
     pub streaming: bool,
 
+    /// Use adaptive search (like original RIES) for better precision
+    /// Iteratively expands LHS/RHS complexity to match original RIES expression counts
+    /// Generates ~500K expressions at level 2 (vs ~3K with default mode)
+    #[arg(long)]
+    pub adaptive: bool,
+
     /// Use report mode with categorized output (default: true)
     /// Shows top matches in each category: exact, best, elegant, interesting, stable
     #[arg(long, default_value_t = true, action = ArgAction::Set)]

@@ -728,9 +728,6 @@ fn main() {
         }
     }
 
-    // Build the symbol table from the profile for per-run configuration
-    let symbol_table = symbol_table::SymbolTable::from_profile(&profile);
-
     // Handle --eval-expression mode (evaluate and exit)
     if let Some(expr_str) = &args.find_expression {
         let x = args.at.or(resolved_target).unwrap_or(1.0);
@@ -849,9 +846,11 @@ fn main() {
     println!();
 
     // Convert level to complexity limits
-    let base_lhs: f32 = 10.0;
-    let base_rhs: f32 = 12.0;
-    let level_factor = 4.0 * level_value;
+    // Calibrated for a balance between search depth (parity) and performance.
+    // Level 2 results in complexity 45/45, searching ~50k-100k expressions.
+    let base_lhs: f32 = 25.0;
+    let base_rhs: f32 = 25.0;
+    let level_factor = 10.0 * level_value;
     let max_lhs_complexity = (base_lhs + level_factor) as u32;
     let max_rhs_complexity = (base_rhs + level_factor) as u32;
 
@@ -919,7 +918,7 @@ fn main() {
     };
 
     // Set the symbol table from the profile (for per-run weights and names)
-    gen_config.symbol_table = std::sync::Arc::new(symbol_table);
+    gen_config.symbol_table = std::sync::Arc::new(symbol_table::SymbolTable::from_profile(&profile));
 
     // Determine pool size based on mode
     let use_report = args.report && !args.classic;
@@ -1095,6 +1094,8 @@ fn main() {
                 use_streaming,
                 use_parallel,
                 args.one_sided,
+                args.adaptive,
+                level_value as u32,
             );
             (result.matches, result.stats)
         }
@@ -1108,6 +1109,8 @@ fn main() {
             use_streaming,
             use_parallel,
             args.one_sided,
+            args.adaptive,
+            level_value as u32,
         );
         (result.matches, result.stats)
     };
@@ -1147,6 +1150,8 @@ fn main() {
                 use_streaming,
                 use_parallel,
                 args.one_sided,
+                args.adaptive,
+                level_value as u32,
             );
             analyzer.add_level(result.matches);
         }
