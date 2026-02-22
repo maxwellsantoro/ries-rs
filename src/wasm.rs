@@ -236,12 +236,8 @@ fn build_gen_config(
 pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, JsValue> {
     let opts = parse_search_options(options)?;
 
-    // Convert level to complexity limits
-    let base_lhs: u32 = 10;
-    let base_rhs: u32 = 12;
-    let level_factor = (4.0 * opts.level as f32) as u32;
-    let max_lhs_complexity = base_lhs + level_factor;
-    let max_rhs_complexity = base_rhs + level_factor;
+    // Use the standard level-to-complexity mapping
+    let (max_lhs_complexity, max_rhs_complexity) = crate::search::level_to_complexity(opts.level);
 
     let mut profile = crate::profile::Profile::new();
     if let Some(preset_name) = opts.preset.as_deref() {
