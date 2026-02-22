@@ -16,15 +16,14 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
-//! use ries_rs::{search, gen::GenConfig};
+//! ```rust,no_run
+//! use ries_rs::{search, GenConfig};
 //!
 //! let config = GenConfig::default();
 //! let matches = search(2.5, &config, 10);
 //!
-//! for m in &matches {
-//!     println!("{} = {}", m.lhs.expr, m.rhs.expr);
-//! }
+//! // Should find equations like x = 5/2, x-2 = 1/2, etc.
+//! assert!(!matches.is_empty());
 //! ```
 //!
 //! ## Command-Line Usage

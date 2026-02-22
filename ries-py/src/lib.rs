@@ -243,12 +243,8 @@ fn search(
     preset: Option<&str>,
     parallel: bool,
 ) -> PyResult<Vec<PyMatch>> {
-    // Convert level to complexity limits
-    let base_lhs: u32 = 10;
-    let base_rhs: u32 = 12;
-    let level_factor = (4.0 * level as f32) as u32;
-    let max_lhs_complexity = base_lhs + level_factor;
-    let max_rhs_complexity = base_rhs + level_factor;
+    // Use the standard level-to-complexity mapping
+    let (max_lhs_complexity, max_rhs_complexity) = ries_core::search::level_to_complexity(level);
 
     let mut profile = ries_core::profile::Profile::new();
     if let Some(preset_name) = preset {

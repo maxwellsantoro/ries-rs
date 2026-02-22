@@ -141,9 +141,9 @@ mod tests {
 
     #[test]
     fn test_profile_with_explicit_target() {
-        // -p myprofile 3.14 -> target=3.14, profile=myprofile
-        let result = normalize_legacy_args(Some("myprofile"), None, "2", Some(3.14));
-        assert_eq!(result.target, Some(3.14));
+        // -p myprofile 2.71 -> target=2.71, profile=myprofile
+        let result = normalize_legacy_args(Some("myprofile"), None, "2", Some(2.71));
+        assert_eq!(result.target, Some(2.71));
         assert_eq!(result.profile, Some("myprofile".to_string()));
     }
 
@@ -165,9 +165,9 @@ mod tests {
 
     #[test]
     fn test_enable_with_explicit_target() {
-        // -E abc 3.14 -> target=3.14, enable="abc"
-        let result = normalize_legacy_args(None, Some("abc"), "2", Some(3.14));
-        assert_eq!(result.target, Some(3.14));
+        // -E abc 2.71 -> target=2.71, enable="abc"
+        let result = normalize_legacy_args(None, Some("abc"), "2", Some(2.71));
+        assert_eq!(result.target, Some(2.71));
         assert_eq!(result.enable, Some("abc".to_string()));
     }
 

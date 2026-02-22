@@ -99,6 +99,44 @@ impl SearchStats {
     }
 }
 
+/// Compute complexity limits from a search level.
+///
+/// This function provides a consistent mapping from integer search levels
+/// to complexity limits used by the library API (Python, WASM, and adaptive mode).
+///
+/// # Formula
+///
+/// - Base LHS complexity: 10
+/// - Base RHS complexity: 12
+/// - Level multiplier: 4
+/// - `max_lhs = 10 + 4 * level`
+/// - `max_rhs = 12 + 4 * level`
+///
+/// # Level Guidelines
+///
+/// | Level | LHS Max | RHS Max | Expression Count (approx) |
+/// |-------|---------|---------|---------------------------|
+/// | 0     | 10      | 12      | ~35K                      |
+/// | 1     | 14      | 16      | ~130K                     |
+/// | 2     | 18      | 20      | ~500K                     |
+/// | 3     | 22      | 24      | ~2M                       |
+/// | 5     | 30      | 32      | ~15M                      |
+///
+/// # Note
+///
+/// The CLI uses a different formula with higher bases (25/25) and multiplier (10)
+/// to match the original RIES command-line behavior. This function is for
+/// programmatic API consumers.
+#[inline]
+pub fn level_to_complexity(level: u32) -> (u32, u32) {
+    const BASE_LHS: u32 = 10;
+    const BASE_RHS: u32 = 12;
+    const LEVEL_MULTIPLIER: u32 = 4;
+
+    let level_factor = LEVEL_MULTIPLIER * level;
+    (BASE_LHS + level_factor, BASE_RHS + level_factor)
+}
+
 /// A matched equation
 #[derive(Clone, Debug)]
 pub struct Match {
@@ -606,7 +644,7 @@ fn calculate_adaptive_search_radius(
     } else {
         0.0
     };
-    let pool_factor = 1.0 - ADAPTIVE_POOL_FULLNESS_SCALE * pool_fraction;
+    let pool_factor = (1.0 - ADAPTIVE_POOL_FULLNESS_SCALE * pool_fraction).max(0.1);
 
     // Exact match factor: if we have good matches, be very selective
     let exact_factor = if best_error < NEWTON_FINAL_TOLERANCE {
@@ -636,11 +674,8 @@ impl ExprDatabase {
     /// Sorts by value for efficient range queries using partition_point
     pub fn insert_rhs(&mut self, mut exprs: Vec<EvaluatedExpr>) {
         // Sort by value for binary search range queries
-        exprs.sort_by(|a, b| {
-            a.value
-                .partial_cmp(&b.value)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Use total_cmp for consistent ordering (NaN sorts as greater than all floats)
+        exprs.sort_by(|a, b| a.value.total_cmp(&b.value));
         self.rhs_sorted = exprs;
     }
 
@@ -1110,16 +1145,13 @@ pub fn search_adaptive(
     let mut seen_lhs_keys: HashSet<LhsKey> = HashSet::new();
     let mut seen_rhs_values: HashSet<i64> = HashSet::new();
 
-    // For adaptive mode, use higher complexity limits than default
-    // These are calibrated to match original RIES expression counts
-    // Level 0: ~34 expressions (generates ~35K), Level 1: ~46 (generates ~130K), Level 2: ~58 (generates ~500K)
-    let base_lhs = 10u32;
-    let base_rhs = 12u32;
-    let level_factor = level as u32 * 12;  // Aggressive scaling // Conservative scaling to avoid explosion
+    // For adaptive mode, use the standard complexity formula
+    // See level_to_complexity() for the standard mapping
+    let (std_lhs, std_rhs) = level_to_complexity(level);
 
     let mut config = base_config.clone();
-    config.max_lhs_complexity = (base_lhs + level_factor).max(base_config.max_lhs_complexity);
-    config.max_rhs_complexity = (base_rhs + level_factor).max(base_config.max_rhs_complexity);
+    config.max_lhs_complexity = std_lhs.max(base_config.max_lhs_complexity);
+    config.max_rhs_complexity = std_rhs.max(base_config.max_rhs_complexity);
 
     // Generate all expressions at the calculated complexity
     // Use parallel generation when available for significantly better performance
@@ -1154,7 +1186,7 @@ pub fn search_adaptive(
 
     // Now perform the actual matching
     let mut db = ExprDatabase::new();
-    db.insert_rhs(all_rhs.clone());
+    db.insert_rhs(all_rhs);
 
     let search_start = Instant::now();
     let (matches, match_stats) = db.find_matches_with_stats(&all_lhs, search_config);

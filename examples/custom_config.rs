@@ -10,7 +10,7 @@ fn main() {
     println!("Example 1: Quick search with limited complexity");
     println!("{:-<60}", "");
 
-    let target = 1.41421356237310; // sqrt(2)
+    let target = std::f64::consts::SQRT_2; // sqrt(2)
 
     let quick_config = GenConfig {
         max_lhs_complexity: 15,
