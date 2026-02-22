@@ -1101,7 +1101,7 @@ pub fn search_adaptive(
     search_config: &SearchConfig,
     level: u32,
 ) -> (Vec<Match>, SearchStats) {
-    use crate::gen::{LhsKey, quantize_value};
+    use crate::gen::{generate_all, LhsKey, quantize_value};
     use std::collections::HashSet;
 
     let gen_start = Instant::now();
@@ -1115,24 +1115,14 @@ pub fn search_adaptive(
     // Level 0: ~34 expressions (generates ~35K), Level 1: ~46 (generates ~130K), Level 2: ~58 (generates ~500K)
     let base_lhs = 10u32;
     let base_rhs = 12u32;
-    let level_factor = level as u32 * 12;  // Aggressive scaling // Conservative scaling to avoid explosion
+    let level_factor = level as u32 * 50;  // Aggressive scaling // Conservative scaling to avoid explosion
 
     let mut config = base_config.clone();
     config.max_lhs_complexity = (base_lhs + level_factor).max(base_config.max_lhs_complexity);
     config.max_rhs_complexity = (base_rhs + level_factor).max(base_config.max_rhs_complexity);
 
     // Generate all expressions at the calculated complexity
-    // Use parallel generation when available for significantly better performance
-    let generated = {
-        #[cfg(feature = "parallel")]
-        {
-            crate::gen::generate_all_parallel(&config, search_config.target)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            generate_all(&config, search_config.target)
-        }
-    };
+    let generated = generate_all(&config, search_config.target);
 
     // Deduplicate LHS expressions
     for expr in generated.lhs {

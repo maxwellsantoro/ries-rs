@@ -289,9 +289,12 @@ pub struct StreamingCallbacks<'a> {
 }
 
 /// Quantize a value to reduce floating-point noise
+/// Key for LHS deduplication: (quantized value, quantized derivative)
+pub type LhsKey = (i64, i64);
+
 /// Uses ~8 significant digits for deduplication
 #[inline]
-fn quantize_value(v: f64) -> i64 {
+pub fn quantize_value(v: f64) -> i64 {
     if !v.is_finite() || v.abs() > MAX_QUANTIZED_VALUE {
         // For very large values, use a different quantization to avoid overflow
         if v > MAX_QUANTIZED_VALUE {
@@ -304,9 +307,6 @@ fn quantize_value(v: f64) -> i64 {
     // Scale to preserve ~8 significant digits (avoid overflow)
     (v * QUANTIZE_SCALE).round() as i64
 }
-
-/// Key for LHS deduplication: (quantized value, quantized derivative)
-type LhsKey = (i64, i64);
 
 /// Generate all valid expressions up to the configured limits
 pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
