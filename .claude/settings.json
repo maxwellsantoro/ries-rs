@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": {
+          "tool_name": "Edit|Write"
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo fmt 2>/dev/null; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
