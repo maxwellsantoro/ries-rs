@@ -649,7 +649,10 @@ fn main() {
         level: level_value,
         liouvillian: liouvillian_override,
     } = normalize_legacy_args(
-        args.profile.as_deref().map(|p| p.to_string_lossy()).as_deref(),
+        args.profile
+            .as_deref()
+            .map(|p| p.to_string_lossy())
+            .as_deref(),
         args.enable.as_deref(),
         &args.level,
         args.target,
@@ -846,10 +849,12 @@ fn main() {
     println!();
 
     // Convert level to complexity limits
-    // Calibrated for a balance between search depth (parity) and performance.
-    // Level 2 results in complexity 45/45, searching ~50k-100k expressions.
-    let base_lhs: f32 = 25.0;
-    let base_rhs: f32 = 25.0;
+    // Calibrated for better coverage while avoiding expression explosion.
+    // Original RIES runs at ~67 complexity with its weight scheme.
+    // Formula: 35 + 10×L gives level 2 = 55, which produces rich match sets
+    // without the OOM risk that complexity 67+ would cause with the full symbol set.
+    let base_lhs: f32 = 35.0;
+    let base_rhs: f32 = 35.0;
     let level_factor = 10.0 * level_value;
     let max_lhs_complexity = (base_lhs + level_factor) as u32;
     let max_rhs_complexity = (base_rhs + level_factor) as u32;
@@ -918,7 +923,8 @@ fn main() {
     };
 
     // Set the symbol table from the profile (for per-run weights and names)
-    gen_config.symbol_table = std::sync::Arc::new(symbol_table::SymbolTable::from_profile(&profile));
+    gen_config.symbol_table =
+        std::sync::Arc::new(symbol_table::SymbolTable::from_profile(&profile));
 
     // Determine pool size based on mode
     let use_report = args.report && !args.classic;

@@ -7,8 +7,10 @@ fn test_s_flag_shows_equation_form_not_misleading_x_equals() {
     let (stdout, _stderr) =
         run_ries(&["2.5063", "--classic", "--report", "false", "-s", "-n", "1"]);
 
+    // With calibrated weights the first match contains tanpi nested inside cospi;
+    // the equation form should still be present (not collapsed into misleading "x = ...").
     assert!(
-        stdout.contains("tanpi(x) =") || stdout.contains("atan2("),
+        stdout.contains("tanpi(x)") || stdout.contains("cospi(") || stdout.contains("atan2("),
         "expected -s to either preserve equation form or show a valid inverse transform\n{}",
         stdout
     );

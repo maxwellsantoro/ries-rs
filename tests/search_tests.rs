@@ -19,8 +19,10 @@ mod common;
 /// Uses lower complexity limits and fewer operators for speed
 fn fast_config() -> GenConfig {
     GenConfig {
-        max_lhs_complexity: 25,
-        max_rhs_complexity: 25,
+        // 40/40 is the minimum to include basic 3-symbol expressions like `2x*` (32)
+        // under calibrated original-RIES weights; max_length keeps count small.
+        max_lhs_complexity: 40,
+        max_rhs_complexity: 40,
         max_length: 10,
         constants: vec![
             Symbol::One,
@@ -83,7 +85,7 @@ fn test_complexity_limits() {
 
     for lhs in &generated.lhs {
         assert!(
-            lhs.expr.complexity() <= 25,
+            lhs.expr.complexity() <= 40,
             "LHS complexity {} exceeds limit",
             lhs.expr.complexity()
         );
@@ -91,7 +93,7 @@ fn test_complexity_limits() {
 
     for rhs in &generated.rhs {
         assert!(
-            rhs.expr.complexity() <= 25,
+            rhs.expr.complexity() <= 40,
             "RHS complexity {} exceeds limit",
             rhs.expr.complexity()
         );

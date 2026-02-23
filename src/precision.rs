@@ -335,8 +335,7 @@ impl HighPrec {
     /// Panics if the input string is not a valid float literal.
     /// Use `try_from_str_with_prec` for a non-panicking version.
     pub fn from_str_with_prec(s: &str, prec_bits: u32) -> Self {
-        Self::try_from_str_with_prec(s, prec_bits)
-            .unwrap_or_else(|e| panic!("{e}"))
+        Self::try_from_str_with_prec(s, prec_bits).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// Create from a decimal string at the specified precision (in bits)
@@ -346,9 +345,8 @@ impl HighPrec {
     ///
     /// Returns a `Result` for graceful error handling.
     pub fn try_from_str_with_prec(s: &str, prec_bits: u32) -> Result<Self, ParseError> {
-        let parsed = rug::Float::parse(s).map_err(|e| {
-            ParseError::InvalidFloatLiteral(format!("{s:?}: {e}"))
-        })?;
+        let parsed = rug::Float::parse(s)
+            .map_err(|e| ParseError::InvalidFloatLiteral(format!("{s:?}: {e}")))?;
         Ok(Self {
             inner: rug::Float::with_val(prec_bits, parsed),
         })
@@ -795,7 +793,10 @@ mod tests {
         // handle invalid input rather than panicking
         let result = HighPrec::try_from_str_with_prec("not_a_number", 256);
 
-        assert!(result.is_err(), "Should return error for invalid float literal");
+        assert!(
+            result.is_err(),
+            "Should return error for invalid float literal"
+        );
         if let Err(e) = result {
             assert!(e.to_string().contains("Invalid float literal"));
         }

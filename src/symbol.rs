@@ -243,64 +243,67 @@ impl Symbol {
     pub const fn default_weight(self) -> u32 {
         use Symbol::*;
         match self {
-            // Small integers are cheap - they're fundamental building blocks
-            // Original RIES treats these as nearly free
-            One => 3,
-            Two => 3,
-            Three => 4,
-            Four => 4,
-            Five => 5,
-            Six => 5,
-            Seven => 6,
-            Eight => 6,
-            Nine => 6,
+            // Digits: original RIES calibration (1=10, 2=13, ..., 9=19)
+            // These weights reflect the "specificity" each digit contributes —
+            // a digit encodes more information than a structural operator.
+            One => 10,
+            Two => 13,
+            Three => 15,
+            Four => 16,
+            Five => 17,
+            Six => 18,
+            Seven => 18,
+            Eight => 19,
+            Nine => 19,
 
-            // Transcendental/algebraic constants cost more
-            Pi => 8,
-            E => 8,
-            Phi => 10,
-            // New constants - similar weights to other special constants
-            Gamma => 10,   // Euler-Mascheroni γ
-            Plastic => 10, // Plastic constant (algebraic)
-            Apery => 12,   // Apéry's constant (unknown type, treated as transcendental)
-            Catalan => 10, // Catalan's constant
+            // Named constants: original RIES calibration
+            Pi => 14,
+            E => 16,
+            Phi => 18,
+
+            // Extensions not in original RIES — weighted by tier:
+            // similar obscurity/frequency to phi (weight 18) or slightly above
+            Gamma => 20,   // Euler-Mascheroni γ — less common than phi
+            Plastic => 20, // Plastic constant (algebraic, obscure)
+            Apery => 22,   // Apéry's constant ζ(3) — rarely appears in closed forms
+            Catalan => 20, // Catalan's constant
 
             // Variable
-            X => 6,
+            X => 15,
 
-            // User constants have a default weight (can be customized via profile)
+            // User constants: similar to named constants
             UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 | UserConstant4
             | UserConstant5 | UserConstant6 | UserConstant7 | UserConstant8 | UserConstant9
             | UserConstant10 | UserConstant11 | UserConstant12 | UserConstant13
-            | UserConstant14 | UserConstant15 => 8,
+            | UserConstant14 | UserConstant15 => 16,
 
-            // Unary operators
-            Neg => 4,
-            Recip => 5,
-            Sqrt => 6,
-            Square => 5,
-            Ln => 8,
-            Exp => 8,
-            SinPi => 9,
-            CosPi => 9,
-            TanPi => 10,
-            LambertW => 12,
+            // Unary operators: original RIES calibration
+            Neg => 7,
+            Recip => 7,
+            Sqrt => 9,
+            Square => 9,
+            Ln => 13,
+            Exp => 13,
+            SinPi => 13,
+            CosPi => 13,
+            TanPi => 16,
+            LambertW => 20, // Not in original RIES; heavier than tanpi
 
-            // User-defined functions have a default weight (can be customized via profile)
+            // User-defined functions
             UserFunction0 | UserFunction1 | UserFunction2 | UserFunction3 | UserFunction4
             | UserFunction5 | UserFunction6 | UserFunction7 | UserFunction8 | UserFunction9
             | UserFunction10 | UserFunction11 | UserFunction12 | UserFunction13
-            | UserFunction14 | UserFunction15 => 8,
+            | UserFunction14 | UserFunction15 => 16,
 
-            // Binary operators
-            Add => 3,
-            Sub => 3,
-            Mul => 3,
-            Div => 4,
-            Pow => 5,
-            Root => 6,
-            Log => 7,
-            Atan2 => 7,
+            // Binary operators: original RIES calibration
+            Add => 4,
+            Sub => 5,
+            Mul => 4,
+            Div => 5,
+            Pow => 6,
+            Root => 7,
+            Log => 9,
+            Atan2 => 9,
         }
     }
 
@@ -752,6 +755,49 @@ impl From<Symbol> for u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Weights must match original RIES calibration so that the complexity
+    /// scale has the same meaning — preventing expression count explosion.
+    #[test]
+    fn test_weights_match_original_ries() {
+        // Digits: original RIES uses 10/13/15/16/17/18/18/19/19
+        assert_eq!(Symbol::One.default_weight(), 10);
+        assert_eq!(Symbol::Two.default_weight(), 13);
+        assert_eq!(Symbol::Three.default_weight(), 15);
+        assert_eq!(Symbol::Four.default_weight(), 16);
+        assert_eq!(Symbol::Five.default_weight(), 17);
+        assert_eq!(Symbol::Six.default_weight(), 18);
+        assert_eq!(Symbol::Seven.default_weight(), 18);
+        assert_eq!(Symbol::Eight.default_weight(), 19);
+        assert_eq!(Symbol::Nine.default_weight(), 19);
+
+        // Named constants: original RIES uses pi=14, e=16, phi=18, x=15
+        assert_eq!(Symbol::Pi.default_weight(), 14);
+        assert_eq!(Symbol::E.default_weight(), 16);
+        assert_eq!(Symbol::Phi.default_weight(), 18);
+        assert_eq!(Symbol::X.default_weight(), 15);
+
+        // Binary operators: original RIES uses +=4, *=4, -=5, /=5, ^=6, root=7, atan2=9, log=9
+        assert_eq!(Symbol::Add.default_weight(), 4);
+        assert_eq!(Symbol::Mul.default_weight(), 4);
+        assert_eq!(Symbol::Sub.default_weight(), 5);
+        assert_eq!(Symbol::Div.default_weight(), 5);
+        assert_eq!(Symbol::Pow.default_weight(), 6);
+        assert_eq!(Symbol::Root.default_weight(), 7);
+        assert_eq!(Symbol::Atan2.default_weight(), 9);
+        assert_eq!(Symbol::Log.default_weight(), 9);
+
+        // Unary operators: original RIES uses neg=7, recip=7, sqrt=9, sq=9, ln=13, exp=13, sinpi=13, cospi=13, tanpi=16
+        assert_eq!(Symbol::Neg.default_weight(), 7);
+        assert_eq!(Symbol::Recip.default_weight(), 7);
+        assert_eq!(Symbol::Sqrt.default_weight(), 9);
+        assert_eq!(Symbol::Square.default_weight(), 9);
+        assert_eq!(Symbol::Ln.default_weight(), 13);
+        assert_eq!(Symbol::Exp.default_weight(), 13);
+        assert_eq!(Symbol::SinPi.default_weight(), 13);
+        assert_eq!(Symbol::CosPi.default_weight(), 13);
+        assert_eq!(Symbol::TanPi.default_weight(), 16);
+    }
 
     #[test]
     fn test_symbol_roundtrip() {

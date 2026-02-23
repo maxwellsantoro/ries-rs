@@ -74,21 +74,9 @@ pub fn build_gen_config(
     let (allowed_rhs, excluded_rhs) = parse_symbol_sets(only_symbols_rhs, exclude_rhs, enable_rhs);
 
     // Apply LHS symbol filtering
-    config.constants = filter_symbols(
-        Symbol::constants(),
-        allowed.as_ref(),
-        excluded.as_ref(),
-    );
-    config.unary_ops = filter_symbols(
-        Symbol::unary_ops(),
-        allowed.as_ref(),
-        excluded.as_ref(),
-    );
-    config.binary_ops = filter_symbols(
-        Symbol::binary_ops(),
-        allowed.as_ref(),
-        excluded.as_ref(),
-    );
+    config.constants = filter_symbols(Symbol::constants(), allowed.as_ref(), excluded.as_ref());
+    config.unary_ops = filter_symbols(Symbol::unary_ops(), allowed.as_ref(), excluded.as_ref());
+    config.binary_ops = filter_symbols(Symbol::binary_ops(), allowed.as_ref(), excluded.as_ref());
 
     // Parse -O/--op-limits into per-expression max symbol counts.
     if let Some(spec) = op_limits {
@@ -250,7 +238,7 @@ mod tests {
             10,
             12,
             NumType::Transcendental,
-            Some("p"),  // exclude pi
+            Some("p"), // exclude pi
             None,
             None,
             None,
@@ -276,7 +264,7 @@ mod tests {
             NumType::Transcendental,
             None,
             None,
-            Some("123"),  // only 1, 2, 3
+            Some("123"), // only 1, 2, 3
             None,
             None,
             None,
@@ -314,7 +302,7 @@ mod tests {
         // Test with allowed and excluded
         let filtered = filter_symbols(symbols, Some(&allowed), Some(&excluded));
         assert!(filtered.contains(&Symbol::One));
-        assert!(!filtered.contains(&Symbol::Two));  // excluded
+        assert!(!filtered.contains(&Symbol::Two)); // excluded
         assert!(filtered.contains(&Symbol::Three));
     }
 }

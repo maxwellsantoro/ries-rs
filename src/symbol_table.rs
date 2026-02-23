@@ -355,10 +355,10 @@ mod tests {
     fn test_default_table() {
         let table = SymbolTable::new();
 
-        // Check some default weights
-        assert_eq!(table.weight(Symbol::One), 3);
-        assert_eq!(table.weight(Symbol::Pi), 8);
-        assert_eq!(table.weight(Symbol::Add), 3);
+        // Check some default weights (matching original RIES calibration)
+        assert_eq!(table.weight(Symbol::One), 10);
+        assert_eq!(table.weight(Symbol::Pi), 14);
+        assert_eq!(table.weight(Symbol::Add), 4);
 
         // Check some default names
         assert_eq!(table.name(Symbol::One), "1");
@@ -474,25 +474,25 @@ mod tests {
         let table2 = SymbolTable::from_profile(&profile2);
 
         // Verify the tables have different weights for Pi
-        assert_eq!(table1.weight(Symbol::Pi), 8);
-        assert_eq!(table2.weight(Symbol::Pi), 20);
+        assert_eq!(table1.weight(Symbol::Pi), 14); // default = original RIES value
+        assert_eq!(table2.weight(Symbol::Pi), 20); // overridden
 
         // Build expressions using each table
         let mut expr1 = Expression::new();
-        expr1.push_with_table(Symbol::X, &table1); // 6
-        expr1.push_with_table(Symbol::Pi, &table1); // 8
-        expr1.push_with_table(Symbol::Add, &table1); // 3
-                                                     // Total: 6 + 8 + 3 = 17
+        expr1.push_with_table(Symbol::X, &table1); // 15
+        expr1.push_with_table(Symbol::Pi, &table1); // 14
+        expr1.push_with_table(Symbol::Add, &table1); // 4
+                                                     // Total: 15 + 14 + 4 = 33
 
         let mut expr2 = Expression::new();
-        expr2.push_with_table(Symbol::X, &table2); // 6
+        expr2.push_with_table(Symbol::X, &table2); // 15
         expr2.push_with_table(Symbol::Pi, &table2); // 20
-        expr2.push_with_table(Symbol::Add, &table2); // 3
-                                                     // Total: 6 + 20 + 3 = 29
+        expr2.push_with_table(Symbol::Add, &table2); // 4
+                                                     // Total: 15 + 20 + 4 = 39
 
         // Same symbols, different complexity due to different tables
-        assert_eq!(expr1.complexity(), 17);
-        assert_eq!(expr2.complexity(), 29);
+        assert_eq!(expr1.complexity(), 33);
+        assert_eq!(expr2.complexity(), 39);
     }
 
     #[test]

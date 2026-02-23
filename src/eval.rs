@@ -89,7 +89,7 @@ impl EvalError {
         }
         err
     }
-    
+
     /// Add expression context
     pub fn with_expression(self, expr: String) -> Self {
         EvalError::WithExpression {
