@@ -16,6 +16,15 @@ dist/
 venv/
 env/
 
+# Node.js and WASM artifacts
+node_modules/
+package-lock.json
+web/
+pkg/
+*.wasm
+*.js
+*.d.ts
+
 # IDE and editor files
 .idea/
 .vscode/

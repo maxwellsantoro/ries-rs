@@ -1148,6 +1148,8 @@ pub fn search_adaptive(
     search_config: &SearchConfig,
     level: u32,
 ) -> (Vec<Match>, SearchStats) {
+    #[cfg(not(feature = "parallel"))]
+    use crate::gen::generate_all;
     use crate::gen::{quantize_value, LhsKey};
     use std::collections::HashSet;
 

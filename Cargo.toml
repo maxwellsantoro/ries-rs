@@ -26,6 +26,8 @@ default = ["parallel"]
 parallel = ["rayon"]
 highprec = ["rug"]
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen"]
+# Threaded WASM: requires nightly, atomics, COOP/COEP. Enables parallel search in browser.
+wasm-threads = ["wasm", "parallel", "wasm-bindgen-rayon"]
 
 [dependencies]
 # CLI
@@ -45,6 +47,7 @@ rug = { version = "1.24", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
+wasm-bindgen-rayon = { version = "1.2", optional = true }
 
 # Utilities
 ordered-float = "4.2"

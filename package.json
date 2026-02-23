@@ -19,10 +19,11 @@
     "pkg-bundler"
   ],
   "scripts": {
-    "build": "wasm-pack build --target web --out-dir pkg -- --features wasm",
-    "build:node": "wasm-pack build --target nodejs --out-dir pkg-node -- --features wasm",
-    "build:bundler": "wasm-pack build --target bundler --out-dir pkg-bundler -- --features wasm",
+    "build": "RUSTFLAGS='-C target-feature=-reference-types' rustup run nightly wasm-pack build --target web --out-dir pkg -- --features wasm -Z build-std=panic_abort,std",
+    "build:node": "RUSTFLAGS='-C target-feature=-reference-types' rustup run nightly wasm-pack build --target nodejs --out-dir pkg-node -- --features wasm -Z build-std=panic_abort,std",
+    "build:bundler": "RUSTFLAGS='-C target-feature=-reference-types' rustup run nightly wasm-pack build --target bundler --out-dir pkg-bundler -- --features wasm -Z build-std=panic_abort,std",
     "build:all": "npm run build && npm run build:node && npm run build:bundler",
+    "build:threads": "RUSTFLAGS='-C target-feature=+atomics,+bulk-memory' rustup run nightly wasm-pack build --target web --out-dir pkg-threads -- --features wasm-threads -Z build-std=panic_abort,std",
     "prepack": "npm run build:all",
     "test": "wasm-pack test --node -- --features wasm"
   },
@@ -45,6 +46,7 @@
     "url": "https://github.com/maxwellsantoro/ries-rs/issues"
   },
   "homepage": "https://github.com/maxwellsantoro/ries-rs#readme",
-  "devDependencies": {},
-  "dependencies": {}
+  "dependencies": {
+    "wasm-pack": "^0.14.0"
+  }
 }

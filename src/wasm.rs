@@ -91,7 +91,7 @@ impl WasmMatch {
 
 /// Search options for WASM
 #[wasm_bindgen]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SearchOptions {
     /// Search level (0-5). Higher = more expressions searched
     pub level: u32,
@@ -130,6 +130,11 @@ impl SearchOptions {
     pub fn preset(mut self, preset: String) -> Self {
         self.preset = Some(preset);
         self
+    }
+
+    /// Convert to a plain JavaScript object (for passing to search() or serialization)
+    pub fn to_json(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(self).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 
@@ -278,9 +283,17 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
         ranking_mode: crate::pool::RankingMode::Complexity,
     };
 
-    // Perform search (use sequential for WASM - no rayon in browser)
-    let (matches, _stats) =
-        crate::search::search_with_stats_and_config(&gen_config, &search_config);
+    // Perform search: parallel when wasm-threads (wasm-bindgen-rayon), else sequential
+    let (matches, _stats) = {
+        #[cfg(feature = "wasm-threads")]
+        {
+            crate::search::search_parallel_with_stats_and_config(&gen_config, &search_config)
+        }
+        #[cfg(not(feature = "wasm-threads"))]
+        {
+            crate::search::search_with_stats_and_config(&gen_config, &search_config)
+        }
+    };
 
     // Convert to WasmMatch and limit to max_matches
     Ok(matches
@@ -321,3 +334,7 @@ pub fn version() -> String {
 pub fn init() {
     // Currently no initialization needed, but provides a hook for future use
 }
+
+// Re-export for threaded WASM build. JS must call initThreadPool(n) after init().
+#[cfg(feature = "wasm-threads")]
+pub use wasm_bindgen_rayon::init_thread_pool;
