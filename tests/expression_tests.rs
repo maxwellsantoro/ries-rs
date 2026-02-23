@@ -47,8 +47,8 @@ fn test_infix_conversion_constants() {
 #[test]
 fn test_complexity_calculation() {
     let expr = Expression::parse("xs").unwrap(); // x^2
-                                                 // x = 6, s (square) = 5
-    assert_eq!(expr.complexity(), 6 + 5);
+                                                 // x = 15, s (square) = 9
+    assert_eq!(expr.complexity(), 15 + 9);
 }
 
 #[test]

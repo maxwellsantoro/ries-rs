@@ -383,6 +383,100 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
     }
 }
 
+/// Generate expressions with an early-abort limit on total count.
+///
+/// Returns `Some(expressions)` if generation completed within the limit,
+/// or `None` if the limit was exceeded (caller should use streaming mode instead).
+///
+/// This is a safety mechanism to prevent OOM from unexpectedly large generation
+/// at high complexity levels. The limit check happens during generation, not after.
+///
+/// # Arguments
+///
+/// * `config` - Generation configuration (complexity limits, symbols)
+/// * `target` - Target value for evaluation
+/// * `max_expressions` - Maximum total expressions (LHS + RHS) before aborting
+///
+/// # Returns
+///
+/// * `Some(GeneratedExprs)` - if generation completed within limit
+/// * `None` - if the limit was exceeded during generation
+pub fn generate_all_with_limit(
+    config: &GenConfig,
+    target: f64,
+    max_expressions: usize,
+) -> Option<GeneratedExprs> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let limit = max_expressions;
+
+    // Collect expressions if within limit
+    let mut lhs_raw = Vec::new();
+    let mut rhs_raw = Vec::new();
+
+    // Callback that counts expressions and stops when limit is hit
+    let mut callbacks = StreamingCallbacks {
+        on_lhs: &mut |expr| {
+            let current = count.fetch_add(1, Ordering::Relaxed) + 1;
+            if current > limit {
+                return false; // Abort generation
+            }
+            lhs_raw.push(expr.clone());
+            true
+        },
+        on_rhs: &mut |expr| {
+            let current = count.fetch_add(1, Ordering::Relaxed) + 1;
+            if current > limit {
+                return false; // Abort generation
+            }
+            rhs_raw.push(expr.clone());
+            true
+        },
+    };
+
+    generate_streaming(config, target, &mut callbacks);
+
+    // Check if we exceeded the limit
+    let final_count = count.load(Ordering::Relaxed);
+    if final_count > limit {
+        return None;
+    }
+
+    // Deduplicate (same logic as generate_all)
+    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
+    for expr in rhs_raw {
+        let key = quantize_value(expr.value);
+        rhs_map
+            .entry(key)
+            .and_modify(|existing| {
+                if expr.expr.complexity() < existing.expr.complexity() {
+                    *existing = expr.clone();
+                }
+            })
+            .or_insert(expr);
+    }
+
+    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
+    for expr in lhs_raw {
+        let key = (quantize_value(expr.value), quantize_value(expr.derivative));
+        lhs_map
+            .entry(key)
+            .and_modify(|existing| {
+                if expr.expr.complexity() < existing.expr.complexity() {
+                    *existing = expr.clone();
+                }
+            })
+            .or_insert(expr);
+    }
+
+    Some(GeneratedExprs {
+        lhs: lhs_map.into_values().collect(),
+        rhs: rhs_map.into_values().collect(),
+    })
+}
+
 /// Generate expressions with streaming callbacks for memory-efficient processing
 ///
 /// This function is the foundation of the streaming architecture. Instead of
@@ -540,7 +634,12 @@ fn generate_recursive_streaming(
         ) {
             Ok(result) => {
                 // Use shared validation helper
-                if should_include_expression(&result, config, current.complexity(), current.contains_x()) {
+                if should_include_expression(
+                    &result,
+                    config,
+                    current.complexity(),
+                    current.contains_x(),
+                ) {
                     let expr = current.clone();
                     let eval_expr =
                         EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
@@ -701,7 +800,12 @@ fn generate_recursive(
         ) {
             Ok(result) => {
                 // Use shared validation helper
-                if should_include_expression(&result, config, current.complexity(), current.contains_x()) {
+                if should_include_expression(
+                    &result,
+                    config,
+                    current.complexity(),
+                    current.contains_x(),
+                ) {
                     let expr = current.clone();
                     let eval_expr =
                         EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type);
@@ -1063,11 +1167,13 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
         .constants
         .iter()
         .copied()
-        .chain(if config.generate_lhs && !config.constants.contains(&Symbol::X) {
-            Some(Symbol::X)
-        } else {
-            None
-        })
+        .chain(
+            if config.generate_lhs && !config.constants.contains(&Symbol::X) {
+                Some(Symbol::X)
+            } else {
+                None
+            },
+        )
         .filter(|&sym| {
             config
                 .symbol_max_counts
@@ -1079,13 +1185,13 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
     for sym1 in first_symbols {
         let mut expr1 = Expression::new();
         expr1.push_with_table(sym1, &config.symbol_table);
-        
+
         let max_complexity = if expr1.contains_x() {
             config.max_lhs_complexity
         } else {
             std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
         };
-        
+
         if expr1.complexity() > max_complexity {
             continue;
         }
@@ -1107,7 +1213,7 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
                     result.derivative,
                     result.num_type,
                 );
-                
+
                 if expr1.contains_x() {
                     if config.generate_lhs && expr1.complexity() <= config.max_lhs_complexity {
                         immediate_results_lhs.push(eval_expr);
@@ -1117,19 +1223,19 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
                 }
             }
         }
-        
+
         if expr1.len() >= config.max_length {
             continue;
         }
 
         // 2. Add next symbols (simulate bottom of generate_recursive)
-        
+
         // Constants (+1 stack)
         let mut next_constants = config.constants.clone();
         if config.generate_lhs && !next_constants.contains(&Symbol::X) {
             next_constants.push(Symbol::X);
         }
-        
+
         for &sym2 in &next_constants {
             let sym2_weight = config.symbol_table.weight(sym2);
             let next_max = if expr1.contains_x() || sym2 == Symbol::X {
@@ -1137,8 +1243,10 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
             } else {
                 std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
             };
-            
-            if expr1.complexity() + sym2_weight <= next_max && !exceeds_symbol_limit(config, &expr1, sym2) {
+
+            if expr1.complexity() + sym2_weight <= next_max
+                && !exceeds_symbol_limit(config, &expr1, sym2)
+            {
                 let mut expr2 = expr1.clone();
                 expr2.push_with_table(sym2, &config.symbol_table);
                 // Min complexity check: for stack depth 2, we need at least 1 binary op
@@ -1148,7 +1256,7 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
                 }
             }
         }
-        
+
         // Unary ops (+0 stack)
         for &sym2 in &config.unary_ops {
             let sym2_weight = config.symbol_table.weight(sym2);
@@ -1297,5 +1405,54 @@ mod tests {
             assert!(expr.expr.complexity() <= config.max_lhs_complexity);
         }
     }
-}
 
+    #[test]
+    fn test_generate_all_with_limit_aborts_when_exceeded() {
+        // Config with high complexity that will generate many expressions.
+        // With new calibrated weights, even moderate complexity can generate 100+ expressions.
+        let mut config = fast_test_config();
+        config.max_lhs_complexity = 30;
+        config.max_rhs_complexity = 30;
+
+        // First, check how many expressions would be generated without limit.
+        let unlimited = generate_all(&config, 2.5);
+        let total_unlimited = unlimited.lhs.len() + unlimited.rhs.len();
+
+        // The test only makes sense if we'd generate more than a handful.
+        assert!(
+            total_unlimited > 10,
+            "Test config should generate >10 expressions"
+        );
+
+        // Now test with a limit less than the actual count — should return None.
+        let limit = total_unlimited / 2; // Set limit to half of what would be generated
+        let result = generate_all_with_limit(&config, 2.5, limit);
+
+        assert!(
+            result.is_none(),
+            "generate_all_with_limit should return None when limit ({}) is exceeded (actual: {})",
+            limit,
+            total_unlimited
+        );
+    }
+
+    #[test]
+    fn test_generate_all_with_limit_succeeds_when_within_limit() {
+        // Same config but with a generous limit that won't be hit.
+        let mut config = fast_test_config();
+        config.max_lhs_complexity = 30;
+        config.max_rhs_complexity = 30;
+
+        // Set limit much higher than expected expression count.
+        let result = generate_all_with_limit(&config, 2.5, 10_000);
+
+        assert!(
+            result.is_some(),
+            "generate_all_with_limit should return Some when limit is not exceeded"
+        );
+
+        let generated = result.unwrap();
+        // Should have generated some expressions.
+        assert!(!generated.lhs.is_empty() || !generated.rhs.is_empty());
+    }
+}

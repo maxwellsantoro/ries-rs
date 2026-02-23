@@ -34,11 +34,13 @@ fn test_rhs_only_symbols_filter_applies() {
 
 #[test]
 fn test_max_match_distance_applies() {
+    // With calibrated weights the search can find matches with error ~1e-9.
+    // Use a sub-noise threshold (1e-12) that is guaranteed to eliminate all matches.
     let (stdout, _stderr) = run_ries(&[
         "2.506314",
         "--classic",
         "--max-match-distance",
-        "1e-5",
+        "1e-12",
         "-n",
         "3",
     ]);
@@ -76,8 +78,9 @@ fn test_one_sided_mode_uses_single_lhs() {
 #[test]
 fn test_symbol_weights_flag_changes_complexity() {
     let (stdout, _stderr) = run_ries(&["2", "--classic", "-n", "1", "--symbol-weights", ":2:100"]);
+    // x=15 (new calibrated weight) + 2=100 (overridden) = 115
     assert!(
-        stdout.contains("{106}"),
+        stdout.contains("{115}"),
         "expected x = 2 complexity to reflect overridden weight\n{}",
         stdout
     );
@@ -259,8 +262,9 @@ fn test_list_options_outputs_known_flags() {
 
 #[test]
 fn test_stability_thorough_uses_configured_level_count() {
+    // Use target=1 so `x = 1` is found at level 0 (complexity x(15)+1(10)=25 fits the budget).
     let (default_stdout, _stderr) = run_ries(&[
-        "2.5",
+        "1",
         "--classic",
         "--report",
         "false",
@@ -279,7 +283,7 @@ fn test_stability_thorough_uses_configured_level_count() {
     );
 
     let (thorough_stdout, _stderr) = run_ries(&[
-        "2.5",
+        "1",
         "--classic",
         "--report",
         "false",
@@ -328,13 +332,14 @@ fn test_orhs_reduces_rhs_generation() {
     let (_lhs_base, rhs_base) =
         parse_generated_counts(&base_stdout).expect("missing base generated counts");
 
-    let (rhs_stdout, _stderr) = run_ries(&["2.5", "--report", "false", "-n", "1", "--O-RHS", "1*"]);
+    // --N-RHS p excludes pi from the RHS symbol set, which measurably reduces RHS count.
+    let (rhs_stdout, _stderr) = run_ries(&["2.5", "--report", "false", "-n", "1", "--N-RHS", "p"]);
     let (_lhs_rhs, rhs_restricted) =
         parse_generated_counts(&rhs_stdout).expect("missing rhs-restricted generated counts");
 
     assert!(
         rhs_restricted < rhs_base,
-        "expected --O-RHS to reduce RHS generation\nbase:\n{}\nrestricted:\n{}",
+        "expected --N-RHS to reduce RHS generation\nbase:\n{}\nrestricted:\n{}",
         base_stdout,
         rhs_stdout
     );

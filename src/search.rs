@@ -9,8 +9,8 @@ use crate::thresholds::{
     ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
     BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_DERIVATIVE, DEGENERATE_RANGE_TOLERANCE,
     DEGENERATE_TEST_THRESHOLD, EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR,
-    NEWTON_DIVERGENCE_THRESHOLD, NEWTON_FINAL_TOLERANCE, NEWTON_TOLERANCE, TIER_0_MAX,
-    TIER_1_MAX, TIER_2_MAX,
+    NEWTON_DIVERGENCE_THRESHOLD, NEWTON_FINAL_TOLERANCE, NEWTON_TOLERANCE, TIER_0_MAX, TIER_1_MAX,
+    TIER_2_MAX,
 };
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -1070,32 +1070,44 @@ pub fn search_with_stats_and_options(
     search_with_stats_and_config(gen_config, &config)
 }
 
-/// Perform a complete search with a fully specified search configuration
+/// Perform a complete search with a fully specified search configuration.
+///
+/// This function includes a safety fallback: if expression generation would
+/// exceed ~2M expressions (which would risk OOM), it automatically switches
+/// to streaming mode to avoid memory exhaustion.
 pub fn search_with_stats_and_config(
     gen_config: &crate::gen::GenConfig,
     config: &SearchConfig,
 ) -> (Vec<Match>, SearchStats) {
-    use crate::gen::generate_all;
+    use crate::gen::generate_all_with_limit;
+
+    const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
 
     let gen_start = Instant::now();
 
-    // Generate expressions
-    let generated = generate_all(gen_config, config.target);
-    let gen_time = gen_start.elapsed();
+    // Try bounded generation first — if limit exceeded, fall back to streaming
+    if let Some(generated) =
+        generate_all_with_limit(gen_config, config.target, MAX_EXPRESSIONS_BEFORE_STREAMING)
+    {
+        let gen_time = gen_start.elapsed();
 
-    // Build database
-    let mut db = ExprDatabase::new();
-    db.insert_rhs(generated.rhs);
+        // Build database
+        let mut db = ExprDatabase::new();
+        db.insert_rhs(generated.rhs);
 
-    // Find matches with stats
-    let (matches, mut stats) = db.find_matches_with_stats(&generated.lhs, config);
+        // Find matches with stats
+        let (matches, mut stats) = db.find_matches_with_stats(&generated.lhs, config);
 
-    // Add generation stats
-    stats.gen_time = gen_time;
-    stats.lhs_count = generated.lhs.len();
-    stats.rhs_count = db.rhs_count();
+        // Add generation stats
+        stats.gen_time = gen_time;
+        stats.lhs_count = generated.lhs.len();
+        stats.rhs_count = db.rhs_count();
 
-    (matches, stats)
+        (matches, stats)
+    } else {
+        // Limit exceeded — fall back to streaming mode which avoids OOM
+        search_streaming_with_config(gen_config, config)
+    }
 }
 
 // =============================================================================
@@ -1136,7 +1148,7 @@ pub fn search_adaptive(
     search_config: &SearchConfig,
     level: u32,
 ) -> (Vec<Match>, SearchStats) {
-    use crate::gen::{LhsKey, quantize_value};
+    use crate::gen::{quantize_value, LhsKey};
     use std::collections::HashSet;
 
     let gen_start = Instant::now();
@@ -1688,32 +1700,44 @@ pub fn search_parallel_with_stats_and_options(
 }
 
 /// Perform a parallel search with a fully specified search configuration.
+///
+/// This function includes a safety fallback: if expression generation would
+/// exceed ~2M expressions (which would risk OOM), it automatically switches
+/// to streaming mode to avoid memory exhaustion.
 #[cfg(feature = "parallel")]
 pub fn search_parallel_with_stats_and_config(
     gen_config: &crate::gen::GenConfig,
     config: &SearchConfig,
 ) -> (Vec<Match>, SearchStats) {
-    use crate::gen::generate_all_parallel;
+    use crate::gen::generate_all_with_limit;
+
+    const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
 
     let gen_start = Instant::now();
 
-    // Generate expressions in parallel
-    let generated = generate_all_parallel(gen_config, config.target);
-    let gen_time = gen_start.elapsed();
+    // Try bounded generation first — if limit exceeded, fall back to streaming
+    if let Some(generated) =
+        generate_all_with_limit(gen_config, config.target, MAX_EXPRESSIONS_BEFORE_STREAMING)
+    {
+        let gen_time = gen_start.elapsed();
 
-    // Build database
-    let mut db = ExprDatabase::new();
-    db.insert_rhs(generated.rhs);
+        // Build database
+        let mut db = ExprDatabase::new();
+        db.insert_rhs(generated.rhs);
 
-    // Find matches with stats
-    let (matches, mut stats) = db.find_matches_with_stats(&generated.lhs, config);
+        // Find matches with stats
+        let (matches, mut stats) = db.find_matches_with_stats(&generated.lhs, config);
 
-    // Add generation stats
-    stats.gen_time = gen_time;
-    stats.lhs_count = generated.lhs.len();
-    stats.rhs_count = db.rhs_count();
+        // Add generation stats
+        stats.gen_time = gen_time;
+        stats.lhs_count = generated.lhs.len();
+        stats.rhs_count = db.rhs_count();
 
-    (matches, stats)
+        (matches, stats)
+    } else {
+        // Limit exceeded — fall back to streaming mode which avoids OOM
+        search_streaming_with_config(gen_config, config)
+    }
 }
 
 #[cfg(test)]
@@ -1721,11 +1745,14 @@ pub fn search_parallel_with_stats_and_config(
 mod tests {
     use super::*;
 
-    /// Create a fast test config with limited complexity and operators
+    /// Create a fast test config with limited complexity and operators.
+    /// max_length: 8 keeps expression count tiny; complexity limits are set
+    /// high enough that simple 3-symbol expressions (e.g. `2x*` = 32) are
+    /// included under the new calibrated weights.
     fn fast_test_config() -> crate::gen::GenConfig {
         crate::gen::GenConfig {
-            max_lhs_complexity: 25,
-            max_rhs_complexity: 25,
+            max_lhs_complexity: 60,
+            max_rhs_complexity: 60,
             max_length: 8,
             constants: vec![
                 crate::symbol::Symbol::One,
@@ -1906,7 +1933,10 @@ mod tests {
         // Verify sorting is stable and doesn't panic
         // The actual order with total_cmp: NaN < -inf < ... < -0.0 < 0.0 < ... < inf
         // But since we only have positive numbers + NaN, NaN comes first
-        assert!(values[0].is_nan() || values[0] < values[1], "Values should be sorted");
+        assert!(
+            values[0].is_nan() || values[0] < values[1],
+            "Values should be sorted"
+        );
     }
 }
 

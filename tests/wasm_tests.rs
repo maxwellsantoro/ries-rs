@@ -7,11 +7,11 @@
 
 #![cfg(all(feature = "wasm", target_arch = "wasm32"))]
 
-use wasm_bindgen_test::*;
 use wasm_bindgen::JsValue;
+use wasm_bindgen_test::*;
 
 // Import the WASM functions
-use ries_rs::{wasm_search as search, list_presets, version, init, WasmMatch, SearchOptions};
+use ries_rs::{init, list_presets, version, wasm_search as search, SearchOptions, WasmMatch};
 
 #[wasm_bindgen_test]
 fn test_wasm_init() {
@@ -37,9 +37,7 @@ fn test_wasm_basic_search() {
 #[wasm_bindgen_test]
 fn test_wasm_search_with_options() {
     // Test search with custom options
-    let options = SearchOptions::new()
-        .level(1)
-        .max_matches(5);
+    let options = SearchOptions::new().level(1).max_matches(5);
 
     // Convert options to JsValue
     let options_js = options.to_json().expect("options should serialize");
@@ -53,7 +51,10 @@ fn test_wasm_search_with_options() {
 fn test_wasm_search_result_properties() {
     // Test that search results have expected properties
     let result = search(1.618033988, None).expect("search should succeed");
-    assert!(!result.is_empty(), "search should return results for golden ratio");
+    assert!(
+        !result.is_empty(),
+        "search should return results for golden ratio"
+    );
 
     let first = &result[0];
     // Check that result has valid properties

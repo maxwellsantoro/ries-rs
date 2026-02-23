@@ -91,7 +91,9 @@ fn test_classic_defaults_to_parity_ranking() {
 
 #[test]
 fn test_complexity_ranking_overrides_classic_default() {
-    let target = "2.5063";
+    // 3.14159 (near pi) produces diverse matches at -l 2 that rank differently
+    // under parity vs complexity ordering.
+    let target = "3.14159";
     let args_base = [
         target,
         "--classic",
@@ -100,7 +102,7 @@ fn test_complexity_ranking_overrides_classic_default() {
         "-n",
         "6",
         "-l",
-        "1",
+        "2",
     ];
 
     let (classic_stdout, _stderr) = run_ries(&args_base);

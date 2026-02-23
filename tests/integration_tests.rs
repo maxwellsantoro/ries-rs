@@ -9,8 +9,10 @@ use ries_rs::search::{search, search_with_stats};
 
 fn default_config() -> GenConfig {
     let mut config = GenConfig::default();
-    config.max_lhs_complexity = 20; // Reduced for faster tests
-    config.max_rhs_complexity = 22;
+    // Minimum to include simple expressions like `2x*` (Two=13+X=15+Mul=4=32)
+    // and `5` (Five=17) under calibrated original-RIES weights.
+    config.max_lhs_complexity = 40;
+    config.max_rhs_complexity = 40;
     config
 }
 

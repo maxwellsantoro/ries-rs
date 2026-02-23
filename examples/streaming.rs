@@ -7,11 +7,17 @@
 //! This is essential for deep searches (level 4-5) where billions of expressions
 //! might be generated.
 
-use ries_rs::{gen::GenConfig, search::{search_streaming_with_config, SearchConfig}, OutputFormat};
+use ries_rs::{
+    gen::GenConfig,
+    search::{search_streaming_with_config, SearchConfig},
+    OutputFormat,
+};
 use std::time::Instant;
 
 fn main() {
-    let target = std::env::args().nth(1).unwrap_or_else(|| "3.1415926535".to_string());
+    let target = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "3.1415926535".to_string());
     let target: f64 = target.parse().expect("Please provide a valid number");
 
     println!("Performing deep streaming search for target: {}", target);
@@ -19,7 +25,7 @@ fn main() {
 
     // Very low complexity for instant feedback
     let gen_config = GenConfig {
-        max_lhs_complexity: 25, 
+        max_lhs_complexity: 25,
         max_rhs_complexity: 20,
         ..GenConfig::default()
     };
@@ -33,14 +39,14 @@ fn main() {
 
     println!("Starting search...");
     let start = Instant::now();
-    
+
     // Call the streaming search API
     // This mode reduces memory by building the RHS database incrementally
     // via streaming, rather than generating both sides into memory first.
     // While the LHS still requires buffering for the final match pass,
     // the peak memory is significantly lower than a full batch search.
     let (matches, stats) = search_streaming_with_config(&gen_config, &search_config);
-    
+
     let elapsed = start.elapsed();
 
     for (i, m) in matches.iter().enumerate() {

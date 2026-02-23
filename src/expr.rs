@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn test_complexity() {
         let expr = Expression::parse("xs").unwrap(); // x^2
-                                                     // x = 6, s (square) = 5
-        assert_eq!(expr.complexity(), 6 + 5);
+                                                     // x = 15, s (square) = 9
+        assert_eq!(expr.complexity(), 15 + 9);
     }
 }
