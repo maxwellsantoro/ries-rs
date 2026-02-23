@@ -1,2 +1,7 @@
 [build]
 rustflags = ["-C", "target-cpu=native"]
+
+# Disable reference types for wasm32 so wasm-bindgen CLI can process the module
+# (Rust 1.82+ enables reference-types by default, which changes exports and breaks older wasm-bindgen)
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=-reference-types"]

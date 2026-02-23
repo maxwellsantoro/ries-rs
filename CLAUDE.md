@@ -39,8 +39,11 @@ cargo bench
 maturin develop --features python
 cargo check --features python  # type-check only, no linking
 
-# WASM
+# WASM (requires nightly; uses -Z build-std to avoid reference-types vs wasm-bindgen CLI mismatch)
 npm run build
+# Browser demo: build then serve repo root, open /web/
+# Threaded WASM (nightly, SharedArrayBuffer, COOP/COEP required):
+npm run build:threads
 ```
 
 ## Architecture
@@ -108,6 +111,7 @@ src/
 | `highprec` | ✗ | Arbitrary precision (requires GMP/MPFR) |
 | `python` | ✗ | PyO3 bindings — use `maturin`, not `cargo build` |
 | `wasm` | ✗ | wasm-bindgen bindings |
+| `wasm-threads` | ✗ | WASM + Rayon via wasm-bindgen-rayon (nightly, atomics, `initThreadPool`) |
 
 ## Parity Tracking
 
