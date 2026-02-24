@@ -35,9 +35,9 @@ cargo fmt
 # Benchmarks
 cargo bench
 
-# Python bindings — MUST use maturin, not cargo build
-maturin develop --features python
-cargo check --features python  # type-check only, no linking
+# Python bindings — MUST use maturin, not cargo build (from ries-py/)
+cd ries-py && maturin develop --release
+cargo check --manifest-path ries-py/Cargo.toml  # type-check only
 
 # WASM (requires nightly; uses -Z build-std to avoid reference-types vs wasm-bindgen CLI mismatch)
 npm run build
@@ -109,13 +109,14 @@ src/
 |------|---------|-------------|
 | `parallel` | ✓ | Multi-threaded via Rayon |
 | `highprec` | ✗ | Arbitrary precision (requires GMP/MPFR) |
-| `python` | ✗ | PyO3 bindings — use `maturin`, not `cargo build` |
 | `wasm` | ✗ | wasm-bindgen bindings |
 | `wasm-threads` | ✗ | WASM + Rayon via wasm-bindgen-rayon (nightly, atomics, `initThreadPool`) |
 
+Python bindings live in the separate `ries-py/` crate (PyO3 + maturin).
+
 ## Parity Tracking
 
-This project tracks compatibility with two references: Robert Munafo's original `ries` and the `clsn/ries` fork. See `PARITY_REMAINING_REPORT.md` for known differences. In `--classic` mode, default ranking is parity-style; use `--complexity-ranking` to switch.
+This project tracks compatibility with two references: Robert Munafo's original `ries` and the `clsn/ries` fork. See `docs/PARITY_STATUS.md` for the current status summary and `docs/archive/parity/2026-02-18-parity-remaining-report.md` for historical detail. In `--classic` mode, default ranking is parity-style; use `--complexity-ranking` to switch.
 
 ## Commit Convention
 

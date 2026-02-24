@@ -10,6 +10,40 @@ documentation = "https://docs.rs/ries"
 readme = "README.md"
 keywords = ["math", "equation", "solver", "algebraic", "ries"]
 categories = ["mathematics", "science"]
+exclude = [
+    # Local dev / agent tooling
+    ".claude/**",
+    ".playwright-mcp/**",
+    ".codex-playwright/**",
+
+    # Web/WASM build artifacts and node tooling
+    "node_modules/**",
+    "pkg/**",
+    "pkg-*/*",
+    "web/**",
+    "package.json",
+    "package-lock.json",
+    "playwright.config.ts",
+    "tests/web-smoke.spec.ts",
+
+    # Separate Python wheel project
+    "ries-py/**",
+
+    # Historical docs and archived artifacts
+    "docs/plans/**",
+    "docs/archive/**",
+
+    # Output / reports / caches
+    "output/**",
+    "test-results/**",
+    "playwright-report/**",
+
+    # Local-only cargo config (e.g. target-cpu=native)
+    ".cargo/**",
+
+    # Scratch / backup files
+    "Cargo.toml.orig",
+]
 
 [lib]
 name = "ries_rs"

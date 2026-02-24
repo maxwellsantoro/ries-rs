@@ -7,10 +7,12 @@ Modern, user-friendly web interface for RIES-RS with beautiful math rendering, i
 - **Instant Search**: Find algebraic equations for any number in milliseconds
 - **Beautiful Math**: KaTeX rendering for LaTeX-quality equations
 - **Quick Constants**: One-click access to π, e, φ, and more
-- **Advanced Options**: Ranking modes, PSLQ, and more for power users
+- **Advanced Options**: Ranking modes and other power-user controls (with clear web-only/CLI-only guidance)
 - **Shareable Links**: Every search has a unique URL
 - **Dark/Light Mode**: Toggle between themes with persistence
 - **Copy Formats**: Export as plain text, LaTeX, or SymPy
+
+Note: PSLQ is currently **CLI-only**; the web UI surfaces it as an unsupported option with guidance.
 
 ## Build WASM
 

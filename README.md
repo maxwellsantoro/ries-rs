@@ -27,7 +27,8 @@ This project compares behavior against two historical references:
 
 In this repository, parity and compatibility tracking is documented in:
 
-- `PARITY_REMAINING_REPORT.md`
+- `docs/PARITY_STATUS.md` (current status summary)
+- `docs/archive/parity/2026-02-18-parity-remaining-report.md` (historical detailed report)
 
 ## Compatibility Snapshot
 
@@ -267,6 +268,8 @@ The binary will be at `target/release/ries-rs`.
 cargo install --path .
 ```
 
+For additional reference material (architecture, performance, and archived design notes), see `docs/README.md`.
+
 ### Python Bindings
 
 The Python bindings allow using ries-rs from Python code:
@@ -276,16 +279,17 @@ The Python bindings allow using ries-rs from Python code:
 pip install maturin
 
 # Build and install the Python package
-maturin develop --features python
+cd ries-py
+maturin develop --release
 
 # Or build a wheel for distribution
-maturin build --features python --release
+maturin build --release
 ```
 
-> **Note:** `cargo build --features python` will fail at the link step because pyo3
-> requires the Python shared library, which bare `cargo` does not locate automatically.
-> Always use `maturin` for Python builds. `cargo check --features python` still works
-> for type-checking without linking.
+> **Note:** The Python bindings live in `ries-py/`. If you just want type-checking
+> without building a wheel, use:
+>
+> `cargo check --manifest-path ries-py/Cargo.toml`
 
 #### Python Usage
 
@@ -408,7 +412,7 @@ simplest = sorted(results, key=lambda m: m.complexity)[:10]
 #### Troubleshooting
 
 **ImportError: cannot import name 'ries_rs'**
-- Make sure you built with maturin: `maturin develop --features python`
+- Make sure you built with maturin: `cd ries-py && maturin develop --release`
 - Check that you're using the same Python environment where maturin was run
 
 **Build fails with linking errors**

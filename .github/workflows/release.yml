@@ -67,11 +67,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust (nightly + wasm32)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install Node dependencies
+        run: npm install --no-fund --no-audit
 
       - name: Build WASM
         run: npm run build:all
@@ -113,14 +124,15 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          args: --release --locked --features python --out dist
+          args: --release --locked --out dist
           target: ${{ matrix.target }}
+          working-directory: ries-py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: python-wheel-${{ matrix.os }}
-          path: dist/*.whl
+          path: ries-py/dist/*.whl
 
   create-release:
     name: Create Release

@@ -22,13 +22,14 @@ cargo build
 cargo build --all-features
 
 # Python bindings (requires maturin)
-cargo build --features python
+cd ries-py
+maturin develop --release
 ```
 
-> **Note:** `cargo build --features python` will fail at the link step because pyo3
-> requires the Python shared library, which bare `cargo` does not locate automatically.
-> Always use `maturin` for Python builds. `cargo check --features python` still works
-> for type-checking without linking.
+> **Note:** The Python bindings live in `ries-py/`. If you just want type-checking
+> without building a wheel, you can run:
+>
+> `cargo check --manifest-path ries-py/Cargo.toml`
 
 ### Testing
 
@@ -86,7 +87,6 @@ src/
 |------|-------------|--------------|
 | `parallel` | Multi-threaded search (default) | rayon |
 | `highprec` | Arbitrary precision arithmetic | rug, GMP, MPFR |
-| `python` | Python bindings via PyO3 | pyo3 |
 | `wasm` | WebAssembly bindings | wasm-bindgen |
 
 ## Pull Request Process
