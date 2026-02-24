@@ -458,7 +458,7 @@
       for (const candidate of PKG_CANDIDATES) {
         try {
           const module = await import(candidate);
-          await module.default();
+          await module.init();
           wasmModule = module;
           break;
         } catch (err) {
@@ -492,7 +492,7 @@
 
       // Get version
       try {
-        const version = wasmModule.get_version ? wasmModule.get_version() : 'unknown';
+        const version = wasmModule.version ? wasmModule.version() : 'unknown';
         setVersion(version);
       } catch (err) {
         setVersion('unknown');
