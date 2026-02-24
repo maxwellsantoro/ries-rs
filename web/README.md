@@ -1,22 +1,28 @@
-# RIES browser demo
+# RIES-RS Web Interface
 
-Minimal web UI for the RIES WASM build. Enter a target value, optional options, and run a search to see matching equations.
+Modern, user-friendly web interface for RIES-RS with beautiful math rendering, instant search, and progressive disclosure for beginners and experts.
+
+## Features
+
+- **Instant Search**: Find algebraic equations for any number in milliseconds
+- **Beautiful Math**: KaTeX rendering for LaTeX-quality equations
+- **Quick Constants**: One-click access to π, e, φ, and more
+- **Advanced Options**: Ranking modes, PSLQ, and more for power users
+- **Shareable Links**: Every search has a unique URL
+- **Dark/Light Mode**: Toggle between themes with persistence
+- **Copy Formats**: Export as plain text, LaTeX, or SymPy
 
 ## Build WASM
 
-From the **repository root** (not this directory):
+From the **repository root**:
 
 ```bash
 npm run build
 ```
 
-This runs `wasm-pack build --target web --out-dir pkg -- --features wasm` and produces `pkg/ries_rs.js` and `pkg/ries_rs_bg.wasm`.
+This produces `pkg/ries_rs.js` and `pkg/ries_rs_bg.wasm`.
 
-## Serve the app
-
-You must serve the app over HTTP (or HTTPS); `file://` will not work for loading ES modules and WASM.
-
-**Option A — from repo root:**
+## Serve
 
 ```bash
 npx serve . -p 5000
@@ -24,22 +30,33 @@ npx serve . -p 5000
 
 Then open: **http://localhost:5000/web/**
 
-**Option B — from this directory:**
+## Threaded Build (Optional)
 
-```bash
-cd web && npx serve .. -p 5000
-```
-
-Then open: **http://localhost:5000/web/**
-
-The demo loads the WASM module from `../pkg/ries_rs.js` relative to the script URL.
-
-## Threaded build (optional)
-
-From the repo root, with Rust nightly installed:
+For parallel search in browsers:
 
 ```bash
 npm run build:threads
 ```
 
-This produces `pkg-threads/` (not `pkg/`). To use it in this demo, either copy `pkg-threads` to `pkg` or change `main.js` to load from `../pkg-threads/ries_rs.js`. The demo will then detect `initThreadPool` and call it with `navigator.hardwareConcurrency` so a single search uses multiple workers. The server must send [COOP/COEP](https://web.dev/articles/cross-origin-isolation) headers for `SharedArrayBuffer`.
+Requires nightly Rust and server headers for `SharedArrayBuffer`:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `/` | Focus target input |
+| `Esc` | Clear results / blur input |
+| `Enter` | Submit search |
+
+## URL Parameters
+
+All options can be set via URL for sharing:
+
+```
+?target=3.14159&level=3&preset=analytic-nt&maxMatches=20&advanced=true
+```
