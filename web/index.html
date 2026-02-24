@@ -714,7 +714,8 @@
         // WasmMatch has lhs and rhs properties
         const lhs = match.lhs || 'x';
         const rhs = match.rhs || '';
-        equationDiv.textContent = '$$' + lhs + ' = ' + rhs + '$$';
+        const plainEquation = lhs + ' = ' + rhs;
+        equationDiv.textContent = '$$' + plainEquation + '$$';
         leftDiv.appendChild(equationDiv);
 
         // Error info
@@ -743,9 +744,7 @@
         copyPlainBtn.className = 'copy-btn px-3 py-1 text-xs font-medium rounded bg-zinc-800 hover:bg-zinc-700 transition-colors';
         copyPlainBtn.textContent = 'Copy';
         copyPlainBtn.dataset.format = 'plain';
-        const lhs = match.lhs || 'x';
-        const rhs = match.rhs || '';
-        const plainEquation = lhs + ' = ' + rhs;
+        // Reuse lhs and rhs variables declared above
         copyPlainBtn.dataset.value = plainEquation;
         copyPlainBtn.dataset.latex = plainEquation;
         actionsDiv.appendChild(copyPlainBtn);
