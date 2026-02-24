@@ -8,9 +8,11 @@ use ries_rs::gen::{generate_all, GenConfig};
 #[test]
 #[ignore = "expensive debug test - run with --ignored flag"]
 fn test_x_to_x_generated() {
-    let mut config = GenConfig::default();
-    config.max_lhs_complexity = 50;
-    config.max_rhs_complexity = 50;
+    let config = GenConfig {
+        max_lhs_complexity: 50,
+        max_rhs_complexity: 50,
+        ..Default::default()
+    };
 
     let result = generate_all(&config, 2.5);
 
@@ -44,9 +46,11 @@ fn test_x_to_x_generated() {
 #[test]
 #[ignore = "expensive debug test - run with --ignored flag"]
 fn test_pi_squared_in_rhs() {
-    let mut config = GenConfig::default();
-    config.max_lhs_complexity = 50;
-    config.max_rhs_complexity = 50;
+    let config = GenConfig {
+        max_lhs_complexity: 50,
+        max_rhs_complexity: 50,
+        ..Default::default()
+    };
 
     let result = generate_all(&config, 2.5);
 
@@ -76,9 +80,11 @@ fn test_pi_squared_in_rhs() {
 #[test]
 #[ignore = "expensive debug test - run with --ignored flag"]
 fn test_pi_squared_value() {
-    let mut config = GenConfig::default();
-    config.max_lhs_complexity = 60;
-    config.max_rhs_complexity = 60;
+    let config = GenConfig {
+        max_lhs_complexity: 60,
+        max_rhs_complexity: 60,
+        ..Default::default()
+    };
 
     let result = generate_all(&config, 2.5);
 
@@ -126,9 +132,11 @@ fn test_pi_squared_value() {
 #[test]
 #[ignore = "expensive debug test - run with --ignored flag"]
 fn test_find_ps_specifically() {
-    let mut config = GenConfig::default();
-    config.max_lhs_complexity = 60;
-    config.max_rhs_complexity = 60;
+    let config = GenConfig {
+        max_lhs_complexity: 60,
+        max_rhs_complexity: 60,
+        ..Default::default()
+    };
 
     let result = generate_all(&config, 2.5);
 
@@ -173,9 +181,11 @@ fn test_find_ps_specifically() {
 #[test]
 #[ignore = "expensive debug test - run with --ignored flag"]
 fn test_xx_in_final_lhs() {
-    let mut config = GenConfig::default();
-    config.max_lhs_complexity = 50;
-    config.max_rhs_complexity = 50;
+    let config = GenConfig {
+        max_lhs_complexity: 50,
+        max_rhs_complexity: 50,
+        ..Default::default()
+    };
 
     let result = generate_all(&config, 2.5);
 

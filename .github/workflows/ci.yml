@@ -56,11 +56,13 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
 
-      - name: Check python feature
-        run: cargo check --features python --locked
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Check python + highprec features
-        run: cargo check --features "python highprec" --locked
+      - name: Check Python bindings crate
+        run: cargo check --manifest-path ries-py/Cargo.toml --locked
 
       - name: Build wasm feature
         run: cargo build --features wasm --locked
@@ -148,22 +150,38 @@ jobs:
       - name: Checkout ries-rs
         uses: actions/checkout@v4
 
+      - name: Detect bundled original RIES source
+        id: has-original
+        run: |
+          if [ -f ries-original/ries.c ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "ries-original/ries.c not found; skipping parity-check job steps."
+          fi
+
       - name: Setup C Compiler
+        if: steps.has-original.outputs.present == 'true'
         run: sudo apt-get update && sudo apt-get install -y gcc
 
       - name: Compile Original RIES
+        if: steps.has-original.outputs.present == 'true'
         run: gcc ries-original/ries.c -lm -o ries-original/ries
 
       - name: Setup Rust
+        if: steps.has-original.outputs.present == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
+        if: steps.has-original.outputs.present == 'true'
         uses: Swatinem/rust-cache@v2
 
       - name: Build ries-rs
+        if: steps.has-original.outputs.present == 'true'
         run: cargo build --release
 
       - name: Run Parity Checks
+        if: steps.has-original.outputs.present == 'true'
         run: |
           chmod +x tests/compare_with_original.sh
           # Test Pi

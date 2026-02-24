@@ -42,8 +42,12 @@ pkg/
 *.bak
 test-results/
 playwright-report/
+.playwright-mcp/
 .codex-playwright/
 output/playwright/
 
 # Claude local config
 .claude/settings.local.json
+
+# Tool backups
+Cargo.toml.orig
