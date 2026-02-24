@@ -2,6 +2,14 @@
 
 Thank you for your interest in contributing to RIES-RS! This document provides guidelines and instructions for contributing.
 
+## Documentation and Source of Truth
+
+- `README.md`: User-facing overview, installation, and usage
+- `docs/README.md`: Documentation map (current docs vs archived materials)
+- `docs/PARITY_STATUS.md`: Current parity/compatibility summary
+- `RELEASING.md`: Release-process notes and templates
+- `CLAUDE.md`: Agent-oriented workflow notes (convenience guidance for coding assistants; not the primary contributor policy document)
+
 ## Development Setup
 
 ### Prerequisites

@@ -18,6 +18,15 @@ cargo build --release
 #                  x-3 = 1/7                      for x = T + 1.26e-3 {24}
 ```
 
+## Repo Map
+
+- `src/`: Core Rust library and CLI implementation
+- `tests/`: Regression, integration, property, and CLI compatibility tests
+- `docs/`: Architecture/performance/parity status docs and archived historical materials (see `docs/README.md`)
+- `ries-py/`: Separate Python bindings crate (PyO3 + maturin)
+- `web/`: Browser UI (served from repo root after building WASM)
+- `tools/`: Helper utilities (for example manifest replay tooling)
+
 ## Comparison Baselines
 
 This project compares behavior against two historical references:

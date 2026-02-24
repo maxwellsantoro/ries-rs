@@ -2,6 +2,101 @@
 
 Release-process notes and templates for `ries-rs`.
 
+## Maintainer Checklist
+
+### Preflight (Local)
+
+Before tagging a release:
+
+1. Confirm docs and metadata are up to date (`README.md`, `CHANGELOG.md`, `CITATION.cff`, `Cargo.toml`, `package.json`, `ries-py/pyproject.toml`)
+2. Run formatting and lint checks:
+   - `cargo fmt --all -- --check`
+   - `cargo clippy --all-targets --locked -- -D warnings`
+   - `cargo clippy --all-targets --no-default-features --locked -- -D warnings`
+3. Run test checks you expect CI to enforce:
+   - `cargo test --tests --locked`
+   - `cargo check --manifest-path ries-py/Cargo.toml --locked`
+   - `cargo build --features wasm --locked`
+4. Sanity-check packaging:
+   - `cargo package --allow-dirty --locked`
+5. Review pending changes:
+   - `git status --short`
+
+### CI/Workflow Preconditions
+
+- Release automation is tag-driven via `push` tags matching `v*` in `.github/workflows/release.yml`.
+- CI coverage for release-related surfaces is defined in `.github/workflows/ci.yml` (Rust checks/tests, WASM tests, Python bindings crate check).
+- The parity check job is optional when `ries-original/ries.c` is not vendored (it skips automatically).
+
+### Create the Release
+
+1. Update `CHANGELOG.md` and commit all release-ready changes
+2. Create and push an annotated tag:
+   - `git tag -a vX.Y.Z -m "vX.Y.Z"`
+   - `git push origin vX.Y.Z`
+3. Monitor the GitHub Actions release workflow:
+   - `build-binaries` (Linux/macOS/Windows CLI artifacts)
+   - `build-wasm` (`pkg`, `pkg-node`, `pkg-bundler`)
+   - `build-python` (wheels from `ries-py/`)
+   - `create-release` (GitHub release publication)
+
+### Artifact Verification
+
+After the workflow finishes, verify the GitHub release contains:
+
+- CLI archives for Linux/macOS (x86_64 + aarch64 macOS) and Windows zip
+- WASM tarball (`ries-rs-wasm.tar.gz`)
+- Python wheels (`*.whl`)
+
+Spot-check at least one artifact per surface if possible:
+
+- CLI binary runs and prints version/help
+- WASM package loads in the `web/` demo or a Node import test
+- Python wheel imports `ries_rs` and runs a minimal `search(...)`
+
+### Release Gate (Go/No-Go)
+
+Use this as the final pass/fail checklist before announcing a release.
+
+Go only if all of the following are true:
+
+- `CI` is green for the release commit/tag (at minimum: format, clippy, tests, WASM tests, audit, feature checks)
+- GitHub release workflow completed successfully (`build-binaries`, `build-wasm`, `build-python`, `create-release`)
+- Expected artifact groups are present on the GitHub release:
+  - 4 CLI artifacts (Linux x86_64, macOS x86_64, macOS aarch64, Windows x86_64 zip)
+  - 1 WASM tarball (`ries-rs-wasm.tar.gz`)
+  - >=1 Python wheel artifact set (platform-dependent wheel files)
+- `CHANGELOG.md` and release notes describe the shipped version accurately
+- No known P0 regressions discovered during smoke checks
+
+No-go conditions (fix first):
+
+- Any required CI/release job failed or was skipped unexpectedly
+- Missing or misnamed artifacts in the GitHub release
+- CLI binary fails basic startup (`--help` / version)
+- Python wheel import fails (`import ries_rs`)
+- WASM bundle cannot initialize in a basic smoke test
+
+Suggested smoke checks (one per artifact surface):
+
+- CLI (after extracting a release archive):
+  - `./ries-rs --help`
+  - `./ries-rs 3.141592653589793 -n 3`
+- WASM (Node/package sanity):
+  - `tar -tzf ries-rs-wasm.tar.gz | head`
+  - `npm run test:web:smoke` (from a clean checkout with build prerequisites installed), or a minimal Node import check against `pkg-node/`
+- Python wheel (inside a temporary venv):
+  - `python -m venv .venv-release-check`
+  - `. .venv-release-check/bin/activate`
+  - `pip install <wheel-file.whl>`
+  - `python -c "import ries_rs; print(len(ries_rs.search(3.14159)))"`
+
+### Post-Release
+
+1. Add the released version + DOI status to this file (or move DOI tracking to a dedicated release log if preferred)
+2. Confirm `CHANGELOG.md` has a new `Unreleased` section for follow-up work
+3. Verify docs/release notes links still point to current files (`docs/PARITY_STATUS.md`, `RELEASING.md`)
+
 ## Release Notes Template
 
 When creating a release, include:

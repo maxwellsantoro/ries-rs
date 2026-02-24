@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+For human contributor workflow and project policies, prefer `CONTRIBUTING.md`. This file is agent-focused convenience guidance and should not diverge from the canonical contributor docs.
+
 ## About This Project
 
 RIES-RS is a Rust implementation of Robert Munafo's RIES (RILYBOT Inverse Equation Solver). Given a numeric target, it searches for algebraic equations whose solution is that target (e.g., given π, find equations like `x = π`, `x-3 = 1/7`).
