@@ -620,6 +620,7 @@
         const targetValue = parseFloat(target);
 
         // Build search config object (target is passed separately, not in config)
+        // Note: WASM only supports level, maxMatches, and preset options
         const searchConfig = {
           level: options.level,
           maxMatches: options.maxMatches,
@@ -628,19 +629,6 @@
         // Only add preset if it's not empty
         if (options.preset) {
           searchConfig.preset = options.preset;
-        }
-
-        // Add ranking mode if supported
-        if (options.rankingMode === 'complexity' && wasmModule.RankingMode) {
-          searchConfig.rankingMode = wasmModule.RankingMode.Complexity;
-        }
-
-        // Add optional flags
-        if (options.usePslq) {
-          searchConfig.usePslq = true;
-        }
-        if (options.matchAllDigits) {
-          searchConfig.matchAllDigits = true;
         }
 
         // Perform the search (target is first argument, config is optional second)
