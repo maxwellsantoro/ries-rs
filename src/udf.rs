@@ -98,16 +98,26 @@ impl UserFunction {
 fn parse_udf_formula(formula: &str) -> Result<Vec<UdfOp>, String> {
     let mut ops = Vec::new();
 
-    for ch in formula.chars() {
-        match ch {
+    if let Some(ch) = formula.chars().find(|c| !c.is_ascii()) {
+        return Err(format!(
+            "Non-ASCII symbol '{}' in function definition; formulas must use ASCII symbols",
+            ch
+        ));
+    }
+
+    for b in formula.bytes() {
+        match b as char {
             '|' => ops.push(UdfOp::Dup),
             '@' => ops.push(UdfOp::Swap),
             _ => {
                 // Try to parse as a standard symbol
-                if let Some(sym) = Symbol::from_byte(ch as u8) {
+                if let Some(sym) = Symbol::from_byte(b) {
                     ops.push(UdfOp::Symbol(sym));
                 } else {
-                    return Err(format!("Unknown symbol '{}' in function definition", ch));
+                    return Err(format!(
+                        "Unknown symbol '{}' in function definition",
+                        b as char
+                    ));
                 }
             }
         }
@@ -282,5 +292,12 @@ mod tests {
         let result = UserFunction::parse("4:bad:bad function:+1");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("stack underflow"));
+    }
+
+    #[test]
+    fn test_non_ascii_symbol_rejected() {
+        let result = UserFunction::parse("4:bad:bad function:ı");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Non-ASCII"));
     }
 }

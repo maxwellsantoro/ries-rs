@@ -40,6 +40,10 @@ pkg/
 # Temporary files
 *.tmp
 *.bak
+test-results/
+playwright-report/
+.codex-playwright/
+output/playwright/
 
 # Claude local config
 .claude/settings.local.json
