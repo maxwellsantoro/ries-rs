@@ -1,0 +1,4 @@
+[     185ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[     307ms] [ERROR] WASM loading failed: TypeError: Cannot read properties of undefined (reading 'init')
+    at Module.init (http://localhost:51594/pkg/ries_rs.js:553:10)
+    at initWasm (http://localhost:51594/web/:461:24) @ http://localhost:51594/web/:475

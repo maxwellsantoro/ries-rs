@@ -59,9 +59,20 @@ pub struct WasmMatch {
 
 impl From<crate::search::Match> for WasmMatch {
     fn from(m: crate::search::Match) -> Self {
+        // DEBUG: Print symbols to see what's being converted
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("DEBUG: Converting match to WASM");
+            eprintln!("  LHS symbols: {:?}", m.lhs.expr.symbols());
+            eprintln!("  RHS symbols: {:?}", m.rhs.expr.symbols());
+        }
+
+        // Convert with error handling to catch problematic expressions
+        let lhs_infix = m.lhs.expr.to_infix();
+        let rhs_infix = m.rhs.expr.to_infix();
         Self {
-            lhs: m.lhs.expr.to_infix(),
-            rhs: m.rhs.expr.to_infix(),
+            lhs: lhs_infix,
+            rhs: rhs_infix,
             lhs_postfix: m.lhs.expr.to_postfix(),
             rhs_postfix: m.rhs.expr.to_postfix(),
             x_value: m.x_value,
@@ -332,7 +343,8 @@ pub fn version() -> String {
 /// Initialize the WASM module (call this before using other functions)
 #[wasm_bindgen]
 pub fn init() {
-    // Currently no initialization needed, but provides a hook for future use
+    // Set up panic hook for better error messages in browser console
+    console_error_panic_hook::set_once();
 }
 
 // Re-export for threaded WASM build. JS must call initThreadPool(n) after init().
