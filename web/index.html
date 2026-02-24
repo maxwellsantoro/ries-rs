@@ -616,9 +616,11 @@
       try {
         const options = getSearchOptions();
 
-        // Build search config object
+        // Parse target as float64
+        const targetValue = parseFloat(target);
+
+        // Build search config object (target is passed separately, not in config)
         const searchConfig = {
-          target: target.toString(),
           level: options.level,
           preset: options.preset,
           maxMatches: options.maxMatches,
@@ -637,8 +639,8 @@
           searchConfig.matchAllDigits = true;
         }
 
-        // Perform the search
-        const matches = wasmModule.search(searchConfig);
+        // Perform the search (target is first argument, config is optional second)
+        const matches = wasmModule.search(targetValue, searchConfig);
 
         // Render results
         if (matches && matches.length > 0) {
@@ -706,10 +708,13 @@
         const leftDiv = document.createElement('div');
         leftDiv.className = 'flex-1 min-w-0';
 
-        // Equation (will be rendered with KaTeX)
+        // Equation (will be rendered with KaTeX) - construct from lhs and rhs
         const equationDiv = document.createElement('div');
         equationDiv.className = 'text-lg mb-2 overflow-x-auto';
-        equationDiv.textContent = '$$' + (match.equation || match.latex || match.display || 'x = ' + (match.value || '')) + '$$';
+        // WasmMatch has lhs and rhs properties
+        const lhs = match.lhs || 'x';
+        const rhs = match.rhs || '';
+        equationDiv.textContent = '$$' + lhs + ' = ' + rhs + '$$';
         leftDiv.appendChild(equationDiv);
 
         // Error info
@@ -732,27 +737,28 @@
         const actionsDiv = document.createElement('div');
         actionsDiv.className = 'flex flex-col gap-2';
 
-        // Copy plain text
+        // Copy plain text - construct from lhs and rhs
         const copyPlainBtn = document.createElement('button');
         copyPlainBtn.type = 'button';
         copyPlainBtn.className = 'copy-btn px-3 py-1 text-xs font-medium rounded bg-zinc-800 hover:bg-zinc-700 transition-colors';
         copyPlainBtn.textContent = 'Copy';
         copyPlainBtn.dataset.format = 'plain';
-        copyPlainBtn.dataset.value = match.equation || match.display || String(match.value || '');
-        copyPlainBtn.dataset.latex = match.latex || match.equation || '';
+        const lhs = match.lhs || 'x';
+        const rhs = match.rhs || '';
+        const plainEquation = lhs + ' = ' + rhs;
+        copyPlainBtn.dataset.value = plainEquation;
+        copyPlainBtn.dataset.latex = plainEquation;
         actionsDiv.appendChild(copyPlainBtn);
 
-        // Copy LaTeX
-        if (match.latex || match.equation) {
-          const copyLatexBtn = document.createElement('button');
-          copyLatexBtn.type = 'button';
-          copyLatexBtn.className = 'copy-btn px-3 py-1 text-xs font-medium rounded bg-zinc-800 hover:bg-zinc-700 transition-colors';
-          copyLatexBtn.textContent = 'LaTeX';
-          copyLatexBtn.dataset.format = 'latex';
-          copyLatexBtn.dataset.value = match.equation || match.display || String(match.value || '');
-          copyLatexBtn.dataset.latex = match.latex || match.equation || '';
-          actionsDiv.appendChild(copyLatexBtn);
-        }
+        // Copy LaTeX - same as plain text for now since we construct it manually
+        const copyLatexBtn = document.createElement('button');
+        copyLatexBtn.type = 'button';
+        copyLatexBtn.className = 'copy-btn px-3 py-1 text-xs font-medium rounded bg-zinc-800 hover:bg-zinc-700 transition-colors';
+        copyLatexBtn.textContent = 'LaTeX';
+        copyLatexBtn.dataset.format = 'latex';
+        copyLatexBtn.dataset.value = plainEquation;
+        copyLatexBtn.dataset.latex = plainEquation;
+        actionsDiv.appendChild(copyLatexBtn);
 
         cardInner.appendChild(leftDiv);
         cardInner.appendChild(actionsDiv);
