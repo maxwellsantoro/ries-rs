@@ -457,9 +457,9 @@
       let lastError = null;
       for (const candidate of PKG_CANDIDATES) {
         try {
-          const module = await import(candidate);
-          await module.init();
-          wasmModule = module;
+          wasmModule = await import(candidate);
+          // Call the default export which is the async initialization function
+          await wasmModule.default();
           break;
         } catch (err) {
           lastError = err;
