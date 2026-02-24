@@ -234,7 +234,7 @@
               name="preset"
               class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
             >
-              <option value="general">General</option>
+              <option value="">General</option>
               <!-- Presets will be populated from WASM -->
             </select>
           </div>
@@ -622,9 +622,13 @@
         // Build search config object (target is passed separately, not in config)
         const searchConfig = {
           level: options.level,
-          preset: options.preset,
           maxMatches: options.maxMatches,
         };
+
+        // Only add preset if it's not empty
+        if (options.preset) {
+          searchConfig.preset = options.preset;
+        }
 
         // Add ranking mode if supported
         if (options.rankingMode === 'complexity' && wasmModule.RankingMode) {
