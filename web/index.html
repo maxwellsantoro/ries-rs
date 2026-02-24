@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RIES-RS • Find Equations for Any Number</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- KaTeX CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+
+  <!-- KaTeX JS -->
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"></script>
+
+  <!-- Custom Tailwind config -->
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            zinc: {
+              950: '#09090b',
+              900: '#18181b',
+              800: '#27272a',
+              700: '#3f3f46',
+              500: '#71717a',
+              100: '#f4f4f5',
+            },
+            emerald: {
+              500: '#10b981',
+              400: '#34d399',
+            },
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* KaTeX overrides */
+    .katex {
+      font-size: 1.1em;
+    }
+
+    .katex-display {
+      margin: 0.5em 0;
+    }
+
+    /* Custom scrollbar - dark theme */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #18181b;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #3f3f46;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #52525b;
+    }
+
+    /* Light mode overrides */
+    html:not(.dark) body {
+      background-color: #f4f4f5;
+      color: #18181b;
+    }
+
+    html:not(.dark) ::-webkit-scrollbar-track {
+      background: #e4e4e7;
+    }
+
+    html:not(.dark) ::-webkit-scrollbar-thumb {
+      background: #a1a1aa;
+    }
+
+    html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+      background: #71717a;
+    }
+
+    /* Loading spinner */
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .animate-spin {
+      animation: spin 1s linear infinite;
+    }
+
+    /* Result card hover effects */
+    .result-card {
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .result-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    html:not(.dark) .result-card:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Copy button feedback */
+    .copy-btn.copied {
+      background-color: #10b981;
+      color: white;
+    }
+
+    html:not(.dark) .copy-btn.copied {
+      background-color: #059669;
+      color: white;
+    }
+
+    /* Quick constant buttons */
+    .constant-btn {
+      transition: all 0.15s ease;
+    }
+
+    .constant-btn:hover {
+      transform: scale(1.05);
+    }
+
+    .constant-btn:active {
+      transform: scale(0.95);
+    }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen font-sans transition-colors duration-200">
+  <!-- Header -->
+  <header class="sticky top-0 z-50 backdrop-blur-md bg-zinc-950/80 dark:bg-zinc-950/80 border-b border-zinc-800">
+    <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-emerald-600 bg-clip-text text-transparent">
+          RIES-RS
+        </h1>
+        <p class="text-sm text-zinc-400">Find algebraic equations for any number</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <!-- Theme toggle -->
+        <button
+          id="theme-toggle"
+          type="button"
+          class="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+          aria-label="Toggle theme"
+        >
+          <svg id="moon-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg>
+          <svg id="sun-icon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+        </button>
+        <!-- GitHub link -->
+        <a
+          href="https://github.com/yourusername/ries-rs"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+          aria-label="View on GitHub"
+        >
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main content -->
+  <main class="max-w-4xl mx-auto px-4 py-8">
+    <!-- Search card -->
+    <div class="bg-zinc-900 dark:bg-zinc-900 rounded-xl border border-zinc-800 p-6 mb-8">
+      <form id="search-form">
+        <!-- Target input -->
+        <div class="mb-6">
+          <label for="target" class="block text-sm font-medium text-zinc-400 mb-2">
+            Target Number
+          </label>
+          <input
+            type="text"
+            id="target"
+            name="target"
+            placeholder="Enter a number (e.g., 3.141592653589793)"
+            class="w-full px-4 py-3 text-lg font-mono bg-zinc-950 dark:bg-zinc-950 border border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all placeholder-zinc-600"
+            autocomplete="off"
+            spellcheck="false"
+            aria-describedby="quick-constants"
+          />
+        </div>
+
+        <!-- Quick constants -->
+        <div id="quick-constants" class="mb-6 flex flex-wrap gap-2">
+          <!-- Constant buttons will be rendered here -->
+        </div>
+
+        <!-- Controls row -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <!-- Level -->
+          <div>
+            <label for="level" class="block text-sm font-medium text-zinc-400 mb-2">
+              Search Level
+            </label>
+            <input
+              type="number"
+              id="level"
+              name="level"
+              min="0"
+              max="5"
+              value="3"
+              class="w-full px-3 py-2 bg-zinc-950 dark:bg-zinc-950 border border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
+            />
+            <p class="text-xs text-zinc-500 mt-1">Higher = more complex equations (0-5)</p>
+          </div>
+
+          <!-- Preset -->
+          <div>
+            <label for="preset" class="block text-sm font-medium text-zinc-400 mb-2">
+              Domain Preset
+            </label>
+            <select
+              id="preset"
+              name="preset"
+              class="w-full px-3 py-2 bg-zinc-950 dark:bg-zinc-950 border border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
+            >
+              <option value="general">General</option>
+              <!-- Presets will be populated from WASM -->
+            </select>
+          </div>
+
+          <!-- Max matches -->
+          <div>
+            <label for="max-matches" class="block text-sm font-medium text-zinc-400 mb-2">
+              Max Matches
+            </label>
+            <input
+              type="number"
+              id="max-matches"
+              name="max-matches"
+              min="1"
+              max="1000"
+              value="50"
+              class="w-full px-3 py-2 bg-zinc-950 dark:bg-zinc-950 border border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
+            />
+          </div>
+        </div>
+
+        <!-- Advanced toggle -->
+        <button
+          type="button"
+          id="advanced-toggle"
+          class="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors mb-2"
+          aria-expanded="false"
+          aria-controls="advanced-panel"
+        >
+          <svg
+            id="advanced-chevron"
+            class="w-4 h-4 transition-transform duration-200"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+          Advanced options
+        </button>
+
+        <!-- Advanced panel -->
+        <div id="advanced-panel" class="hidden">
+          <div class="bg-zinc-950 dark:bg-zinc-950 rounded-lg border border-zinc-800 p-4 space-y-4">
+            <!-- Ranking mode -->
+            <div>
+              <label for="ranking-mode" class="block text-sm font-medium text-zinc-400 mb-2">
+                Ranking Mode
+              </label>
+              <select
+                id="ranking-mode"
+                name="ranking-mode"
+                class="w-full px-3 py-2 bg-zinc-900 dark:bg-zinc-900 border border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
+              >
+                <option value="parity">Parity (matches original RIES)</option>
+                <option value="complexity">Complexity (simpler first)</option>
+              </select>
+            </div>
+
+            <!-- Checkboxes -->
+            <div class="flex flex-wrap gap-4">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="use-pslq"
+                  name="use-pslq"
+                  class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                />
+                <span class="text-sm text-zinc-300">Use PSLQ</span>
+              </label>
+
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="match-all-digits"
+                  name="match-all-digits"
+                  class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                />
+                <span class="text-sm text-zinc-300">Match all digits</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Search button -->
+        <div class="mt-6">
+          <button
+            type="submit"
+            id="search-button"
+            disabled
+            class="w-full px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            <svg id="search-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <svg id="spinner-icon" class="w-5 h-5 animate-spin hidden" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span id="search-button-text">Find Equations</span>
+          </button>
+        </div>
+
+        <!-- Status message -->
+        <div id="status" class="mt-4 text-center text-sm hidden" role="status" aria-live="polite"></div>
+      </form>
+    </div>
+
+    <!-- Results section -->
+    <section id="results-section" class="hidden">
+      <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+        <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        Results
+      </h2>
+      <div id="results-container" class="space-y-4">
+        <!-- Result cards will be rendered here -->
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-zinc-800 py-6 mt-8">
+    <div class="max-w-4xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-zinc-500">
+      <p>
+        <span id="version">Loading...</span>
+      </p>
+      <p id="worker-status" class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-zinc-500"></span>
+        Initializing WASM...
+      </p>
+    </div>
+  </footer>
+
+  <script type="module">
+    // ============================================================
+    // Configuration & State (Task 7)
+    // ============================================================
+
+    const FAMOUS_CONSTANTS = [
+      { name: 'π', value: 3.141592653589793, label: 'Pi', color: 'purple' },
+      { name: 'e', value: 2.718281828459045, label: "Euler's number", color: 'purple' },
+      { name: 'φ', value: 1.618033988749895, label: 'Golden ratio', color: 'purple' },
+      { name: '√2', value: 1.414213562373095, label: 'Square root of 2', color: 'purple' },
+      { name: 'γ', value: 0.577215664901532, label: 'Euler–Mascheroni constant', color: 'purple' },
+      { name: 'c', value: 299792458, label: 'Speed of light (m/s)', color: 'blue' },
+      { name: 'h', value: 6.62607015e-34, label: 'Planck constant', color: 'blue' },
+      { name: 'G', value: 6.67430e-11, label: 'Gravitational constant', color: 'blue' },
+    ];
+
+    const PKG_CANDIDATES = [
+      new URL('../pkg/ries_rs.js', import.meta.url).href,
+      new URL('/pkg/ries_rs.js', import.meta.url).href,
+    ];
+
+    let wasmModule = null;
+    let isThreaded = false;
+    let workerCount = 0;
+    let searchInProgress = false;
+
+    // ============================================================
+    // Utility Functions (Task 7)
+    // ============================================================
+
+    function setStatus(message, kind = 'info') {
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = message;
+      statusEl.classList.remove('hidden', 'text-emerald-400', 'text-zinc-400', 'text-red-400');
+
+      switch (kind) {
+        case 'success':
+          statusEl.classList.add('text-emerald-400');
+          break;
+        case 'error':
+          statusEl.classList.add('text-red-400');
+          break;
+        default:
+          statusEl.classList.add('text-zinc-400');
+      }
+    }
+
+    function setVersion(version) {
+      document.getElementById('version').textContent = 'RIES-RS v' + version;
+    }
+
+    function setWorkerStatus(status) {
+      const statusEl = document.getElementById('worker-status');
+      const dotEl = statusEl.querySelector('span:first-child');
+      const textEl = statusEl.childNodes[statusEl.childNodes.length - 1];
+
+      dotEl.classList.remove('bg-emerald-500', 'bg-zinc-500', 'bg-yellow-500');
+
+      if (status.type === 'ready') {
+        dotEl.classList.add('bg-emerald-500');
+        textEl.textContent = 'WASM ready' + (isThreaded ? ' (' + status.workers + ' threads)' : '');
+      } else if (status.type === 'loading') {
+        dotEl.classList.add('bg-yellow-500');
+        textEl.textContent = status.message || 'Loading WASM...';
+      } else {
+        dotEl.classList.add('bg-zinc-500');
+        textEl.textContent = status.message || 'Unknown status';
+      }
+    }
+
+    function formatError(err) {
+      if (err instanceof Error) {
+        return err.message;
+      }
+      return String(err);
+    }
+
+    // ============================================================
+    // WASM Loading (Task 8)
+    // ============================================================
+
+    async function initWasm() {
+      setWorkerStatus({ type: 'loading', message: 'Loading WASM module...' });
+
+      let lastError = null;
+      for (const candidate of PKG_CANDIDATES) {
+        try {
+          const module = await import(candidate);
+          await module.default();
+          wasmModule = module;
+          break;
+        } catch (err) {
+          lastError = err;
+          continue;
+        }
+      }
+
+      if (!wasmModule) {
+        setWorkerStatus({
+          type: 'error',
+          message: 'Failed to load WASM: ' + formatError(lastError)
+        });
+        setStatus('Failed to load WASM module. Check console for details.', 'error');
+        console.error('WASM loading failed:', lastError);
+        return;
+      }
+
+      // Detect threaded version
+      isThreaded = typeof wasmModule.initThreadPool === 'function';
+      if (isThreaded) {
+        try {
+          const concurrency = navigator.hardwareConcurrency || 4;
+          wasmModule.initThreadPool(concurrency);
+          workerCount = concurrency;
+        } catch (err) {
+          console.warn('Failed to init thread pool:', err);
+          isThreaded = false;
+        }
+      }
+
+      // Get version
+      try {
+        const version = wasmModule.get_version ? wasmModule.get_version() : 'unknown';
+        setVersion(version);
+      } catch (err) {
+        setVersion('unknown');
+      }
+
+      setWorkerStatus({ type: 'ready', workers: workerCount });
+      enableSearch();
+
+      // Initialize UI
+      renderQuickConstants();
+      fillPresets();
+      loadFromURL();
+    }
+
+    function enableSearch() {
+      const button = document.getElementById('search-button');
+      button.disabled = false;
+    }
+
+    // ============================================================
+    // UI Rendering (Task 9)
+    // ============================================================
+
+    function renderQuickConstants() {
+      const container = document.getElementById('quick-constants');
+      container.innerHTML = '';
+
+      FAMOUS_CONSTANTS.forEach(function(constant) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'constant-btn px-3 py-1.5 text-sm font-medium rounded-lg border transition-all';
+
+        // Color-based styling
+        if (constant.color === 'purple') {
+          btn.classList.add('bg-purple-900/30', 'border-purple-700/50', 'text-purple-300', 'hover:bg-purple-900/50');
+        } else {
+          btn.classList.add('bg-blue-900/30', 'border-blue-700/50', 'text-blue-300', 'hover:bg-blue-900/50');
+        }
+
+        btn.textContent = constant.name;
+        btn.setAttribute('title', constant.label);
+        btn.setAttribute('aria-label', 'Use ' + constant.label + ': ' + constant.value);
+
+        btn.addEventListener('click', function() {
+          const targetInput = document.getElementById('target');
+          targetInput.value = constant.value.toString();
+          targetInput.focus();
+          updateURL();
+        });
+
+        container.appendChild(btn);
+      });
+    }
+
+    function fillPresets() {
+      if (!wasmModule || typeof wasmModule.listPresets !== 'function') {
+        return;
+      }
+
+      try {
+        const presets = wasmModule.listPresets();
+        const select = document.getElementById('preset');
+
+        // Clear existing options except the first one
+        while (select.options.length > 1) {
+          select.remove(1);
+        }
+
+        // Add preset options
+        presets.forEach(function(preset) {
+          const option = document.createElement('option');
+          option.value = preset;
+          option.textContent = preset.charAt(0).toUpperCase() + preset.slice(1);
+          select.appendChild(option);
+        });
+      } catch (err) {
+        console.warn('Failed to load presets:', err);
+      }
+    }
+
+    // ============================================================
+    // Search Logic (Task 10)
+    // ============================================================
+
+    function getSearchOptions() {
+      const level = parseInt(document.getElementById('level').value, 10);
+      const preset = document.getElementById('preset').value;
+      const maxMatches = parseInt(document.getElementById('max-matches').value, 10);
+      const rankingMode = document.getElementById('ranking-mode').value;
+      const usePslq = document.getElementById('use-pslq').checked;
+      const matchAllDigits = document.getElementById('match-all-digits').checked;
+
+      return {
+        level: Math.max(0, Math.min(5, level)),
+        preset: preset,
+        maxMatches: Math.max(1, Math.min(1000, maxMatches)),
+        rankingMode: rankingMode,
+        usePslq: usePslq,
+        matchAllDigits: matchAllDigits,
+      };
+    }
+
+    async function performSearch(target) {
+      if (searchInProgress || !wasmModule) {
+        return;
+      }
+
+      searchInProgress = true;
+      const button = document.getElementById('search-button');
+      const searchIcon = document.getElementById('search-icon');
+      const spinnerIcon = document.getElementById('spinner-icon');
+      const buttonText = document.getElementById('search-button-text');
+
+      // Update UI to show searching
+      button.disabled = true;
+      searchIcon.classList.add('hidden');
+      spinnerIcon.classList.remove('hidden');
+      buttonText.textContent = 'Searching...';
+      setStatus('Searching for equations...', 'info');
+
+      try {
+        const options = getSearchOptions();
+
+        // Build search config object
+        const searchConfig = {
+          target: target.toString(),
+          level: options.level,
+          preset: options.preset,
+          maxMatches: options.maxMatches,
+        };
+
+        // Add ranking mode if supported
+        if (options.rankingMode === 'complexity' && wasmModule.RankingMode) {
+          searchConfig.rankingMode = wasmModule.RankingMode.Complexity;
+        }
+
+        // Add optional flags
+        if (options.usePslq) {
+          searchConfig.usePslq = true;
+        }
+        if (options.matchAllDigits) {
+          searchConfig.matchAllDigits = true;
+        }
+
+        // Perform the search
+        const matches = wasmModule.search(searchConfig);
+
+        // Render results
+        if (matches && matches.length > 0) {
+          renderResults(matches);
+          setStatus('Found ' + matches.length + ' equation' + (matches.length !== 1 ? 's' : ''), 'success');
+        } else {
+          document.getElementById('results-section').classList.add('hidden');
+          setStatus('No equations found. Try a higher search level.', 'info');
+        }
+      } catch (err) {
+        console.error('Search error:', err);
+        setStatus('Search failed: ' + formatError(err), 'error');
+        document.getElementById('results-section').classList.add('hidden');
+      } finally {
+        // Reset UI
+        button.disabled = false;
+        searchIcon.classList.remove('hidden');
+        spinnerIcon.classList.add('hidden');
+        buttonText.textContent = 'Find Equations';
+        searchInProgress = false;
+      }
+    }
+
+    // Form submit handler
+    document.getElementById('search-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const targetInput = document.getElementById('target');
+      const target = targetInput.value.trim();
+
+      if (!target) {
+        setStatus('Please enter a target number', 'error');
+        return;
+      }
+
+      // Validate target is a number
+      const numValue = parseFloat(target);
+      if (isNaN(numValue)) {
+        setStatus('Invalid target number. Please enter a valid number.', 'error');
+        return;
+      }
+
+      updateURL();
+      performSearch(target);
+    });
+
+    // ============================================================
+    // Results Rendering (Task 11)
+    // ============================================================
+
+    function renderResults(matches) {
+      const container = document.getElementById('results-container');
+      const section = document.getElementById('results-section');
+
+      container.innerHTML = '';
+      section.classList.remove('hidden');
+
+      matches.forEach(function(match, index) {
+        const card = document.createElement('div');
+        card.className = 'result-card bg-zinc-900 dark:bg-zinc-900 rounded-lg border border-zinc-800 p-4';
+
+        const cardInner = document.createElement('div');
+        cardInner.className = 'flex items-start justify-between gap-4';
+
+        // Left side: equation and info
+        const leftDiv = document.createElement('div');
+        leftDiv.className = 'flex-1 min-w-0';
+
+        // Equation (will be rendered with KaTeX)
+        const equationDiv = document.createElement('div');
+        equationDiv.className = 'text-lg mb-2 overflow-x-auto';
+        equationDiv.textContent = '$$' + (match.equation || match.latex || match.display || 'x = ' + (match.value || '')) + '$$';
+        leftDiv.appendChild(equationDiv);
+
+        // Error info
+        if (match.error !== undefined) {
+          const errorDiv = document.createElement('div');
+          errorDiv.className = 'text-sm text-zinc-400';
+          errorDiv.textContent = 'Error: ' + match.error.toExponential(2);
+          leftDiv.appendChild(errorDiv);
+        }
+
+        // Complexity info
+        if (match.complexity !== undefined) {
+          const complexityDiv = document.createElement('div');
+          complexityDiv.className = 'text-xs text-zinc-500 mt-1';
+          complexityDiv.textContent = 'Complexity: ' + match.complexity;
+          leftDiv.appendChild(complexityDiv);
+        }
+
+        // Right side: copy buttons
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'flex flex-col gap-2';
+
+        // Copy plain text
+        const copyPlainBtn = document.createElement('button');
+        copyPlainBtn.type = 'button';
+        copyPlainBtn.className = 'copy-btn px-3 py-1 text-xs font-medium rounded bg-zinc-800 hover:bg-zinc-700 transition-colors';
+        copyPlainBtn.textContent = 'Copy';
+        copyPlainBtn.dataset.format = 'plain';
+        copyPlainBtn.dataset.value = match.equation || match.display || String(match.value || '');
+        copyPlainBtn.dataset.latex = match.latex || match.equation || '';
+        actionsDiv.appendChild(copyPlainBtn);
+
+        // Copy LaTeX
+        if (match.latex || match.equation) {
+          const copyLatexBtn = document.createElement('button');
+          copyLatexBtn.type = 'button';
+          copyLatexBtn.className = 'copy-btn px-3 py-1 text-xs font-medium rounded bg-zinc-800 hover:bg-zinc-700 transition-colors';
+          copyLatexBtn.textContent = 'LaTeX';
+          copyLatexBtn.dataset.format = 'latex';
+          copyLatexBtn.dataset.value = match.equation || match.display || String(match.value || '');
+          copyLatexBtn.dataset.latex = match.latex || match.equation || '';
+          actionsDiv.appendChild(copyLatexBtn);
+        }
+
+        cardInner.appendChild(leftDiv);
+        cardInner.appendChild(actionsDiv);
+        card.appendChild(cardInner);
+        container.appendChild(card);
+      });
+
+      // Add copy handlers to all buttons
+      document.querySelectorAll('.copy-btn').forEach(function(btn) {
+        btn.addEventListener('click', handleCopy);
+      });
+
+      // Render math
+      renderMath();
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function renderMath() {
+      renderMathInElement(document.body, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '$', right: '$', display: false },
+        ],
+        throwOnError: false,
+      });
+    }
+
+    // ============================================================
+    // Copy Handler (Task 12)
+    // ============================================================
+
+    function handleCopy(e) {
+      const btn = e.currentTarget;
+      const format = btn.dataset.format;
+      const value = btn.dataset.value;
+      const latex = btn.dataset.latex;
+
+      let textToCopy = value;
+
+      if (format === 'latex' && latex) {
+        textToCopy = latex;
+      } else if (format === 'sympy' && latex) {
+        // Very basic LaTeX to SymPy conversion
+        textToCopy = latex
+          .replace(/\\sqrt\{([^}]+)\}/g, 'sqrt($1)')
+          .replace(/\\pi/g, 'pi')
+          .replace(/\^{([^}]+)}/g, '**($1)')
+          .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1)/($2)');
+      }
+
+      navigator.clipboard.writeText(textToCopy).then(function() {
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+
+        setTimeout(function() {
+          btn.textContent = originalText;
+          btn.classList.remove('copied');
+        }, 1500);
+      }).catch(function(err) {
+        console.error('Failed to copy:', err);
+      });
+    }
+
+    // ============================================================
+    // Theme Toggle (Task 13)
+    // ============================================================
+
+    function initTheme() {
+      const stored = localStorage.getItem('theme');
+      if (stored) {
+        document.documentElement.classList.toggle('dark', stored === 'dark');
+      } else {
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', prefersDark);
+      }
+      updateThemeIcon(document.documentElement.classList.contains('dark'));
+    }
+
+    function toggleTheme() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      updateThemeIcon(isDark);
+    }
+
+    function updateThemeIcon(isDark) {
+      const moonIcon = document.getElementById('moon-icon');
+      const sunIcon = document.getElementById('sun-icon');
+
+      if (isDark) {
+        moonIcon.classList.remove('hidden');
+        sunIcon.classList.add('hidden');
+      } else {
+        moonIcon.classList.add('hidden');
+        sunIcon.classList.remove('hidden');
+      }
+    }
+
+    document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+
+    // ============================================================
+    // Advanced Panel (Task 14)
+    // ============================================================
+
+    function initAdvancedPanel() {
+      const toggle = document.getElementById('advanced-toggle');
+      const panel = document.getElementById('advanced-panel');
+      const chevron = document.getElementById('advanced-chevron');
+
+      toggle.addEventListener('click', function() {
+        const isHidden = panel.classList.toggle('hidden');
+        toggle.setAttribute('aria-expanded', !isHidden);
+        chevron.style.transform = isHidden ? '' : 'rotate(180deg)';
+        updateURL();
+      });
+    }
+
+    // ============================================================
+    // URL State Management (Task 15)
+    // ============================================================
+
+    function updateURL() {
+      const params = new URLSearchParams();
+
+      const target = document.getElementById('target').value.trim();
+      if (target) {
+        params.set('target', target);
+      }
+
+      const level = document.getElementById('level').value;
+      if (level !== '3') {
+        params.set('level', level);
+      }
+
+      const preset = document.getElementById('preset').value;
+      if (preset !== 'general') {
+        params.set('preset', preset);
+      }
+
+      const maxMatches = document.getElementById('max-matches').value;
+      if (maxMatches !== '50') {
+        params.set('max-matches', maxMatches);
+      }
+
+      const rankingMode = document.getElementById('ranking-mode').value;
+      if (rankingMode !== 'parity') {
+        params.set('ranking-mode', rankingMode);
+      }
+
+      if (document.getElementById('use-pslq').checked) {
+        params.set('use-pslq', '1');
+      }
+
+      if (document.getElementById('match-all-digits').checked) {
+        params.set('match-all-digits', '1');
+      }
+
+      const panel = document.getElementById('advanced-panel');
+      if (!panel.classList.contains('hidden')) {
+        params.set('advanced', '1');
+      }
+
+      const queryString = params.toString();
+      const newUrl = queryString ? '?' + queryString : window.location.pathname;
+      window.history.replaceState({}, '', newUrl);
+    }
+
+    function loadFromURL() {
+      const params = new URLSearchParams(window.location.search);
+
+      // Load all form values
+      if (params.has('target')) {
+        document.getElementById('target').value = params.get('target');
+      }
+
+      if (params.has('level')) {
+        const level = parseInt(params.get('level'), 10);
+        if (!isNaN(level) && level >= 0 && level <= 5) {
+          document.getElementById('level').value = level;
+        }
+      }
+
+      if (params.has('preset')) {
+        document.getElementById('preset').value = params.get('preset');
+      }
+
+      if (params.has('max-matches')) {
+        const maxMatches = parseInt(params.get('max-matches'), 10);
+        if (!isNaN(maxMatches) && maxMatches >= 1 && maxMatches <= 1000) {
+          document.getElementById('max-matches').value = maxMatches;
+        }
+      }
+
+      if (params.has('ranking-mode')) {
+        document.getElementById('ranking-mode').value = params.get('ranking-mode');
+      }
+
+      document.getElementById('use-pslq').checked = params.has('use-pslq');
+      document.getElementById('match-all-digits').checked = params.has('match-all-digits');
+
+      // Show advanced panel if requested
+      if (params.has('advanced')) {
+        const panel = document.getElementById('advanced-panel');
+        const toggle = document.getElementById('advanced-toggle');
+        const chevron = document.getElementById('advanced-chevron');
+
+        panel.classList.remove('hidden');
+        toggle.setAttribute('aria-expanded', 'true');
+        chevron.style.transform = 'rotate(180deg)';
+      }
+
+      // Auto-search if target is present
+      if (params.has('target') && params.get('target').trim()) {
+        const target = params.get('target').trim();
+        // Small delay to ensure WASM is fully loaded
+        setTimeout(function() {
+          performSearch(target);
+        }, 100);
+      }
+
+      // Add event listeners for URL updates
+      const inputs = [
+        'target', 'level', 'preset', 'max-matches', 'ranking-mode',
+        'use-pslq', 'match-all-digits'
+      ];
+
+      inputs.forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) {
+          const eventType = el.type === 'checkbox' ? 'change' : 'input';
+          el.addEventListener(eventType, updateURL);
+        }
+      });
+    }
+
+    // ============================================================
+    // Keyboard Navigation (Task 16)
+    // ============================================================
+
+    document.addEventListener('keydown', function(e) {
+      // '/' to focus target input (when not already typing)
+      if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        document.getElementById('target').focus();
+        return;
+      }
+
+      // Escape to clear results or blur input
+      if (e.key === 'Escape') {
+        const targetInput = document.getElementById('target');
+        if (document.activeElement === targetInput) {
+          targetInput.blur();
+        } else {
+          const resultsSection = document.getElementById('results-section');
+          if (!resultsSection.classList.contains('hidden')) {
+            resultsSection.classList.add('hidden');
+            const params = new URLSearchParams(window.location.search);
+            params.delete('target');
+            const queryString = params.toString();
+            const newUrl = queryString ? '?' + queryString : window.location.pathname;
+            window.history.replaceState({}, '', newUrl);
+          }
+        }
+        return;
+      }
+    });
+
+    // ============================================================
+    // Initialization
+    // ============================================================
+
+    initTheme();
+    initAdvancedPanel();
+    initWasm();
+  </script>
+</body>
+</html>
