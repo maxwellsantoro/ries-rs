@@ -31,6 +31,9 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+const MAX_API_LEVEL: u32 = 5;
+const MAX_API_MATCHES: usize = 10_000;
+
 /// A matched equation from the search
 #[wasm_bindgen]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -162,6 +165,12 @@ struct SearchOptionsInput {
     #[serde(rename = "maxMatches", alias = "max_matches")]
     max_matches: usize,
     preset: Option<String>,
+    #[serde(rename = "rankingMode", alias = "ranking_mode")]
+    ranking_mode: Option<String>,
+    #[serde(rename = "matchAllDigits", alias = "match_all_digits")]
+    match_all_digits: bool,
+    #[serde(rename = "usePslq", alias = "use_pslq")]
+    use_pslq: bool,
 }
 
 impl Default for SearchOptionsInput {
@@ -170,6 +179,9 @@ impl Default for SearchOptionsInput {
             level: 2,
             max_matches: 16,
             preset: None,
+            ranking_mode: None,
+            match_all_digits: false,
+            use_pslq: false,
         }
     }
 }
@@ -185,6 +197,32 @@ fn parse_search_options(options: Option<JsValue>) -> Result<SearchOptionsInput, 
 
 fn build_symbol_table(profile: &crate::profile::Profile) -> crate::symbol_table::SymbolTable {
     crate::symbol_table::SymbolTable::from_profile(profile)
+}
+
+fn parse_ranking_mode(value: Option<&str>) -> Result<crate::pool::RankingMode, JsValue> {
+    match value.unwrap_or("complexity") {
+        "complexity" => Ok(crate::pool::RankingMode::Complexity),
+        "parity" => Ok(crate::pool::RankingMode::Parity),
+        other => Err(JsValue::from_str(&format!(
+            "Unknown rankingMode '{}'. Supported values: 'complexity', 'parity'.",
+            other
+        ))),
+    }
+}
+
+fn compute_significant_digits_tolerance(target: f64) -> f64 {
+    if target == 0.0 {
+        return 1e-15;
+    }
+
+    let target_str = format!("{:.15}", target);
+    let trimmed = target_str.trim_end_matches('0');
+    let digits_after_decimal = trimmed
+        .find('.')
+        .map(|pos| trimmed.len().saturating_sub(pos + 1))
+        .unwrap_or(0);
+
+    (0.5 * 10_f64.powi(-(digits_after_decimal as i32))).max(1e-15)
 }
 
 /// Build a GenConfig from simple parameters
@@ -251,6 +289,28 @@ fn build_gen_config(
 #[wasm_bindgen]
 pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, JsValue> {
     let opts = parse_search_options(options)?;
+    if opts.use_pslq {
+        return Err(JsValue::from_str(
+            "usePslq is not supported in the WebAssembly build yet.",
+        ));
+    }
+    if opts.level > MAX_API_LEVEL {
+        return Err(JsValue::from_str(&format!(
+            "Invalid level {}. Supported range is 0..={}.",
+            opts.level, MAX_API_LEVEL
+        )));
+    }
+    if opts.max_matches > MAX_API_MATCHES {
+        return Err(JsValue::from_str(&format!(
+            "maxMatches {} is too large. Maximum supported value is {}.",
+            opts.max_matches, MAX_API_MATCHES
+        )));
+    }
+    let internal_max_matches = opts
+        .max_matches
+        .checked_mul(2)
+        .ok_or_else(|| JsValue::from_str("maxMatches is too large"))?;
+    let ranking_mode = parse_ranking_mode(opts.ranking_mode.as_deref())?;
 
     // Use the standard level-to-complexity mapping
     let (max_lhs_complexity, max_rhs_complexity) = crate::search::level_to_complexity(opts.level);
@@ -270,10 +330,14 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
     let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, &profile);
 
     // Build search config
-    let max_error = (target.abs() * 0.01).max(1e-12);
+    let max_error = if opts.match_all_digits {
+        compute_significant_digits_tolerance(target)
+    } else {
+        (target.abs() * 0.01).max(1e-12)
+    };
     let search_config = crate::search::SearchConfig {
         target,
-        max_matches: opts.max_matches * 2,
+        max_matches: internal_max_matches,
         max_error,
         stop_at_exact: false,
         stop_below: None,
@@ -289,9 +353,9 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
         show_pruned_arith: false,
         show_pruned_range: false,
         show_db_adds: false,
-        match_all_digits: false,
+        match_all_digits: opts.match_all_digits,
         derivative_margin: crate::thresholds::DEGENERATE_DERIVATIVE,
-        ranking_mode: crate::pool::RankingMode::Complexity,
+        ranking_mode,
     };
 
     // Perform search: parallel when wasm-threads (wasm-bindgen-rayon), else sequential

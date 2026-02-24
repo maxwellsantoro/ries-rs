@@ -31,6 +31,9 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+const MAX_API_LEVEL: u32 = 5;
+const MAX_API_MATCHES: usize = 10_000;
+
 /// A matched equation from the search.
 ///
 /// Each match represents an equation of the form `lhs = rhs` where `lhs`
@@ -243,6 +246,22 @@ fn search(
     preset: Option<&str>,
     parallel: bool,
 ) -> PyResult<Vec<PyMatch>> {
+    if level > MAX_API_LEVEL {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid level {}. Supported range is 0..={}.",
+            level, MAX_API_LEVEL
+        )));
+    }
+    if max_matches > MAX_API_MATCHES {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "max_matches {} is too large. Maximum supported value is {}.",
+            max_matches, MAX_API_MATCHES
+        )));
+    }
+    let internal_max_matches = max_matches
+        .checked_mul(2)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("max_matches is too large"))?;
+
     // Use the standard level-to-complexity mapping
     let (max_lhs_complexity, max_rhs_complexity) = ries_core::search::level_to_complexity(level);
 
@@ -264,7 +283,7 @@ fn search(
     let max_error = (target.abs() * 0.01).max(1e-12);
     let search_config = ries_core::search::SearchConfig {
         target,
-        max_matches: max_matches * 2, // Get more to filter later
+        max_matches: internal_max_matches, // Get more to filter later
         max_error,
         stop_at_exact: false,
         stop_below: None,

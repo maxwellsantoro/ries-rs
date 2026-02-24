@@ -13,7 +13,48 @@ use crate::thresholds::{
     TIER_2_MAX,
 };
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[derive(Clone, Copy, Debug)]
+struct SearchTimer {
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    start_ms: f64,
+    #[cfg(not(all(target_arch = "wasm32", feature = "wasm")))]
+    start: std::time::Instant,
+}
+
+impl SearchTimer {
+    #[inline]
+    fn start() -> Self {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+        {
+            Self {
+                start_ms: js_sys::Date::now(),
+            }
+        }
+
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm")))]
+        {
+            Self {
+                start: std::time::Instant::now(),
+            }
+        }
+    }
+
+    #[inline]
+    fn elapsed(self) -> Duration {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+        {
+            let elapsed_ms = (js_sys::Date::now() - self.start_ms).max(0.0);
+            Duration::from_secs_f64(elapsed_ms / 1000.0)
+        }
+
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm")))]
+        {
+            self.start.elapsed()
+        }
+    }
+}
 
 /// Statistics collected during search
 #[derive(Clone, Debug, Default)]
@@ -133,8 +174,13 @@ pub fn level_to_complexity(level: u32) -> (u32, u32) {
     const BASE_RHS: u32 = 12;
     const LEVEL_MULTIPLIER: u32 = 4;
 
-    let level_factor = LEVEL_MULTIPLIER * level;
-    (BASE_LHS + level_factor, BASE_RHS + level_factor)
+    // Saturating arithmetic avoids panics/wraparound if an API caller passes
+    // an out-of-range level without validation.
+    let level_factor = LEVEL_MULTIPLIER.saturating_mul(level);
+    (
+        BASE_LHS.saturating_add(level_factor),
+        BASE_RHS.saturating_add(level_factor),
+    )
 }
 
 /// A matched equation
@@ -711,7 +757,7 @@ impl ExprDatabase {
         config: &SearchConfig,
     ) -> (Vec<Match>, SearchStats) {
         let mut stats = SearchStats::new();
-        let search_start = Instant::now();
+        let search_start = SearchTimer::start();
 
         // Respect configured max error (with a tiny floor for numerical stability)
         let initial_max_error = config.max_error.max(1e-12);
@@ -1083,7 +1129,7 @@ pub fn search_with_stats_and_config(
 
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
 
-    let gen_start = Instant::now();
+    let gen_start = SearchTimer::start();
 
     // Try bounded generation first — if limit exceeded, fall back to streaming
     if let Some(generated) =
@@ -1153,7 +1199,7 @@ pub fn search_adaptive(
     use crate::gen::{quantize_value, LhsKey};
     use std::collections::HashSet;
 
-    let gen_start = Instant::now();
+    let gen_start = SearchTimer::start();
     let mut all_lhs = Vec::new();
     let mut all_rhs = Vec::new();
     let mut seen_lhs_keys: HashSet<LhsKey> = HashSet::new();
@@ -1202,7 +1248,7 @@ pub fn search_adaptive(
     let mut db = ExprDatabase::new();
     db.insert_rhs(all_rhs);
 
-    let search_start = Instant::now();
+    let search_start = SearchTimer::start();
     let (matches, match_stats) = db.find_matches_with_stats(&all_lhs, search_config);
     let search_time = search_start.elapsed();
 
@@ -1285,7 +1331,7 @@ pub fn search_streaming_with_config(
     use crate::gen::{generate_streaming, StreamingCallbacks};
     use std::collections::HashMap;
 
-    let gen_start = Instant::now();
+    let gen_start = SearchTimer::start();
     let mut stats = SearchStats::new();
 
     // Respect configured max error (with a tiny floor for numerical stability)
@@ -1343,7 +1389,7 @@ pub fn search_streaming_with_config(
     stats.gen_time = gen_start.elapsed();
 
     // Now match LHS expressions against the RHS database
-    let search_start = Instant::now();
+    let search_start = SearchTimer::start();
 
     // Sort LHS by complexity so simpler expressions are processed first
     lhs_exprs.sort_by_key(|e| e.expr.complexity());
@@ -1550,7 +1596,7 @@ pub fn search_one_sided_with_stats_and_config(
     use crate::gen::generate_all;
     use crate::symbol::Symbol;
 
-    let gen_start = Instant::now();
+    let gen_start = SearchTimer::start();
 
     let mut rhs_only = gen_config.clone();
     rhs_only.generate_lhs = false;
@@ -1559,7 +1605,7 @@ pub fn search_one_sided_with_stats_and_config(
     let generated = generate_all(&rhs_only, config.target);
     let gen_time = gen_start.elapsed();
 
-    let search_start = Instant::now();
+    let search_start = SearchTimer::start();
     let initial_max_error = config.max_error.max(1e-12);
     let mut pool = TopKPool::new_with_diagnostics(
         config.max_matches,
@@ -1715,7 +1761,7 @@ pub fn search_parallel_with_stats_and_config(
 
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
 
-    let gen_start = Instant::now();
+    let gen_start = SearchTimer::start();
 
     // Try bounded generation first — if limit exceeded, fall back to streaming
     if let Some(generated) =

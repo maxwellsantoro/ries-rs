@@ -25,7 +25,9 @@
     "build:all": "npm run build && npm run build:node && npm run build:bundler",
     "build:threads": "RUSTFLAGS='-C target-feature=+atomics,+bulk-memory' rustup run nightly wasm-pack build --target web --out-dir pkg-threads -- --features wasm-threads -Z build-std=panic_abort,std",
     "prepack": "npm run build:all",
-    "test": "wasm-pack test --node -- --features wasm"
+    "test": "wasm-pack test --node -- --features wasm",
+    "test:web:smoke": "playwright test -c playwright.config.ts tests/web-smoke.spec.ts --reporter=line --workers=1",
+    "test:web:smoke:build": "npm run build && npm run test:web:smoke"
   },
   "keywords": [
     "math",
@@ -48,5 +50,8 @@
   "homepage": "https://github.com/maxwellsantoro/ries-rs#readme",
   "dependencies": {
     "wasm-pack": "^0.14.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }
