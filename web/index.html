@@ -108,9 +108,21 @@
       transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
 
-    .result-card,
-    .result-card * {
+    /* Dark mode: cards are dark with light text */
+    .dark .result-card,
+    .dark .result-card * {
       color: #f4f4f5;
+    }
+
+    /* Light mode: cards are white with dark text */
+    html:not(.dark) .result-card {
+      background-color: #ffffff;
+      border-color: #e4e4e7;
+      color: #18181b;
+    }
+
+    html:not(.dark) .result-card * {
+      color: #18181b;
     }
 
     .result-card:hover {
@@ -120,6 +132,16 @@
 
     html:not(.dark) .result-card:hover {
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Light mode: copy buttons need light background so text is readable */
+    html:not(.dark) .result-card .copy-btn {
+      background-color: #e4e4e7;
+      color: #18181b;
+    }
+
+    html:not(.dark) .result-card .copy-btn:hover {
+      background-color: #d4d4d8;
     }
 
     /* Copy button feedback */
@@ -507,6 +529,66 @@
     }
 
     // ============================================================
+    // LaTeX Conversion (ASCII infix → LaTeX for KaTeX rendering)
+    // ============================================================
+
+    function findMatchingParen(s, start) {
+      let depth = 1;
+      let i = start + 1;
+      while (i < s.length && depth > 0) {
+        if (s[i] === '(') depth++;
+        else if (s[i] === ')') depth--;
+        i++;
+      }
+      return i - 1;
+    }
+
+    const CONSTANT_LATEX = {
+      pi: '\\pi', phi: '\\varphi', gamma: '\\gamma',
+      plastic: 'P', apery: '\\zeta(3)', catalan: 'G',
+    };
+
+    function toLatex(expr) {
+      const fnConversions = [
+        { prefix: 'sqrt(',  convert: function(i) { return '\\sqrt{' + toLatex(i) + '}'; } },
+        { prefix: 'sinpi(', convert: function(i) { return '\\sin(\\pi \\cdot ' + toLatex(i) + ')'; } },
+        { prefix: 'cospi(', convert: function(i) { return '\\cos(\\pi \\cdot ' + toLatex(i) + ')'; } },
+        { prefix: 'tanpi(', convert: function(i) { return '\\tan(\\pi \\cdot ' + toLatex(i) + ')'; } },
+        { prefix: 'ln(',    convert: function(i) { return '\\ln(' + toLatex(i) + ')'; } },
+        { prefix: 'W(',     convert: function(i) { return 'W(' + toLatex(i) + ')'; } },
+      ];
+      var result = '', i = 0;
+      while (i < expr.length) {
+        var matched = false;
+        for (var fi = 0; fi < fnConversions.length; fi++) {
+          var conv = fnConversions[fi];
+          if (expr.startsWith(conv.prefix, i)) {
+            var openIdx = i + conv.prefix.length - 1;
+            var closeIdx = findMatchingParen(expr, openIdx);
+            result += conv.convert(expr.slice(openIdx + 1, closeIdx));
+            i = closeIdx + 1; matched = true; break;
+          }
+        }
+        if (matched) continue;
+        var ch = expr[i];
+        if (ch === '*') { result += ' \\cdot '; i++; continue; }
+        if (ch === '^' && i + 1 < expr.length && expr[i + 1] === '(') {
+          var expOpen = i + 1, expClose = findMatchingParen(expr, expOpen);
+          result += '^{' + toLatex(expr.slice(expOpen + 1, expClose)) + '}';
+          i = expClose + 1; continue;
+        }
+        if (/[a-zA-Z]/.test(ch)) {
+          var j = i;
+          while (j < expr.length && /[a-zA-Z0-9_]/.test(expr[j])) j++;
+          result += (CONSTANT_LATEX[expr.slice(i, j)] || expr.slice(i, j));
+          i = j; continue;
+        }
+        result += ch; i++;
+      }
+      return result;
+    }
+
+    // ============================================================
     // Text Output Formatting
     // ============================================================
 
@@ -774,8 +856,8 @@
         return;
       }
 
-      // Validate target is a number
-      const numValue = parseFloat(target);
+      // Validate target is a number (Number() is strict; parseFloat allows trailing garbage)
+      const numValue = Number(target);
       if (isNaN(numValue)) {
         setStatus('Invalid target number. Please enter a valid number.', 'error');
         return;
@@ -816,7 +898,8 @@
         const lhs = match.lhs || 'x';
         const rhs = match.rhs || '';
         const plainEquation = lhs + ' = ' + rhs;
-        equationDiv.textContent = '$$' + plainEquation + '$$';
+        const latexEquation = toLatex(lhs) + ' = ' + toLatex(rhs);
+        equationDiv.textContent = '$$' + latexEquation + '$$';
         leftDiv.appendChild(equationDiv);
 
         // Error info
@@ -850,14 +933,14 @@
         copyPlainBtn.dataset.latex = plainEquation;
         actionsDiv.appendChild(copyPlainBtn);
 
-        // Copy LaTeX - same as plain text for now since we construct it manually
+        // Copy LaTeX - copies the LaTeX-formatted equation string
         const copyLatexBtn = document.createElement('button');
         copyLatexBtn.type = 'button';
         copyLatexBtn.className = 'copy-btn px-3 py-1 text-xs font-medium rounded bg-zinc-800 hover:bg-zinc-700 transition-colors';
         copyLatexBtn.textContent = 'LaTeX';
         copyLatexBtn.dataset.format = 'latex';
-        copyLatexBtn.dataset.value = plainEquation;
-        copyLatexBtn.dataset.latex = plainEquation;
+        copyLatexBtn.dataset.value = latexEquation;
+        copyLatexBtn.dataset.latex = latexEquation;
         actionsDiv.appendChild(copyLatexBtn);
 
         cardInner.appendChild(leftDiv);
