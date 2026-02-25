@@ -44,6 +44,29 @@ test("web UI loads, shows web-only limitations, and runs a search", async ({ pag
   expect(firstCardText).toContain("Error:");
   expect(firstCardText).toContain("Complexity:");
 
+  // Verify LaTeX conversion: KaTeX should have rendered π symbol, not raw "pi" string.
+  // The first result for π is typically x = pi, which should render as x = π.
+  const katexRendered = await firstCard.evaluate((el) => {
+    const katexEl = el.querySelector(".katex");
+    if (!katexEl) return { hasKatex: false, hasRawPi: false, hasPiSymbol: false };
+    const text = katexEl.textContent || "";
+    return {
+      hasKatex: true,
+      // "pi" as two raw letters would appear in the MathML or visible text
+      // but the π unicode character would not equal "pi"
+      hasRawPi: /\bpi\b/.test(text) && !text.includes("π"),
+      hasPiSymbol: text.includes("π"),
+    };
+  });
+  expect(katexRendered.hasKatex).toBe(true);
+  // If pi is in the result, it must render as π, not raw "pi"
+  if (!katexRendered.hasPiSymbol) {
+    // No pi in this particular result — that's fine (e.g. x=x result)
+    expect(katexRendered.hasRawPi).toBe(false);
+  } else {
+    expect(katexRendered.hasPiSymbol).toBe(true);
+  }
+
   const colorCheck = await firstCard.evaluate((el) => {
     const parse = (rgb: string) => {
       const nums = rgb.match(/\d+(\.\d+)?/g) || [];
