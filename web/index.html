@@ -360,14 +360,55 @@
 
     <!-- Results section -->
     <section id="results-section" class="hidden">
-      <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
-        <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        Results
-      </h2>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-semibold flex items-center gap-2">
+          <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Results
+        </h2>
+        <!-- View toggle -->
+        <div id="view-toggle" class="flex items-center gap-1 bg-zinc-800 rounded-lg p-1">
+          <button
+            id="view-cards"
+            type="button"
+            class="px-3 py-1 text-sm rounded-md transition-colors bg-zinc-700 text-zinc-100"
+            aria-pressed="true"
+          >Cards</button>
+          <button
+            id="view-text"
+            type="button"
+            class="px-3 py-1 text-sm rounded-md transition-colors text-zinc-400 hover:text-zinc-200"
+            aria-pressed="false"
+          >Text</button>
+        </div>
+      </div>
+
+      <!-- Card view -->
       <div id="results-container" class="space-y-4">
         <!-- Result cards will be rendered here -->
+      </div>
+
+      <!-- Text view -->
+      <div id="text-output-container" class="hidden">
+        <div class="flex items-center gap-2 mb-2">
+          <button
+            id="copy-all-btn"
+            type="button"
+            class="px-3 py-1.5 text-sm font-medium rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+          >Copy all</button>
+          <button
+            id="download-btn"
+            type="button"
+            class="px-3 py-1.5 text-sm font-medium rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+          >Download .txt</button>
+        </div>
+        <textarea
+          id="text-output"
+          readonly
+          spellcheck="false"
+          class="w-full h-64 px-4 py-3 font-mono text-sm bg-zinc-950 border border-zinc-700 rounded-lg resize-y outline-none text-zinc-300"
+        ></textarea>
       </div>
     </section>
   </main>
@@ -411,6 +452,8 @@
     let workerCount = 0;
     let searchInProgress = false;
     let advancedHintShown = false;
+    let currentView = 'cards';   // 'cards' | 'text'
+    let currentMatches = [];     // last search results, for re-rendering on view toggle
 
     // ============================================================
     // Utility Functions (Task 7)
@@ -461,6 +504,30 @@
         return err.message;
       }
       return String(err);
+    }
+
+    // ============================================================
+    // Text Output Formatting
+    // ============================================================
+
+    function formatResults(matches, target, level) {
+      const ver = (wasmModule && wasmModule.version) ? wasmModule.version() : 'unknown';
+      const header =
+        '# RIES-RS v' + ver +
+        ' \u2014 target: ' + target +
+        ' (level ' + level + ', ' + matches.length + ' result' +
+        (matches.length !== 1 ? 's' : '') + ')';
+
+      const EQ_WIDTH = 26; // fixed column width for the equation field
+
+      var lines = matches.map(function(m) {
+        var eq = (m.lhs || 'x') + ' = ' + (m.rhs || '');
+        var padded = eq.length < EQ_WIDTH ? eq + ' '.repeat(EQ_WIDTH - eq.length) : eq;
+        return padded + '\terror=' + m.error.toExponential(2) +
+               '\tcomplexity=' + m.complexity;
+      });
+
+      return [header].concat(lines).join('\n');
     }
 
     // ============================================================
@@ -723,6 +790,8 @@
     // ============================================================
 
     function renderResults(matches) {
+      currentMatches = matches;
+
       const container = document.getElementById('results-container');
       const section = document.getElementById('results-section');
 
@@ -804,6 +873,11 @@
 
       // Render math
       renderMath();
+
+      // If already in text view, refresh the textarea with new results
+      if (currentView === 'text') {
+        renderTextOutput(currentMatches);
+      }
     }
 
     function renderMath() {
@@ -815,6 +889,83 @@
         ],
         throwOnError: false,
       });
+    }
+
+    // ============================================================
+    // Text Output Mode (view toggle)
+    // ============================================================
+
+    function renderTextOutput(matches) {
+      var target = document.getElementById('target').value.trim();
+      var level = document.getElementById('level').value;
+      var text = formatResults(matches, target, level);
+
+      var textarea = document.getElementById('text-output');
+      textarea.value = text;
+
+      // Copy all
+      document.getElementById('copy-all-btn').onclick = function() {
+        navigator.clipboard.writeText(text).then(function() {
+          var btn = document.getElementById('copy-all-btn');
+          var orig = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(function() { btn.textContent = orig; }, 1500);
+        }).catch(function() {
+          // Clipboard API requires secure context; fall back to selecting the textarea
+          document.getElementById('text-output').select();
+        });
+      };
+
+      // Download .txt
+      document.getElementById('download-btn').onclick = function() {
+        var blob = new Blob([text], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        var safeName = target.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        a.download = 'ries-rs-' + safeName + '.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+    }
+
+    function setView(view) {
+      currentView = view;
+
+      var cardsBtn = document.getElementById('view-cards');
+      var textBtn = document.getElementById('view-text');
+      var cardsContainer = document.getElementById('results-container');
+      var textContainer = document.getElementById('text-output-container');
+
+      if (view === 'text') {
+        cardsContainer.classList.add('hidden');
+        textContainer.classList.remove('hidden');
+        cardsBtn.classList.remove('bg-zinc-700', 'text-zinc-100');
+        cardsBtn.classList.add('text-zinc-400');
+        cardsBtn.setAttribute('aria-pressed', 'false');
+        textBtn.classList.add('bg-zinc-700', 'text-zinc-100');
+        textBtn.classList.remove('text-zinc-400', 'hover:text-zinc-200');
+        textBtn.setAttribute('aria-pressed', 'true');
+        if (currentMatches.length > 0) {
+          renderTextOutput(currentMatches);
+        }
+      } else {
+        cardsContainer.classList.remove('hidden');
+        textContainer.classList.add('hidden');
+        cardsBtn.classList.add('bg-zinc-700', 'text-zinc-100');
+        cardsBtn.classList.remove('text-zinc-400');
+        cardsBtn.setAttribute('aria-pressed', 'true');
+        textBtn.classList.remove('bg-zinc-700', 'text-zinc-100');
+        textBtn.classList.add('text-zinc-400', 'hover:text-zinc-200');
+        textBtn.setAttribute('aria-pressed', 'false');
+      }
+
+      updateURL();
+    }
+
+    function initViewToggle() {
+      document.getElementById('view-cards').addEventListener('click', function() { setView('cards'); });
+      document.getElementById('view-text').addEventListener('click', function() { setView('text'); });
     }
 
     // ============================================================
@@ -961,6 +1112,10 @@
         params.set('advanced', '1');
       }
 
+      if (currentView !== 'cards') {
+        params.set('view', currentView);
+      }
+
       const queryString = params.toString();
       const newUrl = queryString ? '?' + queryString : window.location.pathname;
       window.history.replaceState({}, '', newUrl);
@@ -1012,10 +1167,30 @@
         chevron.style.transform = 'rotate(180deg)';
       }
 
+      if (params.has('view')) {
+        var view = params.get('view');
+        if (view === 'text' || view === 'cards') {
+          currentView = view;
+          // Visual state applied after search renders results
+        }
+      }
+
       // Auto-search if target is present and WASM is ready
       if (params.has('target') && params.get('target').trim() && wasmModule) {
         const target = params.get('target').trim();
         performSearch(target);
+        // If URL requested text view, apply it after search completes
+        // performSearch is async; setView needs to run after renderResults
+        // Use a one-time observer on results-section visibility
+        if (currentView === 'text') {
+          var observer = new MutationObserver(function(_, obs) {
+            if (!document.getElementById('results-section').classList.contains('hidden')) {
+              obs.disconnect();
+              setView('text');
+            }
+          });
+          observer.observe(document.getElementById('results-section'), { attributes: true });
+        }
       }
 
       // Add event listeners for URL updates
@@ -1071,6 +1246,7 @@
 
     initTheme();
     initAdvancedPanel();
+    initViewToggle();
     initWasm();
   </script>
 </body>

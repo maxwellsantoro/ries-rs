@@ -51,3 +51,6 @@ output/playwright/
 
 # Tool backups
 Cargo.toml.orig
+
+# Git worktrees
+.worktrees/
