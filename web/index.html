@@ -873,6 +873,11 @@
 
       // Render math
       renderMath();
+
+      // If already in text view, refresh the textarea with new results
+      if (currentView === 'text') {
+        renderTextOutput(currentMatches);
+      }
     }
 
     function renderMath() {
@@ -905,6 +910,9 @@
           var orig = btn.textContent;
           btn.textContent = 'Copied!';
           setTimeout(function() { btn.textContent = orig; }, 1500);
+        }).catch(function() {
+          // Clipboard API requires secure context; fall back to selecting the textarea
+          document.getElementById('text-output').select();
         });
       };
 
@@ -914,7 +922,8 @@
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
         a.href = url;
-        a.download = 'ries-rs-' + target + '.txt';
+        var safeName = target.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        a.download = 'ries-rs-' + safeName + '.txt';
         a.click();
         URL.revokeObjectURL(url);
       };
@@ -935,7 +944,7 @@
         cardsBtn.classList.add('text-zinc-400');
         cardsBtn.setAttribute('aria-pressed', 'false');
         textBtn.classList.add('bg-zinc-700', 'text-zinc-100');
-        textBtn.classList.remove('text-zinc-400');
+        textBtn.classList.remove('text-zinc-400', 'hover:text-zinc-200');
         textBtn.setAttribute('aria-pressed', 'true');
         if (currentMatches.length > 0) {
           renderTextOutput(currentMatches);
@@ -947,7 +956,7 @@
         cardsBtn.classList.remove('text-zinc-400');
         cardsBtn.setAttribute('aria-pressed', 'true');
         textBtn.classList.remove('bg-zinc-700', 'text-zinc-100');
-        textBtn.classList.add('text-zinc-400');
+        textBtn.classList.add('text-zinc-400', 'hover:text-zinc-200');
         textBtn.setAttribute('aria-pressed', 'false');
       }
 
