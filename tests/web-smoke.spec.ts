@@ -62,6 +62,34 @@ test("web UI loads, shows web-only limitations, and runs a search", async ({ pag
   });
   expect(colorCheck.sameColor).toBe(false);
 
+  // --- Text output mode ---
+  // Toggle should be visible once results exist
+  await expect(page.locator("#view-toggle")).toBeVisible();
+
+  // Click "Text" tab
+  await page.click("#view-text");
+
+  // Cards should be hidden, textarea should be visible
+  await expect(page.locator("#results-container")).toBeHidden();
+  await expect(page.locator("#text-output-container")).toBeVisible();
+  await expect(page.locator("#text-output")).toBeVisible();
+
+  // Textarea content: header line + at least one equation
+  const textContent = await page.locator("#text-output").inputValue();
+  expect(textContent).toMatch(/^# RIES-RS v\d+\.\d+\.\d+ — target:/);
+  expect(textContent).toContain("= pi");
+  expect(textContent).toContain("error=");
+  expect(textContent).toContain("complexity=");
+
+  // Copy all and Download buttons exist
+  await expect(page.locator("#copy-all-btn")).toBeVisible();
+  await expect(page.locator("#download-btn")).toBeVisible();
+
+  // Switching back to Cards restores cards view
+  await page.click("#view-cards");
+  await expect(page.locator("#results-container")).toBeVisible();
+  await expect(page.locator("#text-output-container")).toBeHidden();
+
   const screenshotDir = path.join(process.cwd(), "output", "playwright");
   fs.mkdirSync(screenshotDir, { recursive: true });
   await page.screenshot({
