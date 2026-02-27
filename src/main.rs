@@ -7,26 +7,12 @@
 // Allow unused code in main - some helper functions are kept for future use
 #![allow(dead_code)]
 
-mod eval;
-mod expr;
-mod fast_match;
-mod gen;
-mod highprec_verify;
-mod manifest;
-mod metrics;
-mod pool;
 #[cfg(feature = "highprec")]
-mod precision;
-mod presets;
-mod profile;
-mod pslq;
-mod report;
-mod search;
-mod stability;
-mod symbol;
-mod symbol_table;
-mod thresholds;
-mod udf;
+use ries_rs::precision;
+use ries_rs::{
+    eval, expr, fast_match, gen, highprec_verify, manifest, metrics, pool, presets, profile, pslq,
+    report, search, stability, symbol, symbol_table, thresholds, udf,
+};
 
 mod cli;
 
@@ -42,21 +28,14 @@ use cli::{
 use manifest::{MatchInfo, RunManifest, SearchConfigInfo};
 use profile::Profile;
 use report::{Report, ReportConfig};
+use ries_rs::{
+    canonical_expression_key, expression_respects_constraints, solve_for_x_rhs_expression,
+    ExpressionConstraintOptions,
+};
+use serde::Serialize;
 use std::time::Instant;
 
 // Args struct is now imported from cli::Args
-
-/// Evaluate an expression string and return the result
-fn eval_expression(
-    expr_str: &str,
-    x: f64,
-    user_constants: &[profile::UserConstant],
-    user_functions: &[udf::UserFunction],
-) -> Result<eval::EvalResult, eval::EvalError> {
-    use expr::Expression;
-    let expr = Expression::parse(expr_str).ok_or(eval::EvalError::Invalid)?;
-    eval::evaluate_with_constants_and_functions(&expr, x, user_constants, user_functions)
-}
 
 fn match_in_equate_bounds(
     m: &search::Match,
@@ -70,422 +49,261 @@ fn match_in_equate_bounds(
     min_ok && max_ok
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ExpressionConstraintOptions {
-    rational_exponents: bool,
-    rational_trig_args: bool,
-    max_trig_cycles: Option<u32>,
-    user_constant_types: [symbol::NumType; 16],
-    user_function_types: [symbol::NumType; 16],
-}
-
-fn expression_respects_constraints(
-    expression: &expr::Expression,
-    opts: ExpressionConstraintOptions,
-) -> bool {
-    use symbol::{NumType, Seft, Symbol};
-
-    #[derive(Clone, Copy)]
-    struct ConstraintValue {
-        has_x: bool,
-        num_type: NumType,
+fn format_bytes_binary(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit_idx = 0;
+    while value >= 1024.0 && unit_idx + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit_idx += 1;
     }
-
-    let mut stack: Vec<ConstraintValue> = Vec::with_capacity(expression.len());
-    let mut trig_ops: u32 = 0;
-
-    for &sym in expression.symbols() {
-        match sym.seft() {
-            Seft::A => {
-                let num_type = if let Some(idx) = sym.user_constant_index() {
-                    opts.user_constant_types[idx as usize]
-                } else {
-                    sym.inherent_type()
-                };
-                stack.push(ConstraintValue {
-                    has_x: sym == Symbol::X,
-                    num_type,
-                });
-            }
-            Seft::B => {
-                let Some(arg) = stack.pop() else {
-                    return false;
-                };
-
-                if matches!(sym, Symbol::SinPi | Symbol::CosPi | Symbol::TanPi) {
-                    trig_ops = trig_ops.saturating_add(1);
-                    if opts.rational_trig_args && (arg.has_x || arg.num_type < NumType::Rational) {
-                        return false;
-                    }
-                }
-
-                let num_type = match sym {
-                    Symbol::Neg | Symbol::Square => arg.num_type,
-                    Symbol::Recip => {
-                        if arg.num_type >= NumType::Rational {
-                            NumType::Rational
-                        } else {
-                            arg.num_type
-                        }
-                    }
-                    Symbol::Sqrt => {
-                        if arg.num_type >= NumType::Rational {
-                            NumType::Algebraic
-                        } else {
-                            arg.num_type
-                        }
-                    }
-                    Symbol::UserFunction0
-                    | Symbol::UserFunction1
-                    | Symbol::UserFunction2
-                    | Symbol::UserFunction3
-                    | Symbol::UserFunction4
-                    | Symbol::UserFunction5
-                    | Symbol::UserFunction6
-                    | Symbol::UserFunction7
-                    | Symbol::UserFunction8
-                    | Symbol::UserFunction9
-                    | Symbol::UserFunction10
-                    | Symbol::UserFunction11
-                    | Symbol::UserFunction12
-                    | Symbol::UserFunction13
-                    | Symbol::UserFunction14
-                    | Symbol::UserFunction15 => {
-                        let idx = sym.user_function_index().unwrap_or(0) as usize;
-                        opts.user_function_types[idx]
-                    }
-                    _ => NumType::Transcendental,
-                };
-
-                stack.push(ConstraintValue {
-                    has_x: arg.has_x,
-                    num_type,
-                });
-            }
-            Seft::C => {
-                let Some(rhs) = stack.pop() else {
-                    return false;
-                };
-                let Some(lhs) = stack.pop() else {
-                    return false;
-                };
-
-                if opts.rational_exponents
-                    && sym == Symbol::Pow
-                    && (rhs.has_x || rhs.num_type < NumType::Rational)
-                {
-                    return false;
-                }
-
-                let num_type = match sym {
-                    Symbol::Add | Symbol::Sub | Symbol::Mul => lhs.num_type.combine(rhs.num_type),
-                    Symbol::Div => {
-                        let combined = lhs.num_type.combine(rhs.num_type);
-                        if combined == NumType::Integer {
-                            NumType::Rational
-                        } else {
-                            combined
-                        }
-                    }
-                    Symbol::Pow => {
-                        if rhs.has_x {
-                            NumType::Transcendental
-                        } else if rhs.num_type == NumType::Integer {
-                            lhs.num_type
-                        } else if lhs.num_type >= NumType::Rational
-                            && rhs.num_type >= NumType::Rational
-                        {
-                            NumType::Algebraic
-                        } else {
-                            NumType::Transcendental
-                        }
-                    }
-                    Symbol::Root => NumType::Algebraic,
-                    Symbol::Log | Symbol::Atan2 => NumType::Transcendental,
-                    _ => NumType::Transcendental,
-                };
-
-                stack.push(ConstraintValue {
-                    has_x: lhs.has_x || rhs.has_x,
-                    num_type,
-                });
-            }
-        }
-    }
-
-    if stack.len() != 1 {
-        return false;
-    }
-
-    opts.max_trig_cycles
-        .is_none_or(|max_cycles| trig_ops <= max_cycles)
-}
-
-#[derive(Clone)]
-enum SolveNodeKind {
-    Atom,
-    Unary(symbol::Symbol, Box<SolveNode>),
-    Binary(symbol::Symbol, Box<SolveNode>, Box<SolveNode>),
-}
-
-#[derive(Clone)]
-struct SolveNode {
-    expr: expr::Expression,
-    x_count: u32,
-    kind: SolveNodeKind,
-}
-
-fn append_unary_expression(base: &expr::Expression, op: symbol::Symbol) -> expr::Expression {
-    let mut out = base.clone();
-    out.push(op);
-    out
-}
-
-fn combine_binary_expressions(
-    lhs: &expr::Expression,
-    rhs: &expr::Expression,
-    op: symbol::Symbol,
-) -> expr::Expression {
-    let mut out = expr::Expression::new();
-    for &sym in lhs.symbols() {
-        out.push(sym);
-    }
-    for &sym in rhs.symbols() {
-        out.push(sym);
-    }
-    out.push(op);
-    out
-}
-
-fn build_solve_ast(expression: &expr::Expression) -> Option<SolveNode> {
-    use symbol::{Seft, Symbol};
-
-    let mut stack: Vec<SolveNode> = Vec::with_capacity(expression.len());
-
-    for &sym in expression.symbols() {
-        match sym.seft() {
-            Seft::A => {
-                let mut e = expr::Expression::new();
-                e.push(sym);
-                stack.push(SolveNode {
-                    expr: e,
-                    x_count: u32::from(sym == Symbol::X),
-                    kind: SolveNodeKind::Atom,
-                });
-            }
-            Seft::B => {
-                let arg = stack.pop()?;
-                let mut e = arg.expr.clone();
-                e.push(sym);
-                stack.push(SolveNode {
-                    expr: e,
-                    x_count: arg.x_count,
-                    kind: SolveNodeKind::Unary(sym, Box::new(arg)),
-                });
-            }
-            Seft::C => {
-                let rhs = stack.pop()?;
-                let lhs = stack.pop()?;
-                let mut e = expr::Expression::new();
-                for &s in lhs.expr.symbols() {
-                    e.push(s);
-                }
-                for &s in rhs.expr.symbols() {
-                    e.push(s);
-                }
-                e.push(sym);
-                stack.push(SolveNode {
-                    expr: e,
-                    x_count: lhs.x_count.saturating_add(rhs.x_count),
-                    kind: SolveNodeKind::Binary(sym, Box::new(lhs), Box::new(rhs)),
-                });
-            }
-        }
-    }
-
-    if stack.len() == 1 {
-        stack.pop()
+    if unit_idx == 0 {
+        format!("{} {}", bytes, UNITS[unit_idx])
     } else {
-        None
+        format!("{value:.2} {}", UNITS[unit_idx])
     }
 }
 
-fn constant_expression(sym: symbol::Symbol) -> expr::Expression {
-    let mut out = expr::Expression::new();
-    out.push(sym);
-    out
-}
-
-fn unary_inverse_expression(
-    op: symbol::Symbol,
-    rhs_value: &expr::Expression,
-) -> Option<expr::Expression> {
-    use symbol::Symbol;
-
-    Some(match op {
-        Symbol::Neg => append_unary_expression(rhs_value, Symbol::Neg),
-        Symbol::Recip => append_unary_expression(rhs_value, Symbol::Recip),
-        Symbol::Square => append_unary_expression(rhs_value, Symbol::Sqrt),
-        Symbol::Sqrt => append_unary_expression(rhs_value, Symbol::Square),
-        Symbol::Ln => append_unary_expression(rhs_value, Symbol::Exp),
-        Symbol::Exp => append_unary_expression(rhs_value, Symbol::Ln),
-        Symbol::TanPi => {
-            // x = atan(rhs) / pi = atan2(rhs, 1) / pi
-            let one = constant_expression(symbol::Symbol::One);
-            let atan = combine_binary_expressions(rhs_value, &one, symbol::Symbol::Atan2);
-            let pi = constant_expression(symbol::Symbol::Pi);
-            combine_binary_expressions(&atan, &pi, symbol::Symbol::Div)
-        }
-        Symbol::SinPi => {
-            // x = asin(rhs)/pi = atan2(rhs, sqrt(1-rhs^2))/pi
-            let one = constant_expression(symbol::Symbol::One);
-            let rhs_sq = append_unary_expression(rhs_value, symbol::Symbol::Square);
-            let inner = combine_binary_expressions(&one, &rhs_sq, symbol::Symbol::Sub);
-            let denom = append_unary_expression(&inner, symbol::Symbol::Sqrt);
-            let atan = combine_binary_expressions(rhs_value, &denom, symbol::Symbol::Atan2);
-            let pi = constant_expression(symbol::Symbol::Pi);
-            combine_binary_expressions(&atan, &pi, symbol::Symbol::Div)
-        }
-        Symbol::CosPi => {
-            // x = acos(rhs)/pi = atan2(sqrt(1-rhs^2), rhs)/pi
-            let one = constant_expression(symbol::Symbol::One);
-            let rhs_sq = append_unary_expression(rhs_value, symbol::Symbol::Square);
-            let inner = combine_binary_expressions(&one, &rhs_sq, symbol::Symbol::Sub);
-            let numer = append_unary_expression(&inner, symbol::Symbol::Sqrt);
-            let atan = combine_binary_expressions(&numer, rhs_value, symbol::Symbol::Atan2);
-            let pi = constant_expression(symbol::Symbol::Pi);
-            combine_binary_expressions(&atan, &pi, symbol::Symbol::Div)
-        }
-        Symbol::LambertW => {
-            // x = W(y)  =>  y = x * exp(x)
-            let exp_rhs = append_unary_expression(rhs_value, symbol::Symbol::Exp);
-            combine_binary_expressions(rhs_value, &exp_rhs, symbol::Symbol::Mul)
-        }
-        _ => return None,
-    })
-}
-
-fn invert_binary_left(
-    op: symbol::Symbol,
-    rhs_value: &expr::Expression,
-    known_right: &expr::Expression,
-) -> Option<expr::Expression> {
-    use symbol::Symbol;
-    Some(match op {
-        Symbol::Add => combine_binary_expressions(rhs_value, known_right, Symbol::Sub),
-        Symbol::Sub => combine_binary_expressions(rhs_value, known_right, Symbol::Add),
-        Symbol::Mul => combine_binary_expressions(rhs_value, known_right, Symbol::Div),
-        Symbol::Div => combine_binary_expressions(rhs_value, known_right, Symbol::Mul),
-        Symbol::Pow => combine_binary_expressions(known_right, rhs_value, Symbol::Root),
-        Symbol::Root => combine_binary_expressions(rhs_value, known_right, Symbol::Log),
-        Symbol::Log => combine_binary_expressions(rhs_value, known_right, Symbol::Root),
-        _ => return None,
-    })
-}
-
-fn invert_binary_right(
-    op: symbol::Symbol,
-    known_left: &expr::Expression,
-    rhs_value: &expr::Expression,
-) -> Option<expr::Expression> {
-    use symbol::Symbol;
-    Some(match op {
-        Symbol::Add => combine_binary_expressions(rhs_value, known_left, Symbol::Sub),
-        Symbol::Sub => combine_binary_expressions(known_left, rhs_value, Symbol::Sub),
-        Symbol::Mul => combine_binary_expressions(rhs_value, known_left, Symbol::Div),
-        Symbol::Div => combine_binary_expressions(known_left, rhs_value, Symbol::Div),
-        Symbol::Pow => combine_binary_expressions(known_left, rhs_value, Symbol::Log),
-        Symbol::Root => combine_binary_expressions(rhs_value, known_left, Symbol::Pow),
-        Symbol::Log => combine_binary_expressions(known_left, rhs_value, Symbol::Pow),
-        _ => return None,
-    })
-}
-
-fn is_x_atom(expression: &expr::Expression) -> bool {
-    use symbol::Symbol;
-    expression.len() == 1
-        && expression
-            .symbols()
-            .first()
-            .is_some_and(|sym| *sym == Symbol::X)
-}
-
-fn solve_for_x_rhs_expression(
-    lhs: &expr::Expression,
-    rhs: &expr::Expression,
-) -> Option<expr::Expression> {
-    use symbol::Symbol;
-
-    if lhs.count_symbol(Symbol::X) != 1 {
+#[cfg(unix)]
+fn peak_memory_bytes() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    // SAFETY: `usage` points to valid writable memory for `getrusage`.
+    let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    if rc != 0 {
         return None;
     }
-
-    let mut node = build_solve_ast(lhs)?;
-    if node.x_count != 1 {
+    // SAFETY: `getrusage` succeeded and initialized the struct.
+    let usage = unsafe { usage.assume_init() };
+    let raw = usage.ru_maxrss;
+    if raw < 0 {
         return None;
     }
-    let mut rhs_expr = rhs.clone();
+    let rss = raw as u64;
 
-    loop {
-        match node.kind {
-            SolveNodeKind::Atom => return is_x_atom(&node.expr).then_some(rhs_expr),
-            SolveNodeKind::Unary(op, child) => {
-                if child.x_count != 1 {
-                    return None;
-                }
-                rhs_expr = unary_inverse_expression(op, &rhs_expr)?;
-                node = *child;
-            }
-            SolveNodeKind::Binary(op, left, right) => {
-                let lx = left.x_count;
-                let rx = right.x_count;
-                if lx + rx != 1 {
-                    return None;
-                }
-
-                if lx == 1 {
-                    rhs_expr = invert_binary_left(op, &rhs_expr, &right.expr)?;
-                    node = *left;
-                } else {
-                    rhs_expr = invert_binary_right(op, &left.expr, &rhs_expr)?;
-                    node = *right;
-                }
-            }
-        }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        Some(rss.saturating_mul(1024))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        // macOS/BSD report ru_maxrss in bytes.
+        Some(rss)
     }
 }
 
-fn symbol_key(sym: symbol::Symbol) -> String {
-    let byte = sym as u8;
-    if byte.is_ascii_graphic() {
-        (byte as char).to_string()
-    } else {
-        format!("#{}", byte)
+#[cfg(not(unix))]
+fn peak_memory_bytes() -> Option<u64> {
+    None
+}
+
+#[derive(Serialize)]
+struct JsonRunOutput {
+    target: f64,
+    search_level: f32,
+    max_lhs_complexity: u32,
+    max_rhs_complexity: u32,
+    max_matches: usize,
+    results_returned: usize,
+    ranking_mode: &'static str,
+    deterministic: bool,
+    parallel: bool,
+    streaming: bool,
+    adaptive: bool,
+    one_sided: bool,
+    report_mode_requested: bool,
+    output_format: String,
+    results: Vec<JsonMatch>,
+    search_stats: JsonSearchStats,
+}
+
+#[derive(Serialize)]
+struct JsonMatch {
+    equation: String,
+    lhs: String,
+    rhs: String,
+    lhs_postfix: String,
+    rhs_postfix: String,
+    solve_for_x: Option<String>,
+    solve_for_x_postfix: Option<String>,
+    canonical_key: String,
+    x_value: f64,
+    error: f64,
+    exact: bool,
+    complexity: u32,
+    operator_count: usize,
+    tree_depth: usize,
+}
+
+#[derive(Serialize)]
+struct JsonSearchStats {
+    expressions_generated_lhs: usize,
+    expressions_generated_rhs: usize,
+    expressions_generated_total: usize,
+    lhs_expressions_tested: usize,
+    lhs_expressions_pruned: usize,
+    candidate_pairs_tested: usize,
+    newton_calls: usize,
+    newton_success: usize,
+    pool_insertions: usize,
+    duplicates_eliminated: usize,
+    pool_rejections_error: usize,
+    pool_evictions: usize,
+    pool_final_size: usize,
+    best_error: f64,
+    generation_ms: f64,
+    search_ms: f64,
+    elapsed_ms: f64,
+    threads: usize,
+    peak_memory_bytes: Option<u64>,
+    early_exit: bool,
+}
+
+fn ranking_mode_name(mode: pool::RankingMode) -> &'static str {
+    match mode {
+        pool::RankingMode::Complexity => "complexity",
+        pool::RankingMode::Parity => "parity",
     }
 }
 
-fn canonical_node_key(node: &SolveNode) -> String {
-    use symbol::Symbol;
+fn effective_thread_count(parallel_enabled: bool) -> usize {
+    if !parallel_enabled {
+        return 1;
+    }
 
-    match &node.kind {
-        SolveNodeKind::Atom => node.expr.to_postfix(),
-        SolveNodeKind::Unary(op, child) => {
-            format!("{}({})", symbol_key(*op), canonical_node_key(child))
-        }
-        SolveNodeKind::Binary(op, left, right) => {
-            let mut lk = canonical_node_key(left);
-            let mut rk = canonical_node_key(right);
-            if matches!(op, Symbol::Add | Symbol::Mul) && lk > rk {
-                std::mem::swap(&mut lk, &mut rk);
+    #[cfg(feature = "parallel")]
+    {
+        rayon::current_num_threads()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        1
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_json_output(
+    target: f64,
+    search_level: f32,
+    max_lhs_complexity: u32,
+    max_rhs_complexity: u32,
+    max_matches: usize,
+    ranking_mode: pool::RankingMode,
+    deterministic: bool,
+    parallel: bool,
+    streaming: bool,
+    adaptive: bool,
+    one_sided: bool,
+    report_mode_requested: bool,
+    output_format: cli::DisplayFormat,
+    explicit_multiply: bool,
+    symbol_table: &symbol_table::SymbolTable,
+    matches: &[search::Match],
+    stats: &search::SearchStats,
+    elapsed: std::time::Duration,
+) -> JsonRunOutput {
+    let output_format_name = match output_format {
+        cli::DisplayFormat::Infix(expr::OutputFormat::Default) => "default",
+        cli::DisplayFormat::Infix(expr::OutputFormat::Pretty) => "pretty",
+        cli::DisplayFormat::Infix(expr::OutputFormat::Mathematica) => "mathematica",
+        cli::DisplayFormat::Infix(expr::OutputFormat::SymPy) => "sympy",
+        cli::DisplayFormat::PostfixCompact => "postfix-compact",
+        cli::DisplayFormat::PostfixVerbose => "postfix-verbose",
+        cli::DisplayFormat::Condensed => "condensed",
+    }
+    .to_string();
+
+    let results = matches
+        .iter()
+        .map(|m| {
+            let lhs = cli::output::format_expression_for_display(
+                &m.lhs.expr,
+                output_format,
+                explicit_multiply,
+                Some(symbol_table),
+            );
+            let rhs = cli::output::format_expression_for_display(
+                &m.rhs.expr,
+                output_format,
+                explicit_multiply,
+                Some(symbol_table),
+            );
+
+            // Analytical solver
+            let solved = solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
+            let solve_for_x = solved
+                .as_ref()
+                .map(|e: &expr::Expression| format!("x = {}", e.to_infix()));
+            let solve_for_x_postfix = solved.as_ref().map(|e: &expr::Expression| e.to_postfix());
+
+            // Canonical key
+            let canonical_key = canonical_expression_key(&m.lhs.expr)
+                .zip(canonical_expression_key(&m.rhs.expr))
+                .map(|(l, r)| format!("{}={}", l, r))
+                .unwrap_or_else(|| {
+                    format!("{}={}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix())
+                });
+
+            JsonMatch {
+                equation: format!("{lhs} = {rhs}"),
+                lhs,
+                rhs,
+                lhs_postfix: m.lhs.expr.to_postfix(),
+                rhs_postfix: m.rhs.expr.to_postfix(),
+                solve_for_x,
+                solve_for_x_postfix,
+                canonical_key,
+                x_value: m.x_value,
+                error: m.error,
+                exact: m.error.abs() < thresholds::EXACT_MATCH_TOLERANCE,
+                complexity: m.complexity,
+                operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
+                tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),
             }
-            format!("({}{}{})", lk, symbol_key(*op), rk)
-        }
-    }
-}
+        })
+        .collect::<Vec<_>>();
 
-fn canonical_expression_key(expression: &expr::Expression) -> Option<String> {
-    let node = build_solve_ast(expression)?;
-    Some(canonical_node_key(&node))
+    let thread_count = effective_thread_count(parallel);
+    let lhs_pruned = stats.lhs_count.saturating_sub(stats.lhs_tested);
+    let peak_memory = peak_memory_bytes();
+    JsonRunOutput {
+        target,
+        search_level,
+        max_lhs_complexity,
+        max_rhs_complexity,
+        max_matches,
+        results_returned: results.len(),
+        ranking_mode: ranking_mode_name(ranking_mode),
+        deterministic,
+        parallel,
+        streaming,
+        adaptive,
+        one_sided,
+        report_mode_requested,
+        output_format: output_format_name,
+        results,
+        search_stats: JsonSearchStats {
+            expressions_generated_lhs: stats.lhs_count,
+            expressions_generated_rhs: stats.rhs_count,
+            expressions_generated_total: stats.lhs_count.saturating_add(stats.rhs_count),
+            lhs_expressions_tested: stats.lhs_tested,
+            lhs_expressions_pruned: lhs_pruned,
+            candidate_pairs_tested: stats.candidates_tested,
+            newton_calls: stats.newton_calls,
+            newton_success: stats.newton_success,
+            pool_insertions: stats.pool_insertions,
+            duplicates_eliminated: stats.pool_rejections_dedupe,
+            pool_rejections_error: stats.pool_rejections_error,
+            pool_evictions: stats.pool_evictions,
+            pool_final_size: stats.pool_final_size,
+            best_error: stats.pool_best_error,
+            generation_ms: stats.gen_time.as_secs_f64() * 1000.0,
+            search_ms: stats.search_time.as_secs_f64() * 1000.0,
+            elapsed_ms: elapsed.as_secs_f64() * 1000.0,
+            threads: thread_count,
+            peak_memory_bytes: peak_memory,
+            early_exit: stats.early_exit,
+        },
+    }
 }
 
 fn digit_signature(expression: &expr::Expression) -> String {
@@ -734,7 +552,13 @@ fn main() {
     // Handle --eval-expression mode (evaluate and exit)
     if let Some(expr_str) = &args.find_expression {
         let x = args.at.or(resolved_target).unwrap_or(1.0);
-        match eval_expression(expr_str, x, &profile.constants, &profile.functions) {
+        let expr = expr::Expression::parse(expr_str).expect("invalid expression");
+        match eval::evaluate_with_constants_and_functions(
+            &expr,
+            x,
+            &profile.constants,
+            &profile.functions,
+        ) {
             Ok(result) => {
                 println!("Expression: {}", expr_str);
                 println!("At x = {}", x);
@@ -752,7 +576,13 @@ fn main() {
     // Handle --eval-expression mode (evaluate and exit)
     if let Some(expr_str) = &args.eval_expression {
         let x = args.at.unwrap_or(1.0);
-        match eval_expression(expr_str, x, &profile.constants, &profile.functions) {
+        let expr = expr::Expression::parse(expr_str).expect("invalid expression");
+        match eval::evaluate_with_constants_and_functions(
+            &expr,
+            x,
+            &profile.constants,
+            &profile.functions,
+        ) {
             Ok(result) => {
                 println!("Expression: {}", expr_str);
                 println!("At x = {}", x);
@@ -841,12 +671,14 @@ fn main() {
     }
 
     // Print header
-    println!();
-    println!(
-        "   Your target value: T = {:<20}  ries-rs v0.1.0",
-        format_value(target)
-    );
-    println!();
+    if !args.json {
+        println!();
+        println!(
+            "   Your target value: T = {:<20}  ries-rs v0.1.0",
+            format_value(target)
+        );
+        println!();
+    }
 
     // Convert level to complexity limits
     // Calibrated for better coverage while avoiding expression explosion.
@@ -1217,6 +1049,81 @@ fn main() {
 
     let elapsed = start.elapsed();
 
+    // Parse the output format once for both text and JSON modes
+    let output_format = parse_display_format(&args.format);
+
+    // Capture matches for manifest before Report::generate consumes them
+    let manifest_matches: Vec<search::Match> = if args.emit_manifest.is_some() {
+        matches.clone()
+    } else {
+        Vec::new()
+    };
+
+    if args.json {
+        let shown_count = matches.len().min(effective_max_matches);
+        let json_output = build_json_output(
+            target,
+            level_value,
+            max_lhs_complexity,
+            max_rhs_complexity,
+            effective_max_matches,
+            ranking_mode,
+            args.deterministic,
+            !args.deterministic && args.parallel,
+            use_streaming,
+            args.adaptive,
+            args.one_sided,
+            use_report,
+            output_format,
+            args.explicit_multiply,
+            &gen_config.symbol_table,
+            &matches[..shown_count],
+            &stats,
+            elapsed,
+        );
+
+        match serde_json::to_string_pretty(&json_output) {
+            Ok(json) => println!("{json}"),
+            Err(e) => {
+                eprintln!("Error serializing JSON output: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        if let Some(manifest_path) = &args.emit_manifest {
+            let manifest = build_manifest(
+                target,
+                level_value,
+                max_lhs_complexity,
+                max_rhs_complexity,
+                args.deterministic,
+                args.parallel,
+                search_config.max_error,
+                effective_max_matches,
+                ranking_mode,
+                &profile.constants,
+                &args.exclude,
+                &args.only_symbols,
+                &manifest_matches,
+            );
+
+            match manifest.to_json() {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(manifest_path, json) {
+                        eprintln!("Error writing manifest: {}", e);
+                    } else if !args.no_slow_messages {
+                        eprintln!("Manifest written to {}", manifest_path.display());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error serializing manifest: {}", e);
+                }
+            }
+        }
+
+        return;
+    }
+
     // Print verbose header if requested
     if args.verbose {
         print_header(target, level_value as i32);
@@ -1229,15 +1136,6 @@ fn main() {
     );
 
     // Display matches
-    // Parse the output format once for both classic and report modes
-    let output_format = parse_display_format(&args.format);
-
-    // Capture matches for manifest before Report::generate consumes them
-    let manifest_matches: Vec<search::Match> = if args.emit_manifest.is_some() {
-        matches.clone()
-    } else {
-        Vec::new()
-    };
 
     if matches.is_empty() {
         println!("   No matches found.");
@@ -1323,6 +1221,13 @@ fn main() {
     // Print detailed stats if requested
     if diagnostics.show_stats {
         stats.print();
+        if let Some(peak_rss) = peak_memory_bytes() {
+            println!(
+                "    Peak RSS:       {:>10} ({})",
+                peak_rss,
+                format_bytes_binary(peak_rss)
+            );
+        }
     }
 
     // Print stability analysis if requested

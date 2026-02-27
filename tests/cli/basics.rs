@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::Value;
 
 #[test]
 fn test_define_does_not_panic() {
@@ -65,6 +66,205 @@ fn test_no_refinement_disables_newton_calls() {
     let calls = parse_stat_value(&stdout, "Newton calls:")
         .expect("missing 'Newton calls' line in --stats output");
     assert_eq!(calls, 0, "expected no-refinement to skip Newton");
+}
+
+#[test]
+fn test_json_output_is_valid_and_machine_readable() {
+    let (stdout, _stderr) = run_ries(&[
+        "2.506314", "-l", "0", "-n", "2", "--json", "--report", "false",
+    ]);
+
+    assert!(
+        !stdout.contains("Generated "),
+        "expected --json stdout to contain only JSON\n{}",
+        stdout
+    );
+
+    let parsed: Value = serde_json::from_str(&stdout).expect("valid JSON output");
+    assert_eq!(parsed["target"].as_f64(), Some(2.506314));
+    assert_eq!(parsed["max_matches"].as_u64(), Some(2));
+    assert!(parsed["results"].is_array(), "missing results array");
+    assert!(
+        parsed["results_returned"].as_u64().unwrap_or(0)
+            <= parsed["max_matches"].as_u64().unwrap_or(0)
+    );
+    assert!(
+        parsed["search_stats"]["expressions_generated_total"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 1
+    );
+    let peak = &parsed["search_stats"]["peak_memory_bytes"];
+    assert!(
+        peak.is_null() || peak.is_u64(),
+        "peak_memory_bytes should be null or integer, got: {peak}"
+    );
+    if let Some(first) = parsed["results"].as_array().and_then(|arr| arr.first()) {
+        assert!(first.get("equation").is_some(), "missing equation field");
+        assert!(
+            first.get("operator_count").is_some(),
+            "missing operator_count field"
+        );
+        assert!(
+            first.get("tree_depth").is_some(),
+            "missing tree_depth field"
+        );
+    }
+}
+
+#[test]
+fn test_json_output_reports_effective_parallel_flag_in_deterministic_mode() {
+    let (stdout, _stderr) = run_ries(&["2.5", "--json", "--deterministic", "--classic", "-n", "1"]);
+    let parsed: Value = serde_json::from_str(&stdout).expect("valid JSON output");
+    assert_eq!(parsed["deterministic"].as_bool(), Some(true));
+    assert_eq!(parsed["parallel"].as_bool(), Some(false));
+    assert!(
+        parsed["search_stats"].get("peak_memory_bytes").is_some(),
+        "missing peak_memory_bytes field"
+    );
+}
+
+#[test]
+fn test_json_deterministic_golden_output_order_for_2_5_level0_classic() {
+    let (stdout, _stderr) = run_ries(&[
+        "2.5",
+        "--json",
+        "--deterministic",
+        "--classic",
+        "--report",
+        "false",
+        "-l",
+        "0",
+        "-n",
+        "5",
+    ]);
+    let parsed: Value = serde_json::from_str(&stdout).expect("valid JSON output");
+
+    assert_eq!(parsed["ranking_mode"].as_str(), Some("parity"));
+    assert_eq!(parsed["deterministic"].as_bool(), Some(true));
+    assert_eq!(parsed["parallel"].as_bool(), Some(false));
+    assert_eq!(parsed["search_stats"]["threads"].as_u64(), Some(1));
+
+    let results = parsed["results"].as_array().expect("results array");
+    let equations: Vec<&str> = results
+        .iter()
+        .filter_map(|r| r["equation"].as_str())
+        .collect();
+    assert_eq!(equations, vec!["x = 5/2", "x = e^catalan"]);
+
+    let complexities: Vec<u64> = results
+        .iter()
+        .filter_map(|r| r["complexity"].as_u64())
+        .collect();
+    assert_eq!(complexities, vec![50, 48]);
+}
+
+#[test]
+fn test_json_deterministic_golden_output_order_for_complexity_ranking_nonclassic() {
+    let (stdout, _stderr) = run_ries(&[
+        "2.506314",
+        "--json",
+        "--deterministic",
+        "--complexity-ranking",
+        "--report",
+        "false",
+        "-l",
+        "0",
+        "-n",
+        "5",
+    ]);
+    let parsed: Value = serde_json::from_str(&stdout).expect("valid JSON output");
+
+    assert_eq!(parsed["ranking_mode"].as_str(), Some("complexity"));
+    assert_eq!(parsed["deterministic"].as_bool(), Some(true));
+    assert_eq!(parsed["parallel"].as_bool(), Some(false));
+    assert_eq!(parsed["search_stats"]["threads"].as_u64(), Some(1));
+
+    let results = parsed["results"].as_array().expect("results array");
+    let equations: Vec<&str> = results
+        .iter()
+        .filter_map(|r| r["equation"].as_str())
+        .collect();
+    assert_eq!(
+        equations,
+        vec![
+            "tanpi(x) = -7^2",
+            "-cospi(x) = 1/7^2",
+            "1/cospi(x) = -7^2",
+            "x^2 = 2 pi",
+            "-cospi(x) = 1/8^2",
+        ]
+    );
+}
+
+#[test]
+fn test_json_deterministic_parity_vs_complexity_diverge_for_same_target() {
+    let base_args = [
+        "3.14159",
+        "--json",
+        "--deterministic",
+        "--classic",
+        "--report",
+        "false",
+        "-l",
+        "2",
+        "-n",
+        "6",
+    ];
+
+    let (parity_stdout, _stderr) = run_ries(&[
+        base_args[0],
+        base_args[1],
+        base_args[2],
+        base_args[3],
+        base_args[4],
+        base_args[5],
+        base_args[6],
+        base_args[7],
+        base_args[8],
+        base_args[9],
+        "--parity-ranking",
+    ]);
+    let (complexity_stdout, _stderr) = run_ries(&[
+        base_args[0],
+        base_args[1],
+        base_args[2],
+        base_args[3],
+        base_args[4],
+        base_args[5],
+        base_args[6],
+        base_args[7],
+        base_args[8],
+        base_args[9],
+        "--complexity-ranking",
+    ]);
+
+    let parity: Value = serde_json::from_str(&parity_stdout).expect("valid parity JSON");
+    let complexity: Value =
+        serde_json::from_str(&complexity_stdout).expect("valid complexity JSON");
+
+    assert_eq!(parity["ranking_mode"].as_str(), Some("parity"));
+    assert_eq!(complexity["ranking_mode"].as_str(), Some("complexity"));
+    assert_eq!(parity["deterministic"].as_bool(), Some(true));
+    assert_eq!(complexity["deterministic"].as_bool(), Some(true));
+
+    let parity_eqs: Vec<&str> = parity["results"]
+        .as_array()
+        .expect("parity results array")
+        .iter()
+        .filter_map(|r| r["equation"].as_str())
+        .collect();
+    let complexity_eqs: Vec<&str> = complexity["results"]
+        .as_array()
+        .expect("complexity results array")
+        .iter()
+        .filter_map(|r| r["equation"].as_str())
+        .collect();
+    assert_ne!(
+        parity_eqs, complexity_eqs,
+        "ranking modes should diverge on this deterministic target\nparity:\n{}\ncomplexity:\n{}",
+        parity_stdout, complexity_stdout
+    );
 }
 
 #[test]

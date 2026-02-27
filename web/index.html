@@ -603,7 +603,7 @@
       const EQ_WIDTH = 26; // fixed column width for the equation field
 
       var lines = matches.map(function(m) {
-        var eq = (m.lhs || 'x') + ' = ' + (m.rhs || '');
+        var eq = (m.solve_for_x || (m.lhs + ' = ' + m.rhs));
         var padded = eq.length < EQ_WIDTH ? eq + ' '.repeat(EQ_WIDTH - eq.length) : eq;
         return padded + '\terror=' + m.error.toExponential(2) +
                '\tcomplexity=' + m.complexity;
@@ -683,7 +683,7 @@
 
     function renderQuickConstants() {
       const container = document.getElementById('quick-constants');
-      container.innerHTML = '';
+      container.textContent = '';
 
       FAMOUS_CONSTANTS.forEach(function(constant) {
         const btn = document.createElement('button');
@@ -877,7 +877,7 @@
       const container = document.getElementById('results-container');
       const section = document.getElementById('results-section');
 
-      container.innerHTML = '';
+      container.textContent = '';
       section.classList.remove('hidden');
 
       matches.forEach(function(match, index) {
@@ -894,29 +894,50 @@
         // Equation (will be rendered with KaTeX) - construct from lhs and rhs
         const equationDiv = document.createElement('div');
         equationDiv.className = 'text-lg mb-2 overflow-x-auto';
-        // WasmMatch has lhs and rhs properties
+        // Use solved form if available
         const lhs = match.lhs || 'x';
         const rhs = match.rhs || '';
-        const plainEquation = lhs + ' = ' + rhs;
-        const latexEquation = toLatex(lhs) + ' = ' + toLatex(rhs);
+        const plainEquation = match.solve_for_x || (lhs + ' = ' + rhs);
+        
+        let latexEquation;
+        if (match.solve_for_x) {
+            latexEquation = 'x = ' + toLatex(match.solve_for_x.split(' = ')[1] || match.solve_for_x);
+        } else {
+            latexEquation = toLatex(lhs) + ' = ' + toLatex(rhs);
+        }
+
         equationDiv.textContent = '$$' + latexEquation + '$$';
         leftDiv.appendChild(equationDiv);
+
+        // Metadata row
+        const metaRow = document.createElement('div');
+        metaRow.className = 'flex flex-wrap gap-x-4 gap-y-1 text-sm';
 
         // Error info
         if (match.error !== undefined) {
           const errorDiv = document.createElement('div');
-          errorDiv.className = 'text-sm text-zinc-400';
+          errorDiv.className = 'text-zinc-400';
           errorDiv.textContent = 'Error: ' + match.error.toExponential(2);
-          leftDiv.appendChild(errorDiv);
+          metaRow.appendChild(errorDiv);
         }
 
         // Complexity info
         if (match.complexity !== undefined) {
           const complexityDiv = document.createElement('div');
-          complexityDiv.className = 'text-xs text-zinc-500 mt-1';
+          complexityDiv.className = 'text-zinc-500';
           complexityDiv.textContent = 'Complexity: ' + match.complexity;
-          leftDiv.appendChild(complexityDiv);
+          metaRow.appendChild(complexityDiv);
         }
+
+        // Metrics (depth/ops)
+        if (match.tree_depth !== undefined) {
+          const metricsDiv = document.createElement('div');
+          metricsDiv.className = 'text-zinc-500 text-xs mt-0.5';
+          metricsDiv.textContent = 'depth: ' + match.tree_depth + ', ops: ' + match.operator_count;
+          metaRow.appendChild(metricsDiv);
+        }
+        
+        leftDiv.appendChild(metaRow);
 
         // Right side: copy buttons
         const actionsDiv = document.createElement('div');

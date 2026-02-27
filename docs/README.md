@@ -5,9 +5,11 @@ This directory is split into current reference docs, active planning notes, and 
 ## Current Reference
 
 - `ARCHITECTURE.md`: System architecture including streaming vs batch generation trade-offs
+- `SEARCH_MODEL.md`: Formal core search model (grammar, complexity, ranking, determinism)
 - `COMPLEXITY.md`: Symbol weight model and ranking rationale used by `ries-rs`
 - `PERFORMANCE.md`: Benchmarking, profiling, and performance guidance
 - `PARITY_STATUS.md`: Current parity/compatibility status summary and links to detailed history
+- `benchmarks/`: Reproducible benchmark baselines and raw measurement artifacts
 
 ## Active Plans
 

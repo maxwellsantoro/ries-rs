@@ -95,6 +95,7 @@ pub mod profile;
 pub mod pslq;
 pub mod report;
 pub mod search;
+pub mod solver;
 pub mod stability;
 pub mod symbol;
 pub mod symbol_table;
@@ -126,6 +127,7 @@ pub type Complexity = u32;
 
 // High-level API
 pub use search::search;
+pub use solver::{canonical_expression_key, solve_for_x_rhs_expression};
 
 // Fast exact match detection
 pub use fast_match::find_fast_match;
@@ -133,7 +135,7 @@ pub use fast_match::find_fast_match;
 // Common types
 pub use eval::{EvalError, EvalResult};
 pub use expr::{Expression, OutputFormat};
-pub use gen::GenConfig;
+pub use gen::{expression_respects_constraints, ExpressionConstraintOptions, GenConfig};
 pub use profile::{Profile, UserConstant};
 pub use search::{Match, SearchConfig, SearchStats};
 pub use symbol::{NumType, Symbol};

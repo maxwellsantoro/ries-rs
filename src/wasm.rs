@@ -50,37 +50,58 @@ pub struct WasmMatch {
     /// Postfix representation of RHS
     #[wasm_bindgen(getter_with_clone)]
     pub rhs_postfix: String,
+    /// Solved x = expression (if analytically solvable)
+    #[wasm_bindgen(getter_with_clone)]
+    pub solve_for_x: Option<String>,
+    /// Solved x = expression in postfix
+    #[wasm_bindgen(getter_with_clone)]
+    pub solve_for_x_postfix: Option<String>,
+    /// Canonical key for deduplication
+    #[wasm_bindgen(getter_with_clone)]
+    pub canonical_key: String,
     /// Solved value of x
     pub x_value: f64,
     /// Error (x_value - target)
     pub error: f64,
     /// Complexity score
     pub complexity: u32,
+    /// Number of operators in equation
+    pub operator_count: usize,
+    /// Maximum tree depth of equation
+    pub tree_depth: usize,
     /// Whether this is an exact match
     pub is_exact: bool,
 }
 
 impl From<crate::search::Match> for WasmMatch {
     fn from(m: crate::search::Match) -> Self {
-        // DEBUG: Print symbols to see what's being converted
-        #[cfg(debug_assertions)]
-        {
-            eprintln!("DEBUG: Converting match to WASM");
-            eprintln!("  LHS symbols: {:?}", m.lhs.expr.symbols());
-            eprintln!("  RHS symbols: {:?}", m.rhs.expr.symbols());
-        }
-
-        // Convert with error handling to catch problematic expressions
         let lhs_infix = m.lhs.expr.to_infix();
         let rhs_infix = m.rhs.expr.to_infix();
+
+        // Analytical solver
+        let solved = crate::solver::solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
+        let solve_for_x = solved.as_ref().map(|e| format!("x = {}", e.to_infix()));
+        let solve_for_x_postfix = solved.as_ref().map(|e| e.to_postfix());
+
+        // Canonical key
+        let canonical_key = crate::solver::canonical_expression_key(&m.lhs.expr)
+            .zip(crate::solver::canonical_expression_key(&m.rhs.expr))
+            .map(|(l, r)| format!("{}={}", l, r))
+            .unwrap_or_else(|| format!("{}={}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()));
+
         Self {
             lhs: lhs_infix,
             rhs: rhs_infix,
             lhs_postfix: m.lhs.expr.to_postfix(),
             rhs_postfix: m.rhs.expr.to_postfix(),
+            solve_for_x,
+            solve_for_x_postfix,
+            canonical_key,
             x_value: m.x_value,
             error: m.error,
             complexity: m.complexity,
+            operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
+            tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),
             is_exact: m.error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
         }
     }

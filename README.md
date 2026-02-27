@@ -1,6 +1,6 @@
 # RIES-RS
 
-**R**ILYBOT **I**nverse **E**quation **S**olver — a Rust implementation of Robert Munafo's RIES program.
+**R**ILYBOT **I**nverse **E**quation **S**olver — a Rust implementation of Robert P. Munafo's original RIES program.
 
 RIES finds algebraic equations given their solution. Given a target number, it searches for equations that have that number as a solution.
 
@@ -18,6 +18,71 @@ cargo build --release
 #                  x-3 = 1/7                      for x = T + 1.26e-3 {24}
 ```
 
+## v1.0 Scope (Phase A)
+
+`ries-rs` v1.0 is intended to be a disciplined, modern reference implementation:
+
+- Faithful reimplementation of the RIES search model
+- Deterministic and documented execution modes
+- Faster and safer (Rust + optional parallel search)
+- CLI + WebAssembly builds
+- Reproducible outputs (manifest + JSON export)
+- Clean, modular architecture
+
+Out of scope for v1.0:
+
+- Symbolic AI / conjecture systems
+- PSLQ research platform work
+- Experimental search branches beyond the core RIES model
+
+## Why `ries-rs` (vs older implementations)
+
+- Memory-safe Rust implementation
+- Multi-threaded search (`parallel` feature, enabled by default)
+- Deterministic mode for stable output ordering (`--deterministic`)
+- WebAssembly support (`wasm` / web UI)
+- Structured output for automation (`--json`, `--emit-manifest`)
+- Modular symbol/operator domains via profiles and presets
+
+## Reproducibility and Determinism
+
+For reproducible runs, use `--deterministic` (which disables parallel search and applies stable ordering).
+
+Given identical inputs (target, level/complexity settings, operator constraints, ranking mode, and enabled profile symbols), deterministic mode produces stable result ordering for the same build/configuration.
+
+Recommended reproducible workflow:
+
+```bash
+ries-rs 3.141592653589793 --deterministic --json --emit-manifest run.json
+```
+
+## Structured Output (JSON)
+
+Use `--json` to emit machine-readable results and search statistics to stdout:
+
+```bash
+ries-rs 2.506314 -l0 -n 8 --json
+```
+
+The JSON output includes run metadata, ranking mode, deterministic/parallel flags, per-result complexity/error/operator counts, and search statistics (generated/tested/pruned/deduped counts, timing, threads, and peak memory when supported by the platform).
+
+## Benchmark Highlights
+
+Two benchmark artifact types are tracked separately so performance claims stay precise:
+
+- End-to-end CLI baseline (`docs/benchmarks/2026-02-25-level3-baseline.md`):
+  - Apple M1, target `2.506314`, level `3`, `--complexity-ranking`, `--json`
+  - Sequential deterministic: `91,577 ms`
+  - Parallel (8 threads): `84,492 ms`
+  - Observed end-to-end speedup: `1.084x` (matching/Newton dominates this workload)
+- Generation-only scaling (`docs/benchmarks/2026-02-25-generation-parallel-scaling.md`):
+  - Criterion `parallel_generation` benchmark (`benches/generation.rs`)
+  - Sequential estimate: ~`193.6 ms`
+  - Parallel estimate: ~`60.9 ms`
+  - Median-based generation speedup: `3.18x` (conservative bound: `2.79x`)
+
+Raw JSON and Criterion artifacts are stored under `docs/benchmarks/artifacts/`.
+
 ## Repo Map
 
 - `src/`: Core Rust library and CLI implementation
@@ -26,6 +91,15 @@ cargo build --release
 - `ries-py/`: Separate Python bindings crate (PyO3 + maturin)
 - `web/`: Browser UI (served from repo root after building WASM)
 - `tools/`: Helper utilities (for example manifest replay tooling)
+
+## Formal Model and Engineering Docs
+
+- Core search model (grammar, ranking, determinism): `docs/SEARCH_MODEL.md`
+- Search complexity/weight model: `docs/COMPLEXITY.md`
+- Architecture overview: `docs/ARCHITECTURE.md`
+- Performance notes and benchmark guidance: `docs/PERFORMANCE.md`
+- Reproducible benchmark artifacts: `docs/benchmarks/`
+- Parity/compatibility status: `docs/PARITY_STATUS.md`
 
 ## Comparison Baselines
 

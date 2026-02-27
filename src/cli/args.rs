@@ -175,6 +175,10 @@ pub struct Args {
     #[arg(long)]
     pub stats: bool,
 
+    /// Emit machine-readable JSON results to stdout (suppresses text report output)
+    #[arg(long)]
+    pub json: bool,
+
     /// Print list of supported options and exit
     #[arg(long = "list-options")]
     pub list_options: bool,

@@ -16,6 +16,72 @@ cargo build --release
 ./scripts/profile_comparison.sh
 ```
 
+## Benchmark Reporting for v1.0 (Reproducible)
+
+For any benchmark numbers published in the README, release notes, or papers, record all of the following:
+
+- `ries-rs` git commit / tag
+- `cargo` and `rustc` versions (`rustc --version --verbose`)
+- enabled features (for example default parallel feature, `highprec`, `wasm`)
+- build profile and flags (`cargo build --release`, `RUSTFLAGS`, target triple)
+- CPU model, core/thread count, RAM size
+- OS version and kernel
+- exact CLI command lines (including target, level, ranking mode, deterministic/parallel flags)
+- number of runs and aggregation method (single run vs median of N)
+
+### Recommended CLI Benchmark Protocol
+
+Use explicit flags so the run configuration is unambiguous:
+
+```bash
+# Sequential baseline (deterministic)
+cargo run --release --no-default-features -- \
+  3.141592653589793 -l3 --classic --deterministic --report false -n 16 --json
+
+# Parallel run (default features)
+cargo run --release -- \
+  3.141592653589793 -l3 --classic --report false -n 16 --json
+```
+
+Why `--json`:
+
+- captures structured search stats (including timing, threads, and peak memory when supported)
+- avoids parsing human-formatted text output
+- makes benchmark artifact storage easy
+
+### Machine/Compiler Metadata Capture
+
+Recommended metadata commands (macOS/Linux):
+
+```bash
+rustc --version --verbose
+cargo --version
+uname -a
+
+# macOS
+sysctl -n machdep.cpu.brand_string
+sysctl -n hw.ncpu
+sysctl -n hw.memsize
+
+# Linux (alternatives)
+lscpu
+free -h
+```
+
+### Benchmark Table Template (README / Paper)
+
+Use a table with explicit environment details near the numbers:
+
+| Target | Level | Precision | Mode | Threads | Time (ms) | Notes |
+|--------|-------|-----------|------|---------|-----------|-------|
+| π | 3 | f64 | sequential deterministic | 1 | `<measured>` | `--no-default-features --deterministic` |
+| π | 3 | f64 | parallel | `<measured>` | `<measured>` | default feature set |
+| π | 3 | f64 | wasm | browser-dependent | `<measured>` | include browser + device |
+
+Do not mix measurements from different machines in one headline table unless the row notes state that explicitly.
+
+See `docs/benchmarks/` for repository-local baseline artifacts that include raw JSON outputs and environment metadata.
+
 ## Benchmark Suite
 
 RIES-RS includes a comprehensive benchmark suite using Criterion:
@@ -93,6 +159,13 @@ RIES-RS is designed for minimal allocations:
 | Expression Pool | O(n) expressions | Scales with complexity level |
 | RHS Database | O(n) sorted values | Binary search range queries |
 | Thread-Local Workspace | ~512 bytes | Fixed per thread |
+
+### Runtime Memory Introspection
+
+CLI `--json` output and `--stats` now include peak resident set size (RSS) when supported by the platform runtime.
+
+- Unix/macOS: populated using `getrusage(RUSAGE_SELF)`
+- Other platforms: may be unavailable (`null` in JSON)
 
 ## Optimization Opportunities
 
