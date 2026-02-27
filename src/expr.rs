@@ -306,7 +306,9 @@ impl Expression {
                     stack.push((sym.display_name(), PREC_ATOM));
                 }
                 Seft::B => {
-                    let (arg, arg_prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (arg, arg_prec) = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
                     let result = match sym {
                         Symbol::Neg => {
                             // Negation needs parens around low-precedence expressions
@@ -352,8 +354,12 @@ impl Expression {
                     stack.push((result, PREC_ATOM)); // Function calls are atomic
                 }
                 Seft::C => {
-                    let (b, b_prec) = stack.pop().unwrap_or(("?".into(), 0));
-                    let (a, a_prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (b, b_prec) = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
+                    let (a, a_prec) = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
                     let (result, prec) = match sym {
                         Symbol::Add => {
                             // Left operand never needs parens for left-associative +
@@ -455,7 +461,9 @@ impl Expression {
                     stack.push((table.name(sym).to_string(), PREC_ATOM));
                 }
                 Seft::B => {
-                    let (arg, arg_prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (arg, arg_prec) = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
                     let result = match sym {
                         Symbol::Neg => {
                             let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_UNARY, false, false);
@@ -500,8 +508,12 @@ impl Expression {
                     stack.push((result, PREC_ATOM));
                 }
                 Seft::C => {
-                    let (b, b_prec) = stack.pop().unwrap_or(("?".into(), 0));
-                    let (a, a_prec) = stack.pop().unwrap_or(("?".into(), 0));
+                    let (b, b_prec) = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
+                    let (a, a_prec) = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
                     let (result, prec) = match sym {
                         Symbol::Add => {
                             let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
@@ -616,7 +628,9 @@ impl Expression {
                     stack.push(s);
                 }
                 Seft::B => {
-                    let arg = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let arg = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
                     let s = match sym {
                         Symbol::Neg => format!("-({})", arg),
                         Symbol::Recip => format!("1/({})", arg),
@@ -649,8 +663,12 @@ impl Expression {
                     stack.push(s);
                 }
                 Seft::C => {
-                    let b = stack.pop().unwrap_or_else(|| "?".to_string());
-                    let a = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let b = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
+                    let a = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
                     let s = match sym {
                         Symbol::Add => format!("({})+({})", a, b),
                         Symbol::Sub => format!("({})-({})", a, b),
@@ -686,7 +704,9 @@ impl Expression {
                     stack.push(s);
                 }
                 Seft::B => {
-                    let arg = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let arg = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
                     let s = match sym {
                         Symbol::Neg => format!("-({})", arg),
                         Symbol::Recip => format!("1/({})", arg),
@@ -719,8 +739,12 @@ impl Expression {
                     stack.push(s);
                 }
                 Seft::C => {
-                    let b = stack.pop().unwrap_or_else(|| "?".to_string());
-                    let a = stack.pop().unwrap_or_else(|| "?".to_string());
+                    let b = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
+                    let a = stack
+                        .pop()
+                        .expect("stack underflow in to_infix: expression is not valid postfix");
                     let s = match sym {
                         Symbol::Add => format!("({})+({})", a, b),
                         Symbol::Sub => format!("({})-({})", a, b),
@@ -926,5 +950,17 @@ mod tests {
         }
         // Should be back to 0 without underflow
         assert_eq!(expr.complexity(), 0);
+    }
+
+    /// Issue 6: to_infix must not silently produce '?' for invalid expressions.
+    /// Instead, stack underflow in the mid-loop pops is a programming error and
+    /// should panic with a clear message via expect().
+    #[test]
+    #[should_panic(expected = "stack underflow in to_infix")]
+    fn test_to_infix_panics_on_malformed_expression() {
+        // An expression with only a binary operator has no operands — stack underflows
+        // on the first pop inside the loop. from_symbols bypasses parse validation.
+        let expr = Expression::from_symbols(&[Symbol::Add]);
+        let _ = expr.to_infix();
     }
 }

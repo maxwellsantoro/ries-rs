@@ -171,3 +171,27 @@ fn test_root_positive_radicand_non_integer() {
     // 8^(1/pi) - just check it's a valid positive number
     assert!(result.value > 0.0 && result.value.is_finite());
 }
+
+/// Issue 3: Pow derivative for negative base with x in the exponent.
+/// For (-2)^x (postfix: "2Nx^"), at an integer x, the eval code correctly
+/// returns a finite derivative. Historically the ln(a)*db/dx term was silently
+/// dropped (ln(negative) = NaN), which is the right thing to do — this test
+/// documents that the behavior is deterministic (no NaN propagation).
+#[test]
+fn test_pow_derivative_negative_base_integer_exponent_is_finite() {
+    // "2nx^" = negate(2) ^ x = (-2)^x. Valid only at integer x.
+    let expr = Expression::parse("2nx^").unwrap();
+    let result = evaluate(&expr, 2.0).unwrap();
+    assert_eq!(result.value, 4.0); // (-2)^2 = 4
+                                   // Derivative: d/dx [(-2)^x] at x=2 is (-2)^x * ln(-2) — undefined in reals.
+                                   // The eval code returns a finite value (not NaN) by dropping the ln(neg) term.
+    assert!(
+        result.derivative.is_finite(),
+        "derivative of (-2)^x must be finite (not NaN), got {}",
+        result.derivative
+    );
+}
+
+// Issue 5 (eval_user_function allocation): The optimization (thread-local scratch buffer)
+// is a pure performance change with no behavioral difference. Correctness is covered by
+// the existing `test_user_function_in_search` test in search_tests.rs.

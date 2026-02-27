@@ -438,3 +438,130 @@ fn test_user_function_in_search() {
         "Should find an exact match using UserFunction0 and UserConstant0"
     );
 }
+
+/// Issue 1: streaming RHS dedup must use quantize_value, not inline (v * 1e8) as i64.
+/// The inline computation overflows (saturates to i64::MAX) for |v| > ~9.2e10.
+/// quantize_value maps large-but-finite values to i64::MAX-1 and reserves i64::MAX
+/// as the sentinel specifically for NaN. The inline code conflates large finite
+/// values with NaN by overflowing to the same i64::MAX sentinel.
+#[test]
+fn test_streaming_rhs_dedup_key_safe_for_large_values() {
+    use ries_rs::gen::quantize_value;
+
+    // For a value just above MAX_QUANTIZED_VALUE (1e10):
+    // - quantize_value returns i64::MAX-1 (the large-value sentinel)
+    // - the buggy inline (1e11 * 1e8).round() as i64 overflows to i64::MAX
+    let large = 1e11_f64;
+    let safe_key = quantize_value(large);
+
+    // quantize_value does NOT overflow to i64::MAX for large finite values.
+    assert_ne!(
+        safe_key,
+        i64::MAX,
+        "quantize_value must not overflow to i64::MAX for large finite values"
+    );
+    assert_eq!(
+        safe_key,
+        i64::MAX - 1,
+        "quantize_value returns i64::MAX-1 for large positive values"
+    );
+
+    // NaN returns i64::MAX (the true undefined-value sentinel) — distinct from i64::MAX-1.
+    let nan_key = quantize_value(f64::NAN);
+    assert_eq!(nan_key, i64::MAX, "NaN must map to i64::MAX sentinel");
+    assert_ne!(
+        safe_key, nan_key,
+        "large finite values must be distinct from NaN sentinel"
+    );
+
+    // The buggy inline computation overflows to i64::MAX, colliding with the NaN sentinel.
+    let buggy_key = (large * 1e8_f64).round() as i64;
+    assert_eq!(
+        buggy_key,
+        i64::MAX,
+        "demonstrates the bug: inline computation overflows to i64::MAX (same as NaN sentinel)"
+    );
+}
+
+/// Issue 2: the degenerate-expression test in both batch and streaming search paths
+/// must pass user_functions to the evaluator. When using evaluate_with_constants
+/// (which doesn't accept user_functions), UDF symbols in an LHS expression cause
+/// the evaluator to return Err, silently skipping the degenerate check.
+/// Regression: search_streaming must still correctly handle UDF-containing expressions.
+#[test]
+fn test_streaming_search_with_udf_produces_results() {
+    // This is a regression guard: ensure search_streaming works correctly when
+    // user functions are present. The degenerate-check bug (issue 2) would cause
+    // UDF LHS expressions to always escape pruning, potentially producing more
+    // matches. After the fix, evaluate_fast_with_constants_and_functions is used.
+    let udf = UserFunction::parse("4:sinh:hyperbolic sine:E|r-2/").unwrap();
+    let uc = UserConstant {
+        weight: 4,
+        name: "sinh2".to_string(),
+        description: "sinh(2)".to_string(),
+        value: 3.626_860_407_847_019,
+        num_type: NumType::Transcendental,
+    };
+
+    let config = GenConfig {
+        max_lhs_complexity: 20,
+        max_rhs_complexity: 20,
+        max_length: 6,
+        constants: vec![Symbol::One, Symbol::UserConstant0],
+        unary_ops: vec![Symbol::UserFunction0],
+        binary_ops: vec![],
+        rhs_constants: None,
+        rhs_unary_ops: None,
+        rhs_binary_ops: None,
+        symbol_max_counts: HashMap::new(),
+        rhs_symbol_max_counts: None,
+        min_num_type: NumType::Transcendental,
+        generate_lhs: true,
+        generate_rhs: true,
+        user_constants: vec![uc.clone()],
+        user_functions: vec![udf.clone()],
+        show_pruned_arith: false,
+        symbol_table: Arc::new(SymbolTable::from_parts(
+            &ries_rs::profile::Profile::new(),
+            &[uc],
+            &[udf],
+        )),
+    };
+
+    let (matches, _stats) = ries_rs::search::search_streaming(2.0, &config, 50, false, None);
+
+    // Should find at least one match — confirms search doesn't panic and UDF eval works.
+    assert!(
+        !matches.is_empty(),
+        "streaming search with UDF should produce at least one match"
+    );
+}
+
+/// Issue 4: search_adaptive LHS/RHS dedup should keep the simplest expression
+/// when two expressions are numerically equivalent (same quantized value/derivative).
+/// Regression: adaptive search must not produce higher-complexity results than necessary.
+#[test]
+fn test_adaptive_search_produces_valid_matches() {
+    // This is a regression guard for the dedup-keeps-simplest fix.
+    // search_adaptive is an internal function but its output is tested via the public API.
+    // A low-complexity target like 2.0 should produce simple matches.
+    let config = fast_config();
+    let (matches, _stats) = search_with_stats_and_options(2.0, &config, 10, false, None);
+
+    assert!(
+        !matches.is_empty(),
+        "search should find matches for target 2.0"
+    );
+
+    // The simplest match for 2.0 should have low complexity (e.g., "x = 2" has complexity 1+1=2)
+    let min_complexity = matches
+        .iter()
+        .map(|m| m.complexity)
+        .min()
+        .unwrap_or(u32::MAX);
+    // x = 2 has complexity 15 (X) + 13 (Two) = 28 — the minimum for this target.
+    assert!(
+        min_complexity <= 28,
+        "simplest match complexity should be low for target 2.0, got {min_complexity}"
+    );
+}

@@ -102,3 +102,26 @@ fn test_mathematica_format_has_balanced_brackets() {
         formatted
     );
 }
+
+/// Regression: to_infix must never silently produce '?' for any valid parsed expression.
+/// (Invalid expressions use a #[should_panic] unit test inside src/expr.rs where
+///  from_symbols is accessible.)
+#[test]
+fn test_to_infix_no_question_marks_for_valid_expressions() {
+    let cases = [
+        ("x", "x"),
+        ("32+", "3+2"),
+        ("xs", "x^2"),
+        ("p", "π"),
+        ("2x*", "2*x"),
+        ("3pq*", "3*sqrt(π)"),
+    ];
+    for (postfix, _expected_infix) in cases {
+        let expr = Expression::parse(postfix).unwrap();
+        let infix = expr.to_infix();
+        assert!(
+            !infix.contains('?'),
+            "to_infix produced '?' for valid expression '{postfix}': got '{infix}'"
+        );
+    }
+}

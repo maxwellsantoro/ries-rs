@@ -804,9 +804,15 @@ impl ExprDatabase {
                 // derivative 0 everywhere; true repeated roots only at specific x.
                 // Use an irrational offset to avoid hitting special values
                 let test_x = config.target + std::f64::consts::E;
-                if let Ok(test_result) =
-                    crate::eval::evaluate_with_constants(&lhs.expr, test_x, &config.user_constants)
-                {
+                // Use the full evaluator (including user_functions) so that UDF-containing
+                // expressions are not silently skipped due to evaluate_with_constants
+                // returning Err for user-function symbols.
+                if let Ok(test_result) = crate::eval::evaluate_fast_with_constants_and_functions(
+                    &lhs.expr,
+                    test_x,
+                    &config.user_constants,
+                    &config.user_functions,
+                ) {
                     // Check both: derivative still ~0, AND value unchanged
                     // This catches x*(1/x)=1 type expressions
                     let value_unchanged =
@@ -1194,16 +1200,18 @@ pub fn search_adaptive(
     search_config: &SearchConfig,
     level: u32,
 ) -> (Vec<Match>, SearchStats) {
+    use crate::expr::EvaluatedExpr;
     #[cfg(not(feature = "parallel"))]
     use crate::gen::generate_all;
     use crate::gen::{quantize_value, LhsKey};
-    use std::collections::HashSet;
+    use std::collections::HashMap;
 
     let gen_start = SearchTimer::start();
-    let mut all_lhs = Vec::new();
-    let mut all_rhs = Vec::new();
-    let mut seen_lhs_keys: HashSet<LhsKey> = HashSet::new();
-    let mut seen_rhs_values: HashSet<i64> = HashSet::new();
+    // Use HashMap so dedup keeps the simplest expression, not first-seen.
+    // With parallel generation the arrival order is non-deterministic, so
+    // first-seen could discard a simpler equivalent expression.
+    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
+    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
 
     // For adaptive mode, use the standard complexity formula
     // See level_to_complexity() for the standard mapping
@@ -1226,21 +1234,34 @@ pub fn search_adaptive(
         }
     };
 
-    // Deduplicate LHS expressions
+    // Deduplicate LHS expressions, keeping the simplest equivalent
     for expr in generated.lhs {
         let key = (quantize_value(expr.value), quantize_value(expr.derivative));
-        if seen_lhs_keys.insert(key) {
-            all_lhs.push(expr);
-        }
+        lhs_map
+            .entry(key)
+            .and_modify(|existing| {
+                if expr.expr.complexity() < existing.expr.complexity() {
+                    *existing = expr.clone();
+                }
+            })
+            .or_insert(expr);
     }
 
-    // Deduplicate RHS expressions
+    // Deduplicate RHS expressions, keeping the simplest equivalent
     for expr in generated.rhs {
-        let val = quantize_value(expr.value);
-        if seen_rhs_values.insert(val) {
-            all_rhs.push(expr);
-        }
+        let key = quantize_value(expr.value);
+        rhs_map
+            .entry(key)
+            .and_modify(|existing| {
+                if expr.expr.complexity() < existing.expr.complexity() {
+                    *existing = expr.clone();
+                }
+            })
+            .or_insert(expr);
     }
+
+    let all_lhs: Vec<EvaluatedExpr> = lhs_map.into_values().collect();
+    let all_rhs: Vec<EvaluatedExpr> = rhs_map.into_values().collect();
 
     let gen_time = gen_start.elapsed();
 
@@ -1358,8 +1379,9 @@ pub fn search_streaming_with_config(
     {
         let mut callbacks = StreamingCallbacks {
             on_rhs: &mut |expr| {
-                // Deduplicate by value, keeping simplest
-                let key = (expr.value * 1e8).round() as i64;
+                // Deduplicate by value, keeping simplest.
+                // Use quantize_value (not inline * 1e8) to avoid i64 overflow for large values.
+                let key = crate::gen::quantize_value(expr.value);
                 rhs_map
                     .entry(key)
                     .and_modify(|existing| {
@@ -1419,10 +1441,14 @@ pub fn search_streaming_with_config(
         // Skip degenerate expressions
         if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
             let test_x = search_config.target + std::f64::consts::E;
-            if let Ok(test_result) = crate::eval::evaluate_with_constants(
+            // Use the full evaluator (including user_functions) so that UDF-containing
+            // expressions are not silently skipped due to evaluate_with_constants
+            // returning Err for user-function symbols.
+            if let Ok(test_result) = crate::eval::evaluate_fast_with_constants_and_functions(
                 &lhs.expr,
                 test_x,
                 &search_config.user_constants,
+                &search_config.user_functions,
             ) {
                 let value_unchanged =
                     (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;

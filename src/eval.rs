@@ -519,65 +519,76 @@ fn eval_user_function(
     // Look up the function definition
     let udf = user_functions.get(idx).ok_or(EvalError::Invalid)?;
 
-    // Create a local stack for the function body evaluation
-    // Start with the input argument on the stack
-    let mut stack: Vec<StackEntry> = Vec::with_capacity(16);
-    stack.push(input);
+    // Reuse a thread-local scratch buffer rather than allocating a fresh Vec on every
+    // call. eval_user_function is invoked in the inner generation loop (potentially
+    // millions of times at high complexity), so avoiding the heap allocation matters.
+    // UDFs do not call other UDFs, so the borrow is never re-entered.
+    thread_local! {
+        static UDF_STACK: std::cell::RefCell<Vec<StackEntry>> =
+            std::cell::RefCell::new(Vec::with_capacity(16));
+    }
 
-    // Execute each operation in the function body
-    for op in &udf.body {
-        match op {
-            UdfOp::Symbol(sym) => {
-                match sym.seft() {
-                    Seft::A => {
-                        // Constant - push onto stack
-                        let entry = eval_constant_with_user(*sym, x, user_constants);
-                        stack.push(entry);
-                    }
-                    Seft::B => {
-                        // Unary operator - pop one, push result
-                        let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                        let result = eval_unary(*sym, a)?;
-                        stack.push(result);
-                    }
-                    Seft::C => {
-                        // Binary operator - pop two, push result
-                        let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                        let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                        let result = eval_binary(*sym, a, b)?;
-                        stack.push(result);
+    UDF_STACK.with(|cell| -> Result<StackEntry, EvalError> {
+        let mut stack = cell.borrow_mut();
+        stack.clear();
+        stack.push(input);
+
+        // Execute each operation in the function body
+        for op in &udf.body {
+            match op {
+                UdfOp::Symbol(sym) => {
+                    match sym.seft() {
+                        Seft::A => {
+                            // Constant - push onto stack
+                            let entry = eval_constant_with_user(*sym, x, user_constants);
+                            stack.push(entry);
+                        }
+                        Seft::B => {
+                            // Unary operator - pop one, push result
+                            let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
+                            let result = eval_unary(*sym, a)?;
+                            stack.push(result);
+                        }
+                        Seft::C => {
+                            // Binary operator - pop two, push result
+                            let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
+                            let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
+                            let result = eval_binary(*sym, a, b)?;
+                            stack.push(result);
+                        }
                     }
                 }
-            }
-            UdfOp::Dup => {
-                // Duplicate top of stack
-                let top = stack.last().ok_or(EvalError::StackUnderflow)?;
-                stack.push(*top);
-            }
-            UdfOp::Swap => {
-                // Swap top two elements
-                let len = stack.len();
-                if len < 2 {
-                    return Err(EvalError::StackUnderflow);
+                UdfOp::Dup => {
+                    // Duplicate top of stack. Dereference immediately so the
+                    // immutable borrow ends before the mutable push.
+                    let top = *stack.last().ok_or(EvalError::StackUnderflow)?;
+                    stack.push(top);
                 }
-                stack.swap(len - 1, len - 2);
+                UdfOp::Swap => {
+                    // Swap top two elements
+                    let len = stack.len();
+                    if len < 2 {
+                        return Err(EvalError::StackUnderflow);
+                    }
+                    stack.swap(len - 1, len - 2);
+                }
             }
         }
-    }
 
-    // Function should leave exactly one value on the stack
-    if stack.len() != 1 {
-        return Err(EvalError::Invalid);
-    }
+        // Function should leave exactly one value on the stack
+        if stack.len() != 1 {
+            return Err(EvalError::Invalid);
+        }
 
-    let result = stack.pop().unwrap();
+        let result = stack.pop().unwrap();
 
-    // Check for invalid results
-    if result.val.is_nan() || result.val.is_infinite() {
-        return Err(EvalError::Overflow);
-    }
+        // Check for invalid results
+        if result.val.is_nan() || result.val.is_infinite() {
+            return Err(EvalError::Overflow);
+        }
 
-    Ok(result)
+        Ok(result)
+    })
 }
 
 /// Evaluate a unary operator with derivative
@@ -771,7 +782,13 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             } else if a.val.abs() < f64::MIN_POSITIVE && b.val > 0.0 {
                 0.0
             } else {
-                // Integer power of negative number (or very small positive treated as zero)
+                // Negative base, integer exponent (or near-zero base treated as 0).
+                // Full formula: val * (b * a.deriv/a + ln(a) * b.deriv).
+                // The ln(a) * b.deriv term is intentionally dropped here: ln(negative) is
+                // undefined in the reals (NaN), so it cannot contribute to Newton-Raphson.
+                // Dropping it gives 0 for the derivative w.r.t. x-in-the-exponent path,
+                // which is the correct safe fallback when x appears in the exponent of a
+                // negative base (e.g., (-2)^x is only real-valued at integer x).
                 if a.val.abs() < f64::MIN_POSITIVE {
                     0.0
                 } else {

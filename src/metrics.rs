@@ -74,11 +74,18 @@ impl MatchMetrics {
             return f64::NEG_INFINITY;
         }
 
-        // Normalize error to [0, 1] range within cap
+        // Normalize error to [0, 1] range within cap.
+        // When error_cap == EXACT_MATCH_TOLERANCE (1e-14) the denominator is 0;
+        // treat it as a near-exact match (error_norm = 0).
         let error_norm = if self.error < EXACT_MATCH_TOLERANCE {
             0.0
         } else {
-            (self.error.log10() + 14.0) / (error_cap.log10() + 14.0)
+            let denom = error_cap.log10() + 14.0;
+            if denom.abs() < f64::EPSILON {
+                0.0
+            } else {
+                (self.error.log10() + 14.0) / denom
+            }
         };
 
         // Normalize complexity to rough [0, 1] range (100 = max typical)
@@ -415,5 +422,20 @@ mod tests {
         let unstable_metrics = MatchMetrics::from_match(&unstable, None);
 
         assert!(stable_metrics.stability > unstable_metrics.stability);
+    }
+
+    /// Issue: when error_cap == EXACT_MATCH_TOLERANCE (1e-14), the denominator
+    /// `error_cap.log10() + 14.0` is exactly 0.0, producing NaN via 0/0.
+    #[test]
+    fn test_interesting_score_finite_at_exact_tolerance_boundary() {
+        // error == error_cap == 1e-14: falls into the division branch (not < EXACT_MATCH_TOLERANCE)
+        // and denominator = 1e-14.log10() + 14.0 = -14 + 14 = 0 → 0/0 = NaN before fix.
+        let m = make_match("2x*", "5", EXACT_MATCH_TOLERANCE, 2.0);
+        let metrics = MatchMetrics::from_match(&m, None);
+        let interesting = metrics.interesting_score(EXACT_MATCH_TOLERANCE);
+        assert!(
+            interesting.is_finite(),
+            "interesting_score must be finite, got {interesting}"
+        );
     }
 }
