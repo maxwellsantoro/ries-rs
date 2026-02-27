@@ -86,6 +86,65 @@ impl Profile {
         profile
     }
 
+    /// Add a validated user constant to this profile.
+    ///
+    /// This method centralizes validation logic to ensure consistent
+    /// handling of user constants across CLI and profile file parsing.
+    ///
+    /// # Arguments
+    ///
+    /// * `weight` - Complexity weight for this constant
+    /// * `name` - Short name (single character preferred)
+    /// * `description` - Human-readable description
+    /// * `value` - Numeric value
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * `name` is empty
+    /// * `value` is not finite (NaN or infinity)
+    pub fn add_constant(
+        &mut self,
+        weight: u32,
+        name: String,
+        description: String,
+        value: f64,
+    ) -> Result<(), ProfileError> {
+        // Validate name
+        if name.is_empty() {
+            return Err(ProfileError::ValidationError(
+                "Constant name cannot be empty".to_string(),
+            ));
+        }
+
+        // Validate value is finite
+        if !value.is_finite() {
+            return Err(ProfileError::ValidationError(format!(
+                "Constant value must be finite (got {})",
+                value
+            )));
+        }
+
+        // Determine numeric type based on value characteristics
+        let num_type = if value.fract() == 0.0 && value.abs() < 1e10 {
+            NumType::Integer
+        } else if is_rational(value) {
+            NumType::Rational
+        } else {
+            NumType::Transcendental
+        };
+
+        self.constants.push(UserConstant {
+            weight,
+            name,
+            description,
+            value,
+            num_type,
+        });
+
+        Ok(())
+    }
+
     /// Merge another profile into this one (other takes precedence)
     pub fn merge(mut self, other: Profile) -> Self {
         // Merge constants (append, later ones override by name)
@@ -270,22 +329,10 @@ fn parse_user_constant(profile: &mut Profile, line: &str) -> Result<(), String> 
         .parse()
         .map_err(|_| format!("Invalid value: {}", parts[3]))?;
 
-    // Determine numeric type based on value characteristics
-    let num_type = if value.fract() == 0.0 && value.abs() < 1e10 {
-        NumType::Integer
-    } else if is_rational(value) {
-        NumType::Rational
-    } else {
-        NumType::Transcendental
-    };
-
-    profile.constants.push(UserConstant {
-        weight,
-        name,
-        description,
-        value,
-        num_type,
-    });
+    // Use Profile's centralized validation
+    profile
+        .add_constant(weight, name, description, value)
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -413,6 +460,8 @@ pub enum ProfileError {
     IoError(PathBuf, io::Error),
     /// Parse error at specific line
     ParseError(PathBuf, usize, String),
+    /// Validation error (e.g., invalid constant value)
+    ValidationError(String),
 }
 
 impl std::fmt::Display for ProfileError {
@@ -429,6 +478,9 @@ impl std::fmt::Display for ProfileError {
                     line,
                     msg
                 )
+            }
+            ProfileError::ValidationError(msg) => {
+                write!(f, "Validation error: {}", msg)
             }
         }
     }

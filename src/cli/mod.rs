@@ -7,6 +7,8 @@
 //! - Search orchestration
 //! - Configuration building
 //! - Legacy argument handling
+//! - JSON output types
+//! - Manifest building
 //!
 //! # Structure
 //!
@@ -16,11 +18,15 @@
 //! - [`search_runner`] - Search execution and orchestration
 //! - [`config_builder`] - Configuration building from CLI arguments
 //! - [`legacy`] - Legacy argument normalization for backward compatibility
+//! - [`json_types`] - JSON output types and building functions
+//! - [`manifest`] - Run manifest creation for reproducibility
 
 pub mod args;
 pub mod config_builder;
 pub mod diagnostics;
+pub mod json_types;
 pub mod legacy;
+pub mod manifest;
 pub mod output;
 pub mod search_runner;
 
@@ -32,6 +38,12 @@ pub use args::{
 };
 
 pub use diagnostics::parse_diagnostics;
+
+pub use json_types::{
+    build_json_output, format_bytes_binary, peak_memory_bytes,
+};
+
+pub use manifest::build_manifest;
 
 pub use output::{
     compute_significant_digits_tolerance, format_value, parse_display_format, print_footer,

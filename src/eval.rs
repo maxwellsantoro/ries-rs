@@ -393,9 +393,34 @@ pub fn evaluate_fast_with_constants(
 
 /// Evaluate an expression using a thread-local workspace with user constants and user functions.
 ///
-/// Note: This uses a global thread-local storage, so it's not safe to call recursively
-/// with different user_constants or user_functions. For recursive calls,
-/// use `evaluate_with_workspace_and_constants_and_functions`.
+/// # Thread-Local Workspace
+///
+/// This function uses a `thread_local!` static to cache an `EvalWorkspace` for each thread.
+/// The workspace is created on first use and reused for all subsequent calls from the same thread.
+/// This provides zero-allocation evaluation after the initial warmup, making it ideal for:
+///
+/// - Parallel code where each thread needs its own workspace
+/// - Hot loops where allocation overhead matters
+/// - High-throughput evaluation scenarios
+///
+/// # Limitations
+///
+/// - This uses a global thread-local storage, so it's not safe to call recursively
+///   with different `user_constants` or `user_functions`. The same workspace is shared.
+/// - For recursive calls or when user constants/functions vary per-call,
+///   use [`evaluate_with_workspace_and_constants_and_functions`] instead.
+///
+/// # Example
+///
+/// ```ignore
+/// // First call allocates workspace (warmup)
+/// let result = evaluate_fast(expr, x);
+///
+/// // Subsequent calls reuse the same workspace (no allocations)
+/// for _ in 0..1000 {
+///     let result = evaluate_fast(expr, x);
+/// }
+/// ```
 #[inline]
 pub fn evaluate_fast_with_constants_and_functions(
     expr: &Expression,
@@ -404,6 +429,11 @@ pub fn evaluate_fast_with_constants_and_functions(
     user_functions: &[UserFunction],
 ) -> Result<EvalResult, EvalError> {
     thread_local! {
+        /// Thread-local evaluation workspace.
+        ///
+        /// Each thread gets its own workspace instance that's lazily allocated
+        /// on first use. The workspace maintains internal Vec storage that grows
+        /// as needed but is never deallocated, providing zero-allocation hot paths.
         static WORKSPACE: std::cell::RefCell<EvalWorkspace> = std::cell::RefCell::new(EvalWorkspace::new());
     }
 

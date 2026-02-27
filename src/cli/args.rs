@@ -401,13 +401,12 @@ pub struct Args {
 
 /// Parse a user constant from CLI argument.
 /// Format: "weight:name:description:value"
+///
+/// This function uses Profile's centralized validation via [`profile::Profile::add_constant`].
 pub fn parse_user_constant_from_cli(
     profile: &mut profile::Profile,
     spec: &str,
 ) -> Result<(), String> {
-    use profile::UserConstant;
-    use symbol::NumType;
-
     let parts: Vec<&str> = spec.split(':').collect();
     if parts.len() != 4 {
         return Err(format!(
@@ -421,54 +420,16 @@ pub fn parse_user_constant_from_cli(
         .map_err(|_| format!("Invalid weight: {}", parts[0]))?;
 
     let name = parts[1].to_string();
-    if name.is_empty() {
-        return Err("Constant name cannot be empty".to_string());
-    }
-
     let description = parts[2].to_string();
 
     let value: f64 = parts[3]
         .parse()
         .map_err(|_| format!("Invalid value: {}", parts[3]))?;
 
-    // Validate that the value is finite (not NaN or infinity)
-    if !value.is_finite() {
-        return Err(format!("Constant value must be finite (got {})", value));
-    }
-
-    // Determine numeric type based on value characteristics
-    let num_type = if value.fract() == 0.0 && value.abs() < 1e10 {
-        NumType::Integer
-    } else if is_rational(value) {
-        NumType::Rational
-    } else {
-        NumType::Transcendental
-    };
-
-    profile.constants.push(UserConstant {
-        weight,
-        name,
-        description,
-        value,
-        num_type,
-    });
-
-    Ok(())
-}
-
-/// Check if a value is likely rational (simple fraction).
-fn is_rational(v: f64) -> bool {
-    if !v.is_finite() || v == 0.0 {
-        return true;
-    }
-
-    for denom in 1..=100_u32 {
-        let numer = v * denom as f64;
-        if (numer.round() - numer).abs() < 1e-10 {
-            return true;
-        }
-    }
-    false
+    // Use Profile's centralized validation
+    profile
+        .add_constant(weight, name, description, value)
+        .map_err(|e| e.to_string())
 }
 
 /// Parse a user-defined function from CLI argument.
