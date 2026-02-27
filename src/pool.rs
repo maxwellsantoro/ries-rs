@@ -314,19 +314,10 @@ impl TopKPool {
             return false;
         }
 
-        // Check LHS-level dedupe: permanently block any LHS that has already
-        // been represented in the pool, even after eviction.  See the eviction
-        // block below for the full rationale.
-        let lhs_key = LhsKey::from_match(&m);
-        if self.seen_lhs.contains(&lhs_key) {
-            self.stats.rejections_dedupe += 1;
-            return false;
-        }
-
         // Insert
         let entry = PoolEntry::new(m, self.ranking_mode);
         self.seen_eqn.insert(eqn_key);
-        self.seen_lhs.insert(lhs_key);
+        self.seen_lhs.insert(LhsKey::from_match(&entry.m));
 
         // Diagnostic output for -DG (before moving entry into heap)
         if self.show_db_adds {
@@ -362,15 +353,12 @@ impl TopKPool {
         if self.heap.len() > self.capacity {
             if let Some(evicted) = self.heap.pop() {
                 // Remove the equation key so a *different* RHS for the same LHS can
-                // potentially be inserted later.
+                // be inserted later.
                 self.seen_eqn.remove(&EqnKey::from_match(&evicted.m));
-                // Intentionally do NOT remove from seen_lhs: once a LHS has been
-                // represented in the pool, we permanently suppress all further
-                // variants of it—even after eviction—to prevent the pool oscillating
-                // between near-identical equations (same LHS, slightly different RHS).
-                // Trade-off: if the only representative of a LHS is evicted, a later
-                // match with the same LHS will be rejected even if it is a better
-                // approximation. This matches original RIES behavior.
+                // seen_lhs is NOT updated on eviction. It tracks which LHS expressions
+                // have ever been in the pool, but is not used as an insertion gate
+                // (doing so would block exact matches from replacing earlier approximate
+                // matches with the same LHS).
                 self.stats.evictions += 1;
             }
         }
@@ -578,25 +566,5 @@ mod tests {
 
         // Both should be in the pool since they're different equations
         assert_eq!(pool.len(), 2);
-    }
-
-    #[test]
-    fn test_seen_lhs_deduplication_rejects_same_lhs() {
-        // seen_lhs is a permanent blacklist: once a LHS has been inserted into
-        // the pool, all further variants with the same LHS are rejected—even
-        // after the original entry is evicted.
-        let mut pool = TopKPool::new(1, 1.0);
-
-        // Insert a match with LHS "x"; the pool is now at capacity.
-        let first = make_match("x", "3", 0.01, 25);
-        assert!(pool.try_insert(first));
-
-        // Insert a second match with the same LHS "x" but a different RHS.
-        // Even though pool capacity is 1 and the new match has a better error,
-        // seen_lhs permanently blocks it.
-        let second = make_match("x", "4", 0.001, 30);
-        assert!(!pool.try_insert(second));
-
-        assert_eq!(pool.len(), 1);
     }
 }
