@@ -54,7 +54,7 @@ impl EqnKey {
 
 /// Keys for LHS-only deduplication
 ///
-/// Used to prevent adding too many variants of the same LHS expression.
+/// Used by report.rs to prevent showing too many variants of the same LHS.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct LhsKey {
     /// LHS expression
@@ -244,8 +244,6 @@ pub struct TopKPool {
     heap: BinaryHeap<PoolEntry>,
     /// Seen equation keys for dedupe
     seen_eqn: HashSet<EqnKey>,
-    /// Seen LHS keys for soft dedupe
-    seen_lhs: HashSet<LhsKey>,
     /// Best error seen so far (for threshold tightening)
     pub best_error: f64,
     /// Accept error threshold (tightens slowly for diversity)
@@ -266,7 +264,6 @@ impl TopKPool {
             capacity,
             heap: BinaryHeap::with_capacity(capacity + 1),
             seen_eqn: HashSet::new(),
-            seen_lhs: HashSet::new(),
             best_error: initial_max_error,
             accept_error: initial_max_error,
             stats: PoolStats::default(),
@@ -286,7 +283,6 @@ impl TopKPool {
             capacity,
             heap: BinaryHeap::with_capacity(capacity + 1),
             seen_eqn: HashSet::new(),
-            seen_lhs: HashSet::new(),
             best_error: initial_max_error,
             accept_error: initial_max_error,
             stats: PoolStats::default(),
@@ -317,7 +313,6 @@ impl TopKPool {
         // Insert
         let entry = PoolEntry::new(m, self.ranking_mode);
         self.seen_eqn.insert(eqn_key);
-        self.seen_lhs.insert(LhsKey::from_match(&entry.m));
 
         // Diagnostic output for -DG (before moving entry into heap)
         if self.show_db_adds {
@@ -355,10 +350,6 @@ impl TopKPool {
                 // Remove the equation key so a *different* RHS for the same LHS can
                 // be inserted later.
                 self.seen_eqn.remove(&EqnKey::from_match(&evicted.m));
-                // seen_lhs is NOT updated on eviction. It tracks which LHS expressions
-                // have ever been in the pool, but is not used as an insertion gate
-                // (doing so would block exact matches from replacing earlier approximate
-                // matches with the same LHS).
                 self.stats.evictions += 1;
             }
         }

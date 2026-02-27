@@ -1645,7 +1645,7 @@ pub fn search_one_sided_with_stats_and_config(
     let mut early_exit = false;
 
     let mut lhs_expr = Expression::new();
-    lhs_expr.push(Symbol::X);
+    lhs_expr.push_with_table(Symbol::X, &gen_config.symbol_table);
     let lhs_eval = evaluate_with_constants_and_functions(
         &lhs_expr,
         config.target,
