@@ -171,8 +171,21 @@ impl PoolEntry {
     fn new(m: Match, ranking_mode: RankingMode) -> Self {
         let is_exact = m.error.abs() < EXACT_MATCH_TOLERANCE;
         let exactness_rank = if is_exact { 0 } else { 1 };
-        // Convert error to sortable integer.
-        let error_bits = m.error.abs().to_bits() as i64;
+        // Convert error to sortable integer, handling special values.
+        // For IEEE 754 doubles, positive values' bit patterns preserve ordering
+        // when interpreted as unsigned, but we need to handle NaN/Infinity specially.
+        let error_abs = m.error.abs();
+        let error_bits = if error_abs.is_nan() {
+            // NaN should sort as worst (largest) error
+            i64::MAX
+        } else if error_abs.is_infinite() {
+            // Infinity should also sort as worst (just below NaN)
+            i64::MAX - 1
+        } else {
+            // For normal positive floats, the bit pattern preserves ordering
+            // when cast to i64 (since all positive floats have bit patterns < i64::MAX)
+            error_abs.to_bits() as i64
+        };
         let mode_tie = match ranking_mode {
             RankingMode::Complexity => m.complexity as i32,
             RankingMode::Parity => legacy_parity_score_match(&m),
@@ -187,6 +200,8 @@ impl PoolEntry {
 impl PartialEq for PoolEntry {
     fn eq(&self, other: &Self) -> bool {
         self.rank_key == other.rank_key
+            && self.m.lhs.expr == other.m.lhs.expr
+            && self.m.rhs.expr == other.m.rhs.expr
     }
 }
 
@@ -201,7 +216,10 @@ impl PartialOrd for PoolEntry {
 impl Ord for PoolEntry {
     fn cmp(&self, other: &Self) -> Ordering {
         // Keep worst (least exact, largest error, largest complexity) at top for eviction.
-        self.rank_key.cmp(&other.rank_key)
+        self.rank_key
+            .cmp(&other.rank_key)
+            .then_with(|| compare_expr(&self.m.lhs.expr, &other.m.lhs.expr))
+            .then_with(|| compare_expr(&self.m.rhs.expr, &other.m.rhs.expr))
     }
 }
 
@@ -503,5 +521,46 @@ mod tests {
         parity_pool.try_insert(high_operator);
         let parity_sorted = parity_pool.into_sorted();
         assert_eq!(parity_sorted[0].lhs.expr.to_postfix(), "x1+");
+    }
+
+    #[test]
+    fn test_pool_handles_nan_and_infinity_errors() {
+        let mut pool = TopKPool::new(10, f64::INFINITY);
+
+        // Normal error should be accepted
+        let normal = make_match("x", "1", 0.01, 25);
+        assert!(pool.try_insert(normal));
+
+        // Infinity error should sort as worst but still be accepted
+        let infinite = make_match("x1+", "2", f64::INFINITY, 30);
+        assert!(pool.try_insert(infinite));
+
+        // NaN error should also be handled (sorts as worst)
+        let nan_match = make_match("x2*", "3", f64::NAN, 35);
+        assert!(pool.try_insert(nan_match));
+
+        // All three should be in the pool
+        assert_eq!(pool.len(), 3);
+
+        // When sorted, the normal match should come first (lowest error)
+        let sorted = pool.into_sorted();
+        assert_eq!(sorted[0].lhs.expr.to_postfix(), "x");
+    }
+
+    #[test]
+    fn test_pool_entry_distinct_with_same_rank_key() {
+        // Two matches with identical rank_key but different expressions
+        // should both be insertable (they're distinct equations)
+        let mut pool = TopKPool::new(10, 1.0);
+
+        // Both have error 0.0 and same complexity, but different LHS
+        let m1 = make_match("x", "1", 0.0, 25);
+        let m2 = make_match("x1-", "1", 0.0, 25);
+
+        assert!(pool.try_insert(m1));
+        assert!(pool.try_insert(m2));
+
+        // Both should be in the pool since they're different equations
+        assert_eq!(pool.len(), 2);
     }
 }

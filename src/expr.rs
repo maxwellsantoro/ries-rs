@@ -189,7 +189,8 @@ impl Expression {
 
     /// Append a symbol to this expression
     pub fn push(&mut self, sym: Symbol) {
-        self.complexity += sym.weight();
+        // Use saturating_add to prevent overflow with many operations
+        self.complexity = self.complexity.saturating_add(sym.weight());
         if sym == Symbol::X {
             self.contains_x = true;
         }
@@ -199,7 +200,8 @@ impl Expression {
     /// Remove the last symbol
     pub fn pop(&mut self) -> Option<Symbol> {
         let sym = self.symbols.pop()?;
-        self.complexity -= sym.weight();
+        // Use saturating_sub to prevent underflow (shouldn't happen with valid state)
+        self.complexity = self.complexity.saturating_sub(sym.weight());
         // Recompute contains_x after popping
         if sym == Symbol::X {
             self.contains_x = self.symbols.contains(&Symbol::X);
@@ -212,7 +214,8 @@ impl Expression {
     /// This is the table-driven version that uses per-run configuration
     /// instead of global overrides.
     pub fn push_with_table(&mut self, sym: Symbol, table: &crate::symbol_table::SymbolTable) {
-        self.complexity += table.weight(sym);
+        // Use saturating_add to prevent overflow with many operations
+        self.complexity = self.complexity.saturating_add(table.weight(sym));
         if sym == Symbol::X {
             self.contains_x = true;
         }
@@ -225,7 +228,8 @@ impl Expression {
     /// instead of global overrides.
     pub fn pop_with_table(&mut self, table: &crate::symbol_table::SymbolTable) -> Option<Symbol> {
         let sym = self.symbols.pop()?;
-        self.complexity -= table.weight(sym);
+        // Use saturating_sub to prevent underflow (shouldn't happen with valid state)
+        self.complexity = self.complexity.saturating_sub(table.weight(sym));
         // Recompute contains_x after popping
         if sym == Symbol::X {
             self.contains_x = self.symbols.contains(&Symbol::X);
@@ -558,6 +562,44 @@ impl Expression {
         }
     }
 
+    /// Count the number of operators (non-atoms) in the expression
+    pub fn operator_count(&self) -> usize {
+        self.symbols
+            .iter()
+            .filter(|sym| sym.seft() != Seft::A)
+            .count()
+    }
+
+    /// Compute the maximum depth of the expression tree
+    pub fn tree_depth(&self) -> usize {
+        let mut stack: Vec<usize> = Vec::with_capacity(self.len());
+        for &sym in &self.symbols {
+            match sym.seft() {
+                Seft::A => stack.push(1),
+                Seft::B => {
+                    let Some(arg_depth) = stack.pop() else {
+                        return 0;
+                    };
+                    stack.push(arg_depth.saturating_add(1));
+                }
+                Seft::C => {
+                    let Some(rhs_depth) = stack.pop() else {
+                        return 0;
+                    };
+                    let Some(lhs_depth) = stack.pop() else {
+                        return 0;
+                    };
+                    stack.push(lhs_depth.max(rhs_depth).saturating_add(1));
+                }
+            }
+        }
+        if stack.len() == 1 {
+            stack[0]
+        } else {
+            0
+        }
+    }
+
     fn to_infix_mathematica(&self) -> String {
         let mut stack: Vec<String> = Vec::new();
 
@@ -786,5 +828,103 @@ mod tests {
         let expr = Expression::parse("xs").unwrap(); // x^2
                                                      // x = 15, s (square) = 9
         assert_eq!(expr.complexity(), 15 + 9);
+    }
+
+    #[test]
+    fn test_tree_depth_atom() {
+        // Single atom has depth 1
+        assert_eq!(Expression::parse("x").unwrap().tree_depth(), 1);
+        assert_eq!(Expression::parse("1").unwrap().tree_depth(), 1);
+        assert_eq!(Expression::parse("p").unwrap().tree_depth(), 1); // pi
+    }
+
+    #[test]
+    fn test_tree_depth_unary() {
+        // Unary op adds 1 to depth
+        assert_eq!(Expression::parse("xq").unwrap().tree_depth(), 2); // sqrt(x)
+        assert_eq!(Expression::parse("xs").unwrap().tree_depth(), 2); // x^2
+        assert_eq!(Expression::parse("xn").unwrap().tree_depth(), 2); // -x
+    }
+
+    #[test]
+    fn test_tree_depth_binary() {
+        // Binary op takes max of children + 1
+        assert_eq!(Expression::parse("12+").unwrap().tree_depth(), 2); // 1+2
+        assert_eq!(Expression::parse("x2*").unwrap().tree_depth(), 2); // x*2
+        assert_eq!(Expression::parse("x1+2*").unwrap().tree_depth(), 3); // (x+1)*2
+    }
+
+    #[test]
+    fn test_tree_depth_nested() {
+        // Deeply nested expressions
+        assert_eq!(Expression::parse("xqq").unwrap().tree_depth(), 3); // sqrt(sqrt(x))
+        assert_eq!(Expression::parse("12+34+*").unwrap().tree_depth(), 3); // (1+2)*(3+4)
+    }
+
+    #[test]
+    fn test_tree_depth_empty() {
+        // Empty expression has depth 0
+        assert_eq!(Expression::new().tree_depth(), 0);
+    }
+
+    #[test]
+    fn test_tree_depth_malformed() {
+        // Malformed expressions return 0
+        assert_eq!(Expression::parse("x1").unwrap().tree_depth(), 0); // Two values on stack
+    }
+
+    #[test]
+    fn test_operator_count_atom() {
+        // Single atom has no operators
+        assert_eq!(Expression::parse("x").unwrap().operator_count(), 0);
+        assert_eq!(Expression::parse("1").unwrap().operator_count(), 0);
+        assert_eq!(Expression::parse("p").unwrap().operator_count(), 0);
+    }
+
+    #[test]
+    fn test_operator_count_unary() {
+        // Unary op counts as 1 operator
+        assert_eq!(Expression::parse("xq").unwrap().operator_count(), 1);
+        assert_eq!(Expression::parse("xs").unwrap().operator_count(), 1);
+        assert_eq!(Expression::parse("xn").unwrap().operator_count(), 1);
+    }
+
+    #[test]
+    fn test_operator_count_binary() {
+        // Binary op counts as 1 operator
+        assert_eq!(Expression::parse("12+").unwrap().operator_count(), 1);
+        assert_eq!(Expression::parse("x2*").unwrap().operator_count(), 1);
+    }
+
+    #[test]
+    fn test_operator_count_complex() {
+        // Multiple operators
+        assert_eq!(Expression::parse("x1+2*").unwrap().operator_count(), 2); // (x+1)*2
+        assert_eq!(Expression::parse("xq1+").unwrap().operator_count(), 2); // sqrt(x)+1
+        assert_eq!(Expression::parse("12+34+*").unwrap().operator_count(), 3); // (1+2)*(3+4)
+    }
+
+    #[test]
+    fn test_operator_count_empty() {
+        assert_eq!(Expression::new().operator_count(), 0);
+    }
+
+    #[test]
+    fn test_push_pop_complexity_saturating() {
+        let mut expr = Expression::new();
+
+        // Push should use saturating_add
+        for _ in 0..1000 {
+            expr.push(Symbol::X);
+        }
+        // Complexity should saturate, not overflow
+        assert!(expr.complexity() < u32::MAX);
+
+        // Pop should use saturating_sub
+        for _ in 0..1000 {
+            expr.pop();
+        }
+        // Should be back to 0 without underflow
+        assert_eq!(expr.complexity(), 0);
     }
 }

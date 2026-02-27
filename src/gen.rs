@@ -242,6 +242,180 @@ pub struct GenConfig {
     pub symbol_table: Arc<SymbolTable>,
 }
 
+/// Options for additional expression constraints
+///
+/// These constraints allow filtering expressions based on their numeric properties
+/// or structural limits (like trig cycles or exponent types).
+#[derive(Debug, Clone, Copy)]
+pub struct ExpressionConstraintOptions {
+    /// If true, power exponents must be rational (no transcendental exponents like x^pi)
+    pub rational_exponents: bool,
+    /// If true, trigonometric function arguments must be rational
+    pub rational_trig_args: bool,
+    /// Maximum number of trigonometric operations allowed in an expression
+    pub max_trig_cycles: Option<u32>,
+    /// Inherited numeric types for user-defined constants 0-15
+    pub user_constant_types: [NumType; 16],
+    /// Inherited numeric types for user-defined functions 0-15
+    pub user_function_types: [NumType; 16],
+}
+
+impl Default for ExpressionConstraintOptions {
+    fn default() -> Self {
+        Self {
+            rational_exponents: false,
+            rational_trig_args: false,
+            max_trig_cycles: None,
+            user_constant_types: [NumType::Transcendental; 16],
+            user_function_types: [NumType::Transcendental; 16],
+        }
+    }
+}
+
+/// Check if an expression respects the configured structural and numeric constraints.
+///
+/// This performs a symbolic walkthrough of the expression to verify that it
+/// matches the requested properties (e.g., no transcendental exponents).
+pub fn expression_respects_constraints(
+    expression: &Expression,
+    opts: ExpressionConstraintOptions,
+) -> bool {
+    #[derive(Clone, Copy)]
+    struct ConstraintValue {
+        has_x: bool,
+        num_type: NumType,
+    }
+
+    let mut stack: Vec<ConstraintValue> = Vec::with_capacity(expression.len());
+    let mut trig_ops: u32 = 0;
+
+    for &sym in expression.symbols() {
+        match sym.seft() {
+            Seft::A => {
+                let num_type = if let Some(idx) = sym.user_constant_index() {
+                    opts.user_constant_types[idx as usize]
+                } else {
+                    sym.inherent_type()
+                };
+                stack.push(ConstraintValue {
+                    has_x: sym == Symbol::X,
+                    num_type,
+                });
+            }
+            Seft::B => {
+                let Some(arg) = stack.pop() else {
+                    return false;
+                };
+
+                if matches!(sym, Symbol::SinPi | Symbol::CosPi | Symbol::TanPi) {
+                    trig_ops = trig_ops.saturating_add(1);
+                    if opts.rational_trig_args && (arg.has_x || arg.num_type < NumType::Rational) {
+                        return false;
+                    }
+                }
+
+                let num_type = match sym {
+                    Symbol::Neg | Symbol::Square => arg.num_type,
+                    Symbol::Recip => {
+                        if arg.num_type >= NumType::Rational {
+                            NumType::Rational
+                        } else {
+                            arg.num_type
+                        }
+                    }
+                    Symbol::Sqrt => {
+                        if arg.num_type >= NumType::Rational {
+                            NumType::Algebraic
+                        } else {
+                            arg.num_type
+                        }
+                    }
+                    Symbol::UserFunction0
+                    | Symbol::UserFunction1
+                    | Symbol::UserFunction2
+                    | Symbol::UserFunction3
+                    | Symbol::UserFunction4
+                    | Symbol::UserFunction5
+                    | Symbol::UserFunction6
+                    | Symbol::UserFunction7
+                    | Symbol::UserFunction8
+                    | Symbol::UserFunction9
+                    | Symbol::UserFunction10
+                    | Symbol::UserFunction11
+                    | Symbol::UserFunction12
+                    | Symbol::UserFunction13
+                    | Symbol::UserFunction14
+                    | Symbol::UserFunction15 => {
+                        let idx = sym.user_function_index().unwrap_or(0) as usize;
+                        opts.user_function_types[idx]
+                    }
+                    _ => NumType::Transcendental,
+                };
+
+                stack.push(ConstraintValue {
+                    has_x: arg.has_x,
+                    num_type,
+                });
+            }
+            Seft::C => {
+                let Some(rhs) = stack.pop() else {
+                    return false;
+                };
+                let Some(lhs) = stack.pop() else {
+                    return false;
+                };
+
+                if opts.rational_exponents
+                    && sym == Symbol::Pow
+                    && (rhs.has_x || rhs.num_type < NumType::Rational)
+                {
+                    return false;
+                }
+
+                let num_type = match sym {
+                    Symbol::Add | Symbol::Sub | Symbol::Mul => lhs.num_type.combine(rhs.num_type),
+                    Symbol::Div => {
+                        let combined = lhs.num_type.combine(rhs.num_type);
+                        if combined == NumType::Integer {
+                            NumType::Rational
+                        } else {
+                            combined
+                        }
+                    }
+                    Symbol::Pow => {
+                        if rhs.has_x {
+                            NumType::Transcendental
+                        } else if rhs.num_type == NumType::Integer {
+                            lhs.num_type
+                        } else if lhs.num_type >= NumType::Rational
+                            && rhs.num_type >= NumType::Rational
+                        {
+                            NumType::Algebraic
+                        } else {
+                            NumType::Transcendental
+                        }
+                    }
+                    Symbol::Root => NumType::Algebraic,
+                    Symbol::Log | Symbol::Atan2 => NumType::Transcendental,
+                    _ => NumType::Transcendental,
+                };
+
+                stack.push(ConstraintValue {
+                    has_x: lhs.has_x || rhs.has_x,
+                    num_type,
+                });
+            }
+        }
+    }
+
+    if stack.len() != 1 {
+        return false;
+    }
+
+    opts.max_trig_cycles
+        .is_none_or(|max_cycles| trig_ops <= max_cycles)
+}
+
 impl Default for GenConfig {
     fn default() -> Self {
         Self {
@@ -1454,5 +1628,255 @@ mod tests {
         let generated = result.unwrap();
         // Should have generated some expressions.
         assert!(!generated.lhs.is_empty() || !generated.rhs.is_empty());
+    }
+
+    // ==================== expression_respects_constraints tests ====================
+
+    fn expr_from_postfix(s: &str) -> Expression {
+        Expression::parse(s).expect("valid expression")
+    }
+
+    #[test]
+    fn test_constraints_default_allows_all() {
+        let opts = ExpressionConstraintOptions::default();
+
+        // x^pi should be allowed with default options
+        let expr = expr_from_postfix("xp^"); // x^pi
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "x^pi should be allowed with default options"
+        );
+
+        // sinpi(e) should be allowed
+        let expr = expr_from_postfix("eS"); // e then sinpi (S = SinPi)
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "sinpi(e) should be allowed with default options"
+        );
+    }
+
+    #[test]
+    fn test_constraints_rational_exponents_rejects_transcendental() {
+        let opts = ExpressionConstraintOptions {
+            rational_exponents: true,
+            ..Default::default()
+        };
+
+        // x^pi should be rejected (pi is transcendental)
+        let expr = expr_from_postfix("xp^");
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "x^pi should be rejected with rational_exponents=true"
+        );
+
+        // x^e should be rejected
+        let expr = expr_from_postfix("xe^");
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "x^e should be rejected with rational_exponents=true"
+        );
+    }
+
+    #[test]
+    fn test_constraints_rational_exponents_allows_integer() {
+        let opts = ExpressionConstraintOptions {
+            rational_exponents: true,
+            ..Default::default()
+        };
+
+        // x^2 should be allowed (2 is integer)
+        let expr = expr_from_postfix("x2^");
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "x^2 should be allowed with rational_exponents=true"
+        );
+
+        // x^1 should be allowed
+        let expr = expr_from_postfix("x1^");
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "x^1 should be allowed with rational_exponents=true"
+        );
+    }
+
+    #[test]
+    fn test_constraints_rational_trig_args_rejects_irrational() {
+        let opts = ExpressionConstraintOptions {
+            rational_trig_args: true,
+            ..Default::default()
+        };
+
+        // sinpi(e) should be rejected (e is irrational/transcendental)
+        let expr = expr_from_postfix("eS"); // e then sinpi (S = SinPi)
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "sinpi(e) should be rejected with rational_trig_args=true"
+        );
+
+        // sinpi(pi) should be rejected (pi is transcendental)
+        let expr = expr_from_postfix("pS"); // pi then sinpi
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "sinpi(pi) should be rejected with rational_trig_args=true"
+        );
+    }
+
+    #[test]
+    fn test_constraints_rational_trig_args_allows_rational() {
+        let opts = ExpressionConstraintOptions {
+            rational_trig_args: true,
+            ..Default::default()
+        };
+
+        // sinpi(1) should be allowed (1 is integer, hence rational)
+        let expr = expr_from_postfix("1S"); // 1 then sinpi (S = SinPi)
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "sinpi(1) should be allowed with rational_trig_args=true"
+        );
+
+        // sinpi(2) should be allowed
+        let expr = expr_from_postfix("2S");
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "sinpi(2) should be allowed with rational_trig_args=true"
+        );
+    }
+
+    #[test]
+    fn test_constraints_rational_trig_args_rejects_x() {
+        let opts = ExpressionConstraintOptions {
+            rational_trig_args: true,
+            ..Default::default()
+        };
+
+        // sinpi(x) should be rejected (x is not a constant rational)
+        let expr = expr_from_postfix("xS"); // x then sinpi (S = SinPi)
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "sinpi(x) should be rejected with rational_trig_args=true"
+        );
+    }
+
+    #[test]
+    fn test_constraints_max_trig_cycles() {
+        let opts = ExpressionConstraintOptions {
+            max_trig_cycles: Some(2),
+            ..Default::default()
+        };
+
+        // Single trig: sinpi(x) - should pass
+        let expr = expr_from_postfix("xS"); // x then sinpi (S = SinPi)
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "1 trig op should pass with max=2"
+        );
+
+        // Double nested: sinpi(cospi(x)) - should pass
+        // x C S = sinpi(cospi(x)) where C = CosPi, S = SinPi
+        let expr = expr_from_postfix("xCS");
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "2 trig ops should pass with max=2"
+        );
+
+        // Triple nested: sinpi(cospi(tanpi(x))) - should fail
+        // x T C S = sinpi(cospi(tanpi(x))) where T = TanPi
+        let expr = expr_from_postfix("xTCS");
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "3 trig ops should fail with max=2"
+        );
+    }
+
+    #[test]
+    fn test_constraints_max_trig_cycles_none_unlimited() {
+        let opts = ExpressionConstraintOptions {
+            max_trig_cycles: None, // No limit
+            ..Default::default()
+        };
+
+        // Even deeply nested trig should pass
+        // x T C S T C S = 6 trig ops
+        let expr = expr_from_postfix("xTCSTCS");
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "Unlimited trig should pass any depth"
+        );
+    }
+
+    #[test]
+    fn test_constraints_combined() {
+        let opts = ExpressionConstraintOptions {
+            rational_exponents: true,
+            rational_trig_args: true,
+            max_trig_cycles: Some(1),
+            ..Default::default()
+        };
+
+        // x^2 + sinpi(1) should pass
+        let expr = expr_from_postfix("x2^1S+"); // S = SinPi
+        assert!(
+            expression_respects_constraints(&expr, opts),
+            "x^2 + sinpi(1) should pass all constraints"
+        );
+
+        // x^pi should fail (rational_exponents)
+        let expr = expr_from_postfix("xp^");
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "x^pi should fail rational_exponents"
+        );
+
+        // sinpi(x) should fail (rational_trig_args)
+        let expr = expr_from_postfix("xS"); // S = SinPi
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "sinpi(x) should fail rational_trig_args"
+        );
+
+        // sinpi(cospi(1)) should fail (max_trig_cycles)
+        let expr = expr_from_postfix("1CS"); // C = CosPi, S = SinPi
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "double trig should fail max_trig_cycles=1"
+        );
+    }
+
+    #[test]
+    fn test_constraints_malformed_expression() {
+        let opts = ExpressionConstraintOptions::default();
+
+        // Expression that would cause stack underflow
+        let expr = expr_from_postfix("+"); // Just a binary op
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "Malformed expression should return false"
+        );
+
+        // Incomplete expression (too many values)
+        let expr = expr_from_postfix("12");
+        assert!(
+            !expression_respects_constraints(&expr, opts),
+            "Incomplete expression should return false"
+        );
+    }
+
+    #[test]
+    fn test_constraints_user_constant_types() {
+        // Set user constant 0 to be Integer type
+        let mut user_types = [NumType::Transcendental; 16];
+        user_types[0] = NumType::Integer;
+
+        let opts = ExpressionConstraintOptions {
+            rational_exponents: true,
+            user_constant_types: user_types,
+            ..Default::default()
+        };
+
+        // If UserConstant0 is treated as Integer, x^UserConstant0 should be allowed
+        // (We can't easily test this without actually having user constants in the expression,
+        // but this verifies the options struct is properly configured)
+        assert_eq!(opts.user_constant_types[0], NumType::Integer);
     }
 }

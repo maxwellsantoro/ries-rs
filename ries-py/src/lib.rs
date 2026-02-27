@@ -81,6 +81,15 @@ pub struct PyMatch {
     /// Postfix representation of RHS
     #[pyo3(get)]
     pub rhs_postfix: String,
+    /// Solved x = expression (if analytically solvable)
+    #[pyo3(get)]
+    pub solve_for_x: Option<String>,
+    /// Solved x = expression in postfix
+    #[pyo3(get)]
+    pub solve_for_x_postfix: Option<String>,
+    /// Canonical key for deduplication
+    #[pyo3(get)]
+    pub canonical_key: String,
     /// Solved value of x
     #[pyo3(get)]
     pub x_value: f64,
@@ -90,6 +99,12 @@ pub struct PyMatch {
     /// Complexity score
     #[pyo3(get)]
     pub complexity: u32,
+    /// Number of operators in equation
+    #[pyo3(get)]
+    pub operator_count: usize,
+    /// Maximum tree depth of equation
+    #[pyo3(get)]
+    pub tree_depth: usize,
     /// Whether this is an exact match
     #[pyo3(get)]
     pub is_exact: bool,
@@ -112,28 +127,20 @@ impl PyMatch {
     }
 
     /// Convert the match to a Python dictionary.
-    ///
-    /// Returns
-    /// -------
-    /// dict
-    ///     Dictionary with keys: lhs, rhs, lhs_postfix, rhs_postfix,
-    ///     x_value, error, complexity, is_exact
-    ///
-    /// Examples
-    /// --------
-    /// >>> m.to_dict()
-    /// {'lhs': 'x', 'rhs': 'pi', 'lhs_postfix': 'x', 'rhs_postfix': 'p',
-    ///  'x_value': 3.14159..., 'error': 8.98e-11, 'complexity': 14,
-    ///  'is_exact': True}
     fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let dict = PyDict::new_bound(py);
         dict.set_item("lhs", &self.lhs)?;
         dict.set_item("rhs", &self.rhs)?;
         dict.set_item("lhs_postfix", &self.lhs_postfix)?;
         dict.set_item("rhs_postfix", &self.rhs_postfix)?;
+        dict.set_item("solve_for_x", &self.solve_for_x)?;
+        dict.set_item("solve_for_x_postfix", &self.solve_for_x_postfix)?;
+        dict.set_item("canonical_key", &self.canonical_key)?;
         dict.set_item("x_value", self.x_value)?;
         dict.set_item("error", self.error)?;
         dict.set_item("complexity", self.complexity)?;
+        dict.set_item("operator_count", self.operator_count)?;
+        dict.set_item("tree_depth", self.tree_depth)?;
         dict.set_item("is_exact", self.is_exact)?;
         Ok(dict.unbind())
     }
@@ -141,14 +148,33 @@ impl PyMatch {
 
 impl From<ries_core::search::Match> for PyMatch {
     fn from(m: ries_core::search::Match) -> Self {
+        let lhs_infix = m.lhs.expr.to_infix();
+        let rhs_infix = m.rhs.expr.to_infix();
+
+        // Analytical solver
+        let solved = ries_core::solver::solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
+        let solve_for_x = solved.as_ref().map(|e| format!("x = {}", e.to_infix()));
+        let solve_for_x_postfix = solved.as_ref().map(|e| e.to_postfix());
+
+        // Canonical key
+        let canonical_key = ries_core::solver::canonical_expression_key(&m.lhs.expr)
+            .zip(ries_core::solver::canonical_expression_key(&m.rhs.expr))
+            .map(|(l, r)| format!("{}={}", l, r))
+            .unwrap_or_else(|| format!("{}={}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()));
+
         Self {
-            lhs: m.lhs.expr.to_infix(),
-            rhs: m.rhs.expr.to_infix(),
+            lhs: lhs_infix,
+            rhs: rhs_infix,
             lhs_postfix: m.lhs.expr.to_postfix(),
             rhs_postfix: m.rhs.expr.to_postfix(),
+            solve_for_x,
+            solve_for_x_postfix,
+            canonical_key,
             x_value: m.x_value,
             error: m.error,
             complexity: m.complexity,
+            operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
+            tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),
             is_exact: m.error.abs() < ries_core::thresholds::EXACT_MATCH_TOLERANCE,
         }
     }
@@ -219,7 +245,10 @@ fn build_gen_config(
 ///     Search level (default 2). Higher levels search more expressions.
 ///     Level 0 ≈ 89M expressions, Level 2 ≈ 11B, Level 5 ≈ 15T
 /// max_matches : int, optional
-///     Maximum number of matches to return (default 16)
+///     Maximum number of matches to return (default 16).
+///     Note: Internally, the search requests 2*max_matches candidates
+///     to ensure high-quality results after filtering and ranking,
+///     then returns the best max_matches.
 /// preset : str, optional
 ///     Domain preset: "analytic-nt", "elliptic", "combinatorics",
 ///     "physics", "number-theory", "calculus"
