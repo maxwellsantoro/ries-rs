@@ -31,7 +31,7 @@ use ries_rs::{
     canonical_expression_key, expression_respects_constraints, solve_for_x_rhs_expression,
     ExpressionConstraintOptions,
 };
-use std::time::Instant;
+use std::time::Duration;
 
 // Args struct is now imported from cli::Args
 
@@ -545,8 +545,6 @@ fn main() {
         }
     }
 
-    let start = Instant::now();
-
     // Build symbol filters for fast path
     let mut excluded_symbols: std::collections::HashSet<u8> =
         excluded_effective.unwrap_or_default();
@@ -573,7 +571,7 @@ fn main() {
 
     // Fast path: check for simple exact matches before expensive generation
     // This handles cases like pi, e, sqrt(2), phi, integers, etc. instantly
-    let (matches, stats) = if stop_at_exact || args.classic {
+    let (matches, stats, search_elapsed) = if stop_at_exact || args.classic {
         // Only use fast path when we're looking for quick results
         if let Some(fast_match) = fast_match::find_fast_match(
             target,
@@ -588,7 +586,7 @@ fn main() {
                 search_time: std::time::Duration::from_micros(1),
                 ..Default::default()
             };
-            (vec![fast_match], fast_stats)
+            (vec![fast_match], fast_stats, Duration::from_micros(1))
         } else {
             // No fast match found, do full search
             // Deterministic mode disables parallelism for reproducible results
@@ -602,7 +600,7 @@ fn main() {
                 args.adaptive,
                 level_value as u32,
             );
-            (result.matches, result.stats)
+            (result.matches, result.stats, result.elapsed)
         }
     } else {
         // Not in quick mode, always do full search
@@ -617,7 +615,7 @@ fn main() {
             args.adaptive,
             level_value as u32,
         );
-        (result.matches, result.stats)
+        (result.matches, result.stats, result.elapsed)
     };
 
     let mut matches = matches;
@@ -714,7 +712,7 @@ fn main() {
         });
     }
 
-    let elapsed = start.elapsed();
+    let elapsed = search_elapsed;
 
     // Parse the output format once for both text and JSON modes
     let output_format = parse_display_format(&args.format);
