@@ -4,8 +4,6 @@
 
 // Allow field reassignment with default in test code - common pattern for config building
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
-// Some helper functions are kept for future use but may be unused in certain configurations
-#[allow(dead_code)]
 #[cfg(feature = "highprec")]
 use ries_rs::precision;
 use ries_rs::{
