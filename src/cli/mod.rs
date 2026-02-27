@@ -34,14 +34,12 @@ pub mod search_runner;
 pub use args::{
     canon_reduction_enabled, parse_memory_size_bytes, parse_symbol_names_from_cli,
     parse_symbol_sets, parse_symbol_weights_from_cli, parse_user_constant_from_cli,
-    parse_user_function_from_cli, print_symbol_table, Args,
+    parse_user_function_from_cli, print_option_list, print_symbol_table, Args,
 };
 
 pub use diagnostics::parse_diagnostics;
 
-pub use json_types::{
-    build_json_output, format_bytes_binary, peak_memory_bytes,
-};
+pub use json_types::{build_json_output, format_bytes_binary, peak_memory_bytes};
 
 pub use manifest::build_manifest;
 
