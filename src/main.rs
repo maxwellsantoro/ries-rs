@@ -745,6 +745,7 @@ fn main() {
             &matches[..shown_count],
             &stats,
             elapsed,
+            args.solve && !args.no_solve,
         );
 
         match serde_json::to_string_pretty(&json_output) {

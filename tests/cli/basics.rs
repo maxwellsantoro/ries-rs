@@ -834,6 +834,30 @@ fn test_explicit_multiply_changes_infix_rendering() {
     );
 }
 
+#[test]
+fn test_json_no_solve_for_x_suppresses_solve_fields() {
+    let output = Command::new(env!("CARGO_BIN_EXE_ries-rs"))
+        .args(["--json", "--no-solve-for-x", "1.5"])
+        .output()
+        .expect("failed to run ries-rs");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("output should be valid JSON");
+    for result in json["results"].as_array().unwrap() {
+        assert!(
+            result["solve_for_x"].is_null(),
+            "solve_for_x should be null but was: {}",
+            result["solve_for_x"]
+        );
+        assert!(
+            result["solve_for_x_postfix"].is_null(),
+            "solve_for_x_postfix should be null but was: {}",
+            result["solve_for_x_postfix"]
+        );
+    }
+}
+
 // ============================================================================
 // Streaming flag precedence tests - regression tests for P2
 // ============================================================================

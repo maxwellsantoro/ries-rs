@@ -122,6 +122,7 @@ pub fn build_json_output(
     matches: &[crate::search::Match],
     stats: &SearchStats,
     elapsed: std::time::Duration,
+    include_solve_for_x: bool,
 ) -> JsonRunOutput {
     let output_format_name = match output_format {
         DisplayFormat::Infix(OutputFormat::Default) => "default",
@@ -154,11 +155,19 @@ pub fn build_json_output(
             );
 
             // Analytical solver
-            let solved = solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
-            let solve_for_x = solved
-                .as_ref()
-                .map(|e: &crate::expr::Expression| format!("x = {}", e.to_infix()));
-            let solve_for_x_postfix = solved.as_ref().map(|e: &crate::expr::Expression| e.to_postfix());
+            let (solve_for_x, solve_for_x_postfix) = if include_solve_for_x {
+                let solved = solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
+                (
+                    solved
+                        .as_ref()
+                        .map(|e: &crate::expr::Expression| format!("x = {}", e.to_infix())),
+                    solved
+                        .as_ref()
+                        .map(|e: &crate::expr::Expression| e.to_postfix()),
+                )
+            } else {
+                (None, None)
+            };
 
             // Canonical key
             let canonical_key = canonical_expression_key(&m.lhs.expr)
