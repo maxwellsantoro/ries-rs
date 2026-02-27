@@ -6,7 +6,6 @@
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 // Some helper functions are kept for future use but may be unused in certain configurations
 #[allow(dead_code)]
-
 #[cfg(feature = "highprec")]
 use ries_rs::precision;
 use ries_rs::{
@@ -19,12 +18,12 @@ mod cli;
 use clap::Parser;
 use cli::{
     build_gen_config, build_json_output, build_manifest, canon_reduction_enabled,
-    compute_significant_digits_tolerance, format_bytes_binary, format_value,
-    normalize_legacy_args, parse_diagnostics, parse_display_format, parse_memory_size_bytes,
-    parse_symbol_names_from_cli, parse_symbol_sets, parse_symbol_weights_from_cli,
-    parse_user_constant_from_cli, parse_user_function_from_cli, peak_memory_bytes, print_footer,
-    print_header, print_match_absolute, print_match_relative, print_show_work_details,
-    print_symbol_table, run_search, Args, DisplayFormat, NormalizedArgs,
+    compute_significant_digits_tolerance, format_bytes_binary, format_value, normalize_legacy_args,
+    parse_diagnostics, parse_display_format, parse_memory_size_bytes, parse_symbol_names_from_cli,
+    parse_symbol_sets, parse_symbol_weights_from_cli, parse_user_constant_from_cli,
+    parse_user_function_from_cli, peak_memory_bytes, print_footer, print_header,
+    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table,
+    run_search, Args, DisplayFormat, NormalizedArgs,
 };
 use profile::Profile;
 use report::{Report, ReportConfig};
@@ -72,8 +71,8 @@ fn match_is_numeric_anagram(m: &search::Match) -> bool {
 fn evaluate_and_print(
     expr_str: &str,
     x: f64,
-    constants: &Vec<profile::UserConstant>,
-    functions: &Vec<profile::UserFunction>,
+    constants: &[profile::UserConstant],
+    functions: &[profile::UserFunction],
 ) -> Result<(), String> {
     let expr = match expr::Expression::parse(expr_str) {
         Some(e) => e,
