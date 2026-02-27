@@ -54,3 +54,4 @@ Cargo.toml.orig
 
 # Git worktrees
 .worktrees/
+repomix-output.xml
