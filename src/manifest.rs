@@ -256,4 +256,33 @@ mod tests {
         assert!(!is_leap_year(1900));
         assert!(is_leap_year(2000));
     }
+
+    #[test]
+    fn test_timestamp_leap_year_feb29() {
+        // 2000-02-29 00:00:00 UTC = unix timestamp 951782400
+        let ts = chrono_like_timestamp(951782400);
+        assert!(ts.starts_with("2000-02-29"), "got: {}", ts);
+    }
+
+    #[test]
+    fn test_timestamp_year_boundary() {
+        // 1999-12-31 23:59:59 UTC = 946684799
+        let ts = chrono_like_timestamp(946684799);
+        assert!(ts.starts_with("1999-12-31"), "got: {}", ts);
+        // 2000-01-01 00:00:00 UTC = 946684800
+        let ts2 = chrono_like_timestamp(946684800);
+        assert!(ts2.starts_with("2000-01-01"), "got: {}", ts2);
+    }
+
+    #[test]
+    fn test_leap_year_century_rules() {
+        // 1900: divisible by 100 but not 400 — NOT a leap year
+        assert!(!is_leap_year(1900));
+        // 2100: same
+        assert!(!is_leap_year(2100));
+        // 2000: divisible by 400 — IS a leap year
+        assert!(is_leap_year(2000));
+        // 2400: same
+        assert!(is_leap_year(2400));
+    }
 }
