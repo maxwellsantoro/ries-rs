@@ -1298,7 +1298,9 @@ pub fn search_adaptive(
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use ries_rs::gen::GenConfig;
+/// use ries_rs::search::search_streaming;
 /// let config = GenConfig::default();
 /// let (matches, stats) = search_streaming(2.5, &config, 100, false, None);
 /// ```

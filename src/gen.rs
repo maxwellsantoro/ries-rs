@@ -674,22 +674,23 @@ pub fn generate_all_with_limit(
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use ries_rs::gen::{GenConfig, StreamingCallbacks, generate_streaming};
+/// let config = GenConfig::default();
+/// let target = 2.5_f64;
 /// let mut rhs_count = 0;
 /// let mut lhs_count = 0;
-/// let callbacks = StreamingCallbacks {
-///     on_rhs: &mut |expr| {
+/// let mut callbacks = StreamingCallbacks {
+///     on_rhs: &mut |_expr| {
 ///         rhs_count += 1;
-///         process_rhs(expr);
 ///         true // continue generation
 ///     },
-///     on_lhs: &mut |expr| {
+///     on_lhs: &mut |_expr| {
 ///         lhs_count += 1;
-///         process_lhs(expr);
 ///         true // continue generation
 ///     },
 /// };
-/// generate_streaming(&config, target, callbacks);
+/// generate_streaming(&config, target, &mut callbacks);
 /// ```
 pub fn generate_streaming(config: &GenConfig, target: f64, callbacks: &mut StreamingCallbacks) {
     if config.generate_lhs && config.generate_rhs && has_rhs_symbol_overrides(config) {

@@ -167,12 +167,17 @@ impl StackEntry {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use ries_rs::eval::{EvalWorkspace, evaluate_with_workspace};
+/// use ries_rs::expr::Expression;
 /// let mut workspace = EvalWorkspace::new();
-/// for expr in expressions {
+/// let expressions: Vec<Expression> = vec![];
+/// let x = 1.0_f64;
+/// for expr in &expressions {
 ///     let result = evaluate_with_workspace(expr, x, &mut workspace)?;
 ///     // workspace is reused, no new allocations
 /// }
+/// # Ok::<(), ries_rs::eval::EvalError>(())
 /// ```
 pub struct EvalWorkspace {
     stack: Vec<StackEntry>,
@@ -412,13 +417,17 @@ pub fn evaluate_fast_with_constants(
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use ries_rs::eval::evaluate_fast_with_constants_and_functions;
+/// use ries_rs::expr::Expression;
+/// let expr = Expression::new();
+/// let x = 1.0_f64;
 /// // First call allocates workspace (warmup)
-/// let result = evaluate_fast(expr, x);
+/// let result = evaluate_fast_with_constants_and_functions(&expr, x, &[], &[]);
 ///
 /// // Subsequent calls reuse the same workspace (no allocations)
 /// for _ in 0..1000 {
-///     let result = evaluate_fast(expr, x);
+///     let _ = evaluate_fast_with_constants_and_functions(&expr, x, &[], &[]);
 /// }
 /// ```
 #[inline]
