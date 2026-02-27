@@ -130,15 +130,23 @@ fn build_solve_ast(expression: &Expression) -> Option<SolveNode> {
     }
 }
 
+/// Build an expression for the inverse of `op(x) = rhs_value`, solving for `x`.
+///
+/// For multivalued inverses (trig functions, square root), returns only the
+/// **principal branch**. The search engine finds other branches independently
+/// via Newton-Raphson starting from different initial conditions.
+///
+/// Returns `None` if the operator has no supported closed-form inverse.
 fn unary_inverse_expression(op: Symbol, rhs_value: &Expression) -> Option<Expression> {
     Some(match op {
         Symbol::Neg => append_unary_expression(rhs_value, Symbol::Neg),
         Symbol::Recip => append_unary_expression(rhs_value, Symbol::Recip),
-        Symbol::Square => append_unary_expression(rhs_value, Symbol::Sqrt),
-        Symbol::Sqrt => append_unary_expression(rhs_value, Symbol::Square),
+        Symbol::Square => append_unary_expression(rhs_value, Symbol::Sqrt), // x² = y ⟹ x = √y  (principal/positive root only; -√y not returned)
+        Symbol::Sqrt => append_unary_expression(rhs_value, Symbol::Square), // √x = y ⟹ x = y²  (valid for y ≥ 0, matching √ domain)
         Symbol::Ln => append_unary_expression(rhs_value, Symbol::Exp),
         Symbol::Exp => append_unary_expression(rhs_value, Symbol::Ln),
         Symbol::TanPi => {
+            // tan(πx) = y ⟹ x = atan(y)/π  (principal branch: x ∈ (-½, ½))
             // x = atan(rhs) / pi = atan2(rhs, 1) / pi
             let one = constant_expression(Symbol::One);
             let atan = combine_binary_expressions(rhs_value, &one, Symbol::Atan2);
@@ -146,6 +154,7 @@ fn unary_inverse_expression(op: Symbol, rhs_value: &Expression) -> Option<Expres
             combine_binary_expressions(&atan, &pi, Symbol::Div)
         }
         Symbol::SinPi => {
+            // sin(πx) = y ⟹ x = asin(y)/π  (principal branch: x ∈ [-½, ½])
             // x = asin(rhs)/pi = atan2(rhs, sqrt(1-rhs^2))/pi
             let one = constant_expression(Symbol::One);
             let rhs_sq = append_unary_expression(rhs_value, Symbol::Square);
@@ -156,6 +165,7 @@ fn unary_inverse_expression(op: Symbol, rhs_value: &Expression) -> Option<Expres
             combine_binary_expressions(&atan, &pi, Symbol::Div)
         }
         Symbol::CosPi => {
+            // cos(πx) = y ⟹ x = acos(y)/π  (principal branch: x ∈ [0, 1])
             // x = acos(rhs)/pi = atan2(sqrt(1-rhs^2), rhs)/pi
             let one = constant_expression(Symbol::One);
             let rhs_sq = append_unary_expression(rhs_value, Symbol::Square);
@@ -166,6 +176,7 @@ fn unary_inverse_expression(op: Symbol, rhs_value: &Expression) -> Option<Expres
             combine_binary_expressions(&atan, &pi, Symbol::Div)
         }
         Symbol::LambertW => {
+            // W(y) = x ⟹ y = x·eˣ  (principal branch W₀, x ≥ -1)
             // x = W(y)  =>  y = x * exp(x)
             let exp_rhs = append_unary_expression(rhs_value, Symbol::Exp);
             combine_binary_expressions(rhs_value, &exp_rhs, Symbol::Mul)
