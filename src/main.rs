@@ -4,8 +4,8 @@
 
 // Allow field reassignment with default in test code - common pattern for config building
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
-// Allow unused code in main - some helper functions are kept for future use
-#![allow(dead_code)]
+// Some helper functions are kept for future use but may be unused in certain configurations
+#[allow(dead_code)]
 
 #[cfg(feature = "highprec")]
 use ries_rs::precision;
@@ -65,6 +65,33 @@ fn match_is_numeric_anagram(m: &search::Match) -> bool {
     let lhs = digit_signature(&m.lhs.expr);
     let rhs = digit_signature(&m.rhs.expr);
     !lhs.is_empty() && lhs == rhs
+}
+
+/// Evaluates an expression and prints the result.
+/// Returns Ok(()) on success, Err with message on failure.
+fn evaluate_and_print(
+    expr_str: &str,
+    x: f64,
+    constants: &Vec<profile::UserConstant>,
+    functions: &Vec<profile::UserFunction>,
+) -> Result<(), String> {
+    let expr = match expr::Expression::parse(expr_str) {
+        Some(e) => e,
+        None => {
+            return Err(format!("Invalid expression '{}'", expr_str));
+        }
+    };
+
+    match eval::evaluate_with_constants_and_functions(&expr, x, constants, functions) {
+        Ok(result) => {
+            println!("Expression: {}", expr_str);
+            println!("At x = {}", x);
+            println!("Value = {:.15}", result.value);
+            println!("Derivative = {:.15}", result.derivative);
+            Ok(())
+        }
+        Err(e) => Err(format!("Error evaluating expression: {:?}", e)),
+    }
 }
 
 fn main() {
@@ -291,26 +318,12 @@ fn main() {
         }
     }
 
-    // Handle --eval-expression mode (evaluate and exit)
+    // Handle --find-expression mode (evaluate and exit)
     if let Some(expr_str) = &args.find_expression {
         let x = args.at.or(resolved_target).unwrap_or(1.0);
-        let expr = expr::Expression::parse(expr_str).expect("invalid expression");
-        match eval::evaluate_with_constants_and_functions(
-            &expr,
-            x,
-            &profile.constants,
-            &profile.functions,
-        ) {
-            Ok(result) => {
-                println!("Expression: {}", expr_str);
-                println!("At x = {}", x);
-                println!("Value = {:.15}", result.value);
-                println!("Derivative = {:.15}", result.derivative);
-            }
-            Err(e) => {
-                eprintln!("Error evaluating expression: {:?}", e);
-                std::process::exit(1);
-            }
+        if let Err(e) = evaluate_and_print(expr_str, x, &profile.constants, &profile.functions) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
         return;
     }
@@ -318,23 +331,9 @@ fn main() {
     // Handle --eval-expression mode (evaluate and exit)
     if let Some(expr_str) = &args.eval_expression {
         let x = args.at.unwrap_or(1.0);
-        let expr = expr::Expression::parse(expr_str).expect("invalid expression");
-        match eval::evaluate_with_constants_and_functions(
-            &expr,
-            x,
-            &profile.constants,
-            &profile.functions,
-        ) {
-            Ok(result) => {
-                println!("Expression: {}", expr_str);
-                println!("At x = {}", x);
-                println!("Value = {:.15}", result.value);
-                println!("Derivative = {:.15}", result.derivative);
-            }
-            Err(e) => {
-                eprintln!("Error evaluating expression: {:?}", e);
-                std::process::exit(1);
-            }
+        if let Err(e) = evaluate_and_print(expr_str, x, &profile.constants, &profile.functions) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
         return;
     }
