@@ -806,12 +806,12 @@ mod tests {
     #[test]
     fn test_from_str_with_prec_valid_input() {
         // Valid input should work
-        let result = HighPrec::try_from_str_with_prec("3.14159", 256);
+        let result = HighPrec::try_from_str_with_prec("1.23456", 256);
         assert!(result.is_ok(), "Should succeed for valid float literal");
 
         let hp = result.unwrap();
         let value = hp.to_f64();
-        assert!((value - 3.14159).abs() < 1e-10);
+        assert!((value - 1.23456).abs() < 1e-10);
     }
 
     #[cfg(feature = "highprec")]

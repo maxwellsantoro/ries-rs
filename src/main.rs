@@ -4,8 +4,6 @@
 
 // Allow field reassignment with default in test code - common pattern for config building
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
-#[cfg(feature = "highprec")]
-use ries_rs::precision;
 use ries_rs::{
     eval, expr, fast_match, gen, highprec_verify, manifest, metrics, pool, presets, profile, pslq,
     report, search, stability, symbol, symbol_table, thresholds, udf,
@@ -339,8 +337,9 @@ fn main() {
     if !args.json {
         println!();
         println!(
-            "   Your target value: T = {:<20}  ries-rs v0.1.0",
-            format_value(target)
+            "   Your target value: T = {:<20}  ries-rs v{}",
+            format_value(target),
+            env!("CARGO_PKG_VERSION")
         );
         println!();
     }

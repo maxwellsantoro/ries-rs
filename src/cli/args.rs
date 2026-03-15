@@ -14,7 +14,7 @@ use crate::udf;
 #[derive(Parser, Debug)]
 #[command(name = "ries-rs")]
 #[command(author = "RIES Contributors")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "Find algebraic equations given their solution", long_about = None)]
 pub struct Args {
     /// Target value to find equations for (optional if using --eval-expression)

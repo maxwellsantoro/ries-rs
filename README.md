@@ -562,7 +562,7 @@ const presets = listPresets();
 console.log(presets); // {analytic-nt: "...", physics: "...", ...}
 
 // Get version
-console.log(version()); // "0.1.0"
+console.log(version()); // "1.0.0"
 ```
 
 #### WasmMatch Properties
@@ -659,7 +659,7 @@ If you use ries-rs in academic work, please cite it using the following BibTeX:
   author       = {RIES Contributors},
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
-  version      = {0.1.0},
+  version      = {1.0.0},
   url          = {https://github.com/maxwellsantoro/ries-rs},
   license      = {MIT},
   note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}
@@ -668,13 +668,9 @@ If you use ries-rs in academic work, please cite it using the following BibTeX:
 
 ### Zenodo DOI
 
-[![DOI](https://img.shields.io/badge/DOI-10.5281/zenodo.XXXXXXX-blue)](https://doi.org/10.5281/zenodo.XXXXXXX)
+Each release is archived on [Zenodo](https://zenodo.org) after the GitHub release is published, and the minted DOI should then be copied into `CITATION.cff`, this README, and the release notes.
 
-Each release is automatically archived on [Zenodo](https://zenodo.org) with a persistent DOI for citation. To cite a specific version:
-
-1. Go to the [Zenodo record](https://zenodo.org/doi/10.5281/zenodo.XXXXXXX)
-2. Select the version you used
-3. Export the citation in your preferred format
+Until the 1.0.0 release is published and archived, cite the repository URL and version above.
 
 ### Reproducibility
 

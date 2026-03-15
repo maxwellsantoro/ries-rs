@@ -13,6 +13,7 @@ Before tagging a release:
    - `cargo fmt --all -- --check`
    - `cargo clippy --all-targets --locked -- -D warnings`
    - `cargo clippy --all-targets --no-default-features --locked -- -D warnings`
+   - `cargo clippy --all-targets --features highprec --locked -- -D warnings`
 3. Run test checks you expect CI to enforce:
    - `cargo test --tests --locked`
    - `cargo check --manifest-path ries-py/Cargo.toml --locked`
@@ -113,3 +114,4 @@ When creating a release, include:
 After each release, Zenodo will assign a DOI. Record it here (or in project release notes/docs):
 
 - `v0.1.0`: DOI pending assignment
+- `v1.0.0`: DOI pending assignment

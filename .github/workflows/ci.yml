@@ -37,11 +37,17 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
 
+      - name: Install dependencies for rug (GMP/MPFR)
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev libmpfr-dev
+
       - name: Run clippy (default features)
         run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Run clippy (no default features)
         run: cargo clippy --all-targets --no-default-features --locked -- -D warnings
+
+      - name: Run clippy (highprec feature)
+        run: cargo clippy --all-targets --features highprec --locked -- -D warnings
 
   check-features:
     name: Feature coverage check
