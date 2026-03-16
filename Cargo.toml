@@ -47,7 +47,7 @@ exclude = [
 [lib]
 name = "ries_rs"
 path = "src/lib.rs"
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "ries-rs"

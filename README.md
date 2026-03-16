@@ -89,7 +89,7 @@ Raw JSON and Criterion artifacts are stored under `docs/benchmarks/artifacts/`.
 - `tests/`: Regression, integration, property, and CLI compatibility tests
 - `docs/`: Architecture/performance/parity status docs and archived historical materials (see `docs/README.md`)
 - `ries-py/`: Separate Python bindings crate (PyO3 + maturin)
-- `web/`: Browser UI (served from repo root after building WASM)
+- `web/`: Browser UI source; `npm run build:web:site` produces a deployable static bundle under `dist/web-site/`
 - `tools/`: Helper utilities (for example manifest replay tooling)
 
 ## Formal Model and Engineering Docs
@@ -519,10 +519,16 @@ cargo install wasm-pack
 # Build for web browsers
 npm run build
 
+# Or build a static site bundle for hosting at a subpath
+npm run build:web:site
+
 # Or build for different targets:
 npm run build:bundler  # For bundlers (webpack, vite, etc.)
 npm run build:node     # For Node.js
 ```
+
+For static hosting, deploy the contents of `dist/web-site/` to a path such as
+`https://example.com/projects/ries-rs/`.
 
 #### JavaScript/TypeScript Usage
 

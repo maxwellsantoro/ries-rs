@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-test("web UI loads, shows web-only limitations, and runs a search", async ({ page }) => {
+async function runSmokeTest(page: Page, entryPath: string, screenshotName: string) {
   const consoleErrors: string[] = [];
 
   page.on("console", (msg) => {
@@ -15,7 +15,7 @@ test("web UI loads, shows web-only limitations, and runs a search", async ({ pag
     consoleErrors.push(err.message);
   });
 
-  await page.goto("/web/index.html", { waitUntil: "domcontentloaded" });
+  await page.goto(entryPath, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#search-button:not([disabled])");
 
   await expect(page.locator("#worker-status")).toContainText("WASM ready");
@@ -116,9 +116,24 @@ test("web UI loads, shows web-only limitations, and runs a search", async ({ pag
   const screenshotDir = path.join(process.cwd(), "output", "playwright");
   fs.mkdirSync(screenshotDir, { recursive: true });
   await page.screenshot({
-    path: path.join(screenshotDir, "web-smoke-test.png"),
+    path: path.join(screenshotDir, screenshotName),
     fullPage: true,
   });
 
   expect(consoleErrors).toEqual([]);
+}
+
+test("web UI loads from the repo layout, shows web-only limitations, and runs a search", async ({
+  page,
+}) => {
+  await runSmokeTest(page, "/web/index.html", "web-smoke-test.png");
+});
+
+test("web UI loads from the static site bundle and runs a search", async ({ page }) => {
+  test.skip(
+    !fs.existsSync(path.join(process.cwd(), "dist", "web-site", "index.html")),
+    "dist/web-site bundle not built",
+  );
+
+  await runSmokeTest(page, "/dist/web-site/index.html", "web-site-smoke-test.png");
 });

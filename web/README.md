@@ -24,13 +24,38 @@ npm run build
 
 This produces `pkg/ries_rs.js` and `pkg/ries_rs_bg.wasm`.
 
-## Serve
+## Serve From The Repo
 
 ```bash
 npx serve . -p 5000
 ```
 
 Then open: **http://localhost:5000/web/**
+
+This is the developer layout used inside the repository:
+
+- `web/index.html`
+- `pkg/ries_rs.js`
+- `pkg/ries_rs_bg.wasm`
+
+## Build A Deployable Static Site Bundle
+
+If you want to host the app at a clean subpath such as
+`https://example.com/projects/ries-rs/`, build the static bundle instead:
+
+```bash
+npm run build:web:site
+```
+
+This creates:
+
+- `dist/web-site/index.html`
+- `dist/web-site/pkg/ries_rs.js`
+- `dist/web-site/pkg/ries_rs_bg.wasm`
+
+Deploy the contents of `dist/web-site/` to the target directory on your site.
+The bundle is subpath-safe, so it can live at `/projects/ries-rs/` instead of
+only `/web/`.
 
 ## Threaded Build (Optional)
 
