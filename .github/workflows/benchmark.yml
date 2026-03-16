@@ -7,9 +7,6 @@ on:
         description: "Baseline name to compare against (leave empty to just save as 'main')"
         required: false
         default: ""
-  schedule:
-    # Run weekly on Monday at 00:00 UTC to track long-term trends
-    - cron: "0 0 * * 1"
 
 jobs:
   bench:
