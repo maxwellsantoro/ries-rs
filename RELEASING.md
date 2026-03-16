@@ -132,3 +132,4 @@ After each release, Zenodo will assign a DOI. Record it here (or in project rele
 
 - `v0.1.0`: DOI pending assignment
 - `v1.0.0`: DOI pending assignment
+- `v1.0.1`: DOI pending assignment

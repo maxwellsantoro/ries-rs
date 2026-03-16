@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-03-16
+
+### Changed
+- Automated the tag-driven release workflow to publish to crates.io and PyPI
+  before creating the GitHub release
+- Added Python source distribution (`sdist`) packaging to the release pipeline
+- Made release publish steps rerun-safe when a tagged version is already present
+  on crates.io or PyPI
+
+### Fixed
+- Resolved `maturin sdist` packaging for `ries-py` by using a package-local
+  PyPI readme and explicit Python package metadata
+
 ## [1.0.0] - 2026-03-14
 
 ### Added

@@ -190,7 +190,7 @@ If you use `ries-rs` in academic work, cite the project version you used.
   author       = {RIES Contributors},
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
-  version      = {1.0.0},
+  version      = {1.0.1},
   url          = {https://github.com/maxwellsantoro/ries-rs},
   license      = {MIT},
   note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}

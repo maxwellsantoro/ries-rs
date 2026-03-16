@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ries-rs"
-version = "1.0.0"
+version = "1.0.1"
 description = "Find algebraic equations given their solution"
 readme = "PYPI.md"
 license = {text = "MIT"}

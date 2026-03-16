@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use ries-rs in your research, please cite it as below."
 title: "ries-rs"
-version: 1.0.0
-date-released: 2026-03-14
+version: 1.0.1
+date-released: 2026-03-16
 url: "https://github.com/maxwellsantoro/ries-rs"
 authors:
   - given-names: RIES
