@@ -11,7 +11,6 @@ use crate::expr::Expression;
 use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::{UdfOp, UserFunction};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Result of evaluating an expression
 #[derive(Debug, Clone, Copy)]
@@ -117,24 +116,62 @@ pub mod constants {
     pub const CATALAN: f64 = 0.915_965_594_177_219;
 }
 
-fn trig_argument_scale_bits() -> &'static AtomicU64 {
-    static SCALE_BITS: AtomicU64 = AtomicU64::new(std::f64::consts::PI.to_bits());
-    &SCALE_BITS
+/// Default trig argument scale used by `sinpi/cospi/tanpi`.
+///
+/// This matches original `sinpi(x) = sin(πx)` semantics.
+pub const DEFAULT_TRIG_ARGUMENT_SCALE: f64 = std::f64::consts::PI;
+
+/// Explicit evaluation context for a single run.
+///
+/// This keeps trig scaling and user-defined symbols inside the function
+/// signature instead of relying on process-global evaluator state.
+#[derive(Clone, Copy, Debug)]
+pub struct EvalContext<'a> {
+    /// Argument scale for `sinpi/cospi/tanpi`.
+    pub trig_argument_scale: f64,
+    /// User-defined constants available during evaluation.
+    pub user_constants: &'a [UserConstant],
+    /// User-defined functions available during evaluation.
+    pub user_functions: &'a [UserFunction],
 }
 
-/// Set global trig argument scale used by `sinpi/cospi/tanpi` symbols.
-///
-/// The default is π, matching original `sinpi(x) = sin(πx)` semantics.
-/// Values must be finite and non-zero to be accepted.
-pub fn set_trig_argument_scale(scale: f64) {
-    if scale.is_finite() && scale != 0.0 {
-        trig_argument_scale_bits().store(scale.to_bits(), Ordering::Relaxed);
+impl Default for EvalContext<'static> {
+    fn default() -> Self {
+        Self {
+            trig_argument_scale: DEFAULT_TRIG_ARGUMENT_SCALE,
+            user_constants: &[],
+            user_functions: &[],
+        }
     }
 }
 
-#[inline]
-fn trig_argument_scale() -> f64 {
-    f64::from_bits(trig_argument_scale_bits().load(Ordering::Relaxed))
+impl EvalContext<'static> {
+    /// Create a default context with built-in trig semantics and no user symbols.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<'a> EvalContext<'a> {
+    /// Create a context from user-defined constants and functions.
+    pub fn from_slices(
+        user_constants: &'a [UserConstant],
+        user_functions: &'a [UserFunction],
+    ) -> Self {
+        Self {
+            trig_argument_scale: DEFAULT_TRIG_ARGUMENT_SCALE,
+            user_constants,
+            user_functions,
+        }
+    }
+
+    /// Override the trig argument scale for this evaluation context.
+    pub fn with_trig_argument_scale(mut self, scale: f64) -> Self {
+        if scale.is_finite() && scale != 0.0 {
+            self.trig_argument_scale = scale;
+        }
+        self
+    }
 }
 
 /// Stack entry for evaluation with derivative tracking
@@ -222,7 +259,7 @@ pub fn evaluate_with_workspace(
     x: f64,
     workspace: &mut EvalWorkspace,
 ) -> Result<EvalResult, EvalError> {
-    evaluate_with_workspace_and_constants_and_functions(expr, x, workspace, &[], &[])
+    evaluate_with_workspace_and_context(expr, x, workspace, &EvalContext::new())
 }
 
 /// Evaluate an expression with user constants, using a reusable workspace.
@@ -239,7 +276,8 @@ pub fn evaluate_with_workspace_and_constants(
     workspace: &mut EvalWorkspace,
     user_constants: &[UserConstant],
 ) -> Result<EvalResult, EvalError> {
-    evaluate_with_workspace_and_constants_and_functions(expr, x, workspace, user_constants, &[])
+    let context = EvalContext::from_slices(user_constants, &[]);
+    evaluate_with_workspace_and_context(expr, x, workspace, &context)
 }
 
 /// Evaluate an expression with user constants and user functions, using a reusable workspace.
@@ -255,13 +293,28 @@ pub fn evaluate_with_workspace_and_constants_and_functions(
     user_constants: &[UserConstant],
     user_functions: &[UserFunction],
 ) -> Result<EvalResult, EvalError> {
+    let context = EvalContext::from_slices(user_constants, user_functions);
+    evaluate_with_workspace_and_context(expr, x, workspace, &context)
+}
+
+/// Evaluate an expression using an explicit evaluation context and reusable workspace.
+///
+/// This is the preferred hot-path API for library consumers that need explicit
+/// control over trig semantics or user-defined symbols.
+#[inline]
+pub fn evaluate_with_workspace_and_context(
+    expr: &Expression,
+    x: f64,
+    workspace: &mut EvalWorkspace,
+    context: &EvalContext<'_>,
+) -> Result<EvalResult, EvalError> {
     workspace.clear();
     let stack = &mut workspace.stack;
 
     for &sym in expr.symbols() {
         match sym.seft() {
             Seft::A => {
-                let entry = eval_constant_with_user(sym, x, user_constants)?;
+                let entry = eval_constant_with_user(sym, x, context.user_constants)?;
                 stack.push(entry);
             }
             Seft::B => {
@@ -287,11 +340,11 @@ pub fn evaluate_with_workspace_and_constants_and_functions(
                 ) {
                     // Evaluate user function
                     let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                    let result = eval_user_function(sym, a, user_constants, user_functions, x)?;
+                    let result = eval_user_function(sym, a, context, x)?;
                     stack.push(result);
                 } else {
                     let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                    let result = eval_unary(sym, a)?;
+                    let result = eval_unary(sym, a, context.trig_argument_scale)?;
                     stack.push(result);
                 }
             }
@@ -330,7 +383,7 @@ pub fn evaluate_with_workspace_and_constants_and_functions(
 /// Note: This is a convenience API for library users. Internal code uses
 /// `evaluate_fast_with_constants_and_functions` for performance.
 pub fn evaluate(expr: &Expression, x: f64) -> Result<EvalResult, EvalError> {
-    evaluate_with_constants(expr, x, &[])
+    evaluate_with_context(expr, x, &EvalContext::new())
 }
 
 /// Evaluate an expression at a given value of x with user constants.
@@ -341,14 +394,8 @@ pub fn evaluate_with_constants(
     x: f64,
     user_constants: &[UserConstant],
 ) -> Result<EvalResult, EvalError> {
-    let mut workspace = EvalWorkspace::new();
-    evaluate_with_workspace_and_constants_and_functions(
-        expr,
-        x,
-        &mut workspace,
-        user_constants,
-        &[],
-    )
+    let context = EvalContext::from_slices(user_constants, &[]);
+    evaluate_with_context(expr, x, &context)
 }
 
 /// Evaluate an expression at a given value of x with user constants and user functions.
@@ -360,14 +407,20 @@ pub fn evaluate_with_constants_and_functions(
     user_constants: &[UserConstant],
     user_functions: &[UserFunction],
 ) -> Result<EvalResult, EvalError> {
+    let context = EvalContext::from_slices(user_constants, user_functions);
+    evaluate_with_context(expr, x, &context)
+}
+
+/// Evaluate an expression at a given value of x with an explicit evaluation context.
+///
+/// Convenience wrapper that allocates a new workspace.
+pub fn evaluate_with_context(
+    expr: &Expression,
+    x: f64,
+    context: &EvalContext<'_>,
+) -> Result<EvalResult, EvalError> {
     let mut workspace = EvalWorkspace::new();
-    evaluate_with_workspace_and_constants_and_functions(
-        expr,
-        x,
-        &mut workspace,
-        user_constants,
-        user_functions,
-    )
+    evaluate_with_workspace_and_context(expr, x, &mut workspace, context)
 }
 
 /// Evaluate an expression using a thread-local workspace (zero allocations after warmup).
@@ -380,7 +433,7 @@ pub fn evaluate_with_constants_and_functions(
 /// when you don't need user constants or functions. It's provided as a simpler API for common cases.
 #[inline]
 pub fn evaluate_fast(expr: &Expression, x: f64) -> Result<EvalResult, EvalError> {
-    evaluate_fast_with_constants(expr, x, &[])
+    evaluate_fast_with_context(expr, x, &EvalContext::new())
 }
 
 /// Evaluate an expression using a thread-local workspace with user constants.
@@ -396,7 +449,8 @@ pub fn evaluate_fast_with_constants(
     x: f64,
     user_constants: &[UserConstant],
 ) -> Result<EvalResult, EvalError> {
-    evaluate_fast_with_constants_and_functions(expr, x, user_constants, &[])
+    let context = EvalContext::from_slices(user_constants, &[]);
+    evaluate_fast_with_context(expr, x, &context)
 }
 
 /// Evaluate an expression using a thread-local workspace with user constants and user functions.
@@ -440,6 +494,17 @@ pub fn evaluate_fast_with_constants_and_functions(
     user_constants: &[UserConstant],
     user_functions: &[UserFunction],
 ) -> Result<EvalResult, EvalError> {
+    let context = EvalContext::from_slices(user_constants, user_functions);
+    evaluate_fast_with_context(expr, x, &context)
+}
+
+/// Evaluate an expression using a thread-local workspace and explicit context.
+#[inline]
+pub fn evaluate_fast_with_context(
+    expr: &Expression,
+    x: f64,
+    context: &EvalContext<'_>,
+) -> Result<EvalResult, EvalError> {
     thread_local! {
         /// Thread-local evaluation workspace.
         ///
@@ -451,13 +516,7 @@ pub fn evaluate_fast_with_constants_and_functions(
 
     WORKSPACE.with(|ws| {
         let mut workspace = ws.borrow_mut();
-        evaluate_with_workspace_and_constants_and_functions(
-            expr,
-            x,
-            &mut workspace,
-            user_constants,
-            user_functions,
-        )
+        evaluate_with_workspace_and_context(expr, x, &mut workspace, context)
     })
 }
 
@@ -519,15 +578,14 @@ fn eval_constant_with_user(
 fn eval_user_function(
     sym: Symbol,
     input: StackEntry,
-    user_constants: &[UserConstant],
-    user_functions: &[UserFunction],
+    context: &EvalContext<'_>,
     x: f64,
 ) -> Result<StackEntry, EvalError> {
     // Get the function index
     let idx = sym.user_function_index().ok_or(EvalError::Invalid)? as usize;
 
     // Look up the function definition
-    let udf = user_functions.get(idx).ok_or(EvalError::Invalid)?;
+    let udf = context.user_functions.get(idx).ok_or(EvalError::Invalid)?;
 
     // Reuse a thread-local scratch buffer rather than allocating a fresh Vec on every
     // call. eval_user_function is invoked in the inner generation loop (potentially
@@ -550,13 +608,13 @@ fn eval_user_function(
                     match sym.seft() {
                         Seft::A => {
                             // Constant - push onto stack
-                            let entry = eval_constant_with_user(*sym, x, user_constants)?;
+                            let entry = eval_constant_with_user(*sym, x, context.user_constants)?;
                             stack.push(entry);
                         }
                         Seft::B => {
                             // Unary operator - pop one, push result
                             let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                            let result = eval_unary(*sym, a)?;
+                            let result = eval_unary(*sym, a, context.trig_argument_scale)?;
                             stack.push(result);
                         }
                         Seft::C => {
@@ -602,7 +660,11 @@ fn eval_user_function(
 }
 
 /// Evaluate a unary operator with derivative
-fn eval_unary(sym: Symbol, a: StackEntry) -> Result<StackEntry, EvalError> {
+fn eval_unary(
+    sym: Symbol,
+    a: StackEntry,
+    trig_argument_scale: f64,
+) -> Result<StackEntry, EvalError> {
     use Symbol::*;
 
     let (val, deriv, num_type) = match sym {
@@ -672,29 +734,26 @@ fn eval_unary(sym: Symbol, a: StackEntry) -> Result<StackEntry, EvalError> {
 
         // sin(π*a), d(sin(πa))/dx = π*cos(πa)*da/dx
         SinPi => {
-            let scale = trig_argument_scale();
-            let val = (scale * a.val).sin();
-            let deriv = scale * (scale * a.val).cos() * a.deriv;
+            let val = (trig_argument_scale * a.val).sin();
+            let deriv = trig_argument_scale * (trig_argument_scale * a.val).cos() * a.deriv;
             (val, deriv, NumType::Transcendental)
         }
 
         // cos(π*a), d(cos(πa))/dx = -π*sin(πa)*da/dx
         CosPi => {
-            let scale = trig_argument_scale();
-            let val = (scale * a.val).cos();
-            let deriv = -scale * (scale * a.val).sin() * a.deriv;
+            let val = (trig_argument_scale * a.val).cos();
+            let deriv = -trig_argument_scale * (trig_argument_scale * a.val).sin() * a.deriv;
             (val, deriv, NumType::Transcendental)
         }
 
         // tan(π*a), d(tan(πa))/dx = π*sec²(πa)*da/dx
         TanPi => {
-            let scale = trig_argument_scale();
-            let cos_val = (scale * a.val).cos();
+            let cos_val = (trig_argument_scale * a.val).cos();
             if cos_val.abs() < 1e-10 {
                 return Err(EvalError::Overflow);
             }
-            let val = (scale * a.val).tan();
-            let deriv = scale * a.deriv / (cos_val * cos_val);
+            let val = (trig_argument_scale * a.val).tan();
+            let deriv = trig_argument_scale * a.deriv / (cos_val * cos_val);
             (val, deriv, NumType::Transcendental)
         }
 

@@ -3,12 +3,11 @@
 //! This module provides functions for creating run manifests that capture
 //! the full configuration and results of a search run for reproducibility.
 
-use crate::manifest::{MatchInfo, RunManifest, SearchConfigInfo};
-use crate::metrics;
-use crate::pool::RankingMode;
-use crate::profile::UserConstant;
-use crate::search::Match;
-use crate::thresholds;
+use ries_rs::pool::RankingMode;
+use ries_rs::{
+    Match, MatchInfo, MatchMetrics, RunManifest, SearchConfigInfo, UserConstant, UserConstantInfo,
+    EXACT_MATCH_TOLERANCE,
+};
 
 /// Build a manifest from the search results
 #[allow(clippy::too_many_arguments)]
@@ -42,7 +41,7 @@ pub fn build_manifest(
         },
         user_constants: user_constants
             .iter()
-            .map(|uc| crate::manifest::UserConstantInfo {
+            .map(|uc| UserConstantInfo {
                 name: uc.name.clone(),
                 value: uc.value,
                 description: uc.description.clone(),
@@ -61,14 +60,14 @@ pub fn build_manifest(
         .iter()
         .take(max_matches)
         .map(|m| {
-            let stability = metrics::MatchMetrics::from_match(m, None).stability;
+            let stability = MatchMetrics::from_match(m, None).stability;
             MatchInfo {
                 lhs_postfix: m.lhs.expr.to_postfix(),
                 rhs_postfix: m.rhs.expr.to_postfix(),
                 lhs_infix: m.lhs.expr.to_infix(),
                 rhs_infix: m.rhs.expr.to_infix(),
                 error: m.error.abs(),
-                is_exact: m.error.abs() < thresholds::EXACT_MATCH_TOLERANCE,
+                is_exact: m.error.abs() < EXACT_MATCH_TOLERANCE,
                 complexity: m.complexity,
                 x_value: m.x_value,
                 stability: Some(stability),

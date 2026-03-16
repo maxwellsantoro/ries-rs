@@ -152,13 +152,13 @@ impl From<ries_core::search::Match> for PyMatch {
         let rhs_infix = m.rhs.expr.to_infix();
 
         // Analytical solver
-        let solved = ries_core::solver::solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
+        let solved = ries_core::solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
         let solve_for_x = solved.as_ref().map(|e| format!("x = {}", e.to_infix()));
         let solve_for_x_postfix = solved.as_ref().map(|e| e.to_postfix());
 
         // Canonical key
-        let canonical_key = ries_core::solver::canonical_expression_key(&m.lhs.expr)
-            .zip(ries_core::solver::canonical_expression_key(&m.rhs.expr))
+        let canonical_key = ries_core::canonical_expression_key(&m.lhs.expr)
+            .zip(ries_core::canonical_expression_key(&m.rhs.expr))
             .map(|(l, r)| format!("{}={}", l, r))
             .unwrap_or_else(|| format!("{}={}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()));
 
@@ -175,15 +175,15 @@ impl From<ries_core::search::Match> for PyMatch {
             complexity: m.complexity,
             operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
             tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),
-            is_exact: m.error.abs() < ries_core::thresholds::EXACT_MATCH_TOLERANCE,
+            is_exact: m.error.abs() < ries_core::EXACT_MATCH_TOLERANCE,
         }
     }
 }
 
 fn build_symbol_table(
     profile: &ries_core::profile::Profile,
-) -> ries_core::symbol_table::SymbolTable {
-    ries_core::symbol_table::SymbolTable::from_profile(profile)
+) -> ries_core::SymbolTable {
+    ries_core::SymbolTable::from_profile(profile)
 }
 
 /// Build a GenConfig from simple parameters
@@ -296,7 +296,7 @@ fn search(
 
     let mut profile = ries_core::profile::Profile::new();
     if let Some(preset_name) = preset {
-        let parsed = ries_core::presets::Preset::from_str(preset_name).ok_or_else(|| {
+        let parsed = ries_core::Preset::from_str(preset_name).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!(
                 "Unknown preset '{}'. Use list_presets() for available options.",
                 preset_name
@@ -320,6 +320,7 @@ fn search(
         newton_iterations: 15,
         user_constants: gen_config.user_constants.clone(),
         user_functions: gen_config.user_functions.clone(),
+        trig_argument_scale: ries_core::eval::DEFAULT_TRIG_ARGUMENT_SCALE,
         refine_with_newton: true,
         rhs_allowed_symbols: None,
         rhs_excluded_symbols: None,
@@ -329,7 +330,7 @@ fn search(
         show_pruned_range: false,
         show_db_adds: false,
         match_all_digits: false,
-        derivative_margin: ries_core::thresholds::DEGENERATE_DERIVATIVE,
+        derivative_margin: ries_core::DEGENERATE_DERIVATIVE,
         ranking_mode: ries_core::pool::RankingMode::Complexity,
     };
 
@@ -367,7 +368,7 @@ fn search(
 fn list_presets() -> PyResult<Py<PyDict>> {
     Python::with_gil(|py| {
         let dict = PyDict::new_bound(py);
-        for preset in ries_core::presets::Preset::all() {
+        for preset in ries_core::Preset::all() {
             dict.set_item(preset.name(), preset.description())?;
         }
         Ok(dict.unbind())
@@ -419,7 +420,7 @@ mod tests {
     #[test]
     fn test_build_gen_config_includes_preset_user_constants() {
         let profile = ries_core::profile::Profile::new()
-            .merge(ries_core::presets::Preset::AnalyticNT.to_profile());
+            .merge(ries_core::Preset::AnalyticNT.to_profile());
         let config = build_gen_config(18, 20, &profile);
 
         assert!(

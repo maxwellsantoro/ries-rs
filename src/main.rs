@@ -5,8 +5,10 @@
 // Allow field reassignment with default in test code - common pattern for config building
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 use ries_rs::{
-    eval, expr, fast_match, gen, highprec_verify, manifest, metrics, pool, presets, profile, pslq,
-    report, search, stability, symbol, symbol_table, thresholds, udf,
+    eval, expr, format_stability_report, format_verification_report, gen, pool, print_presets,
+    profile, search, symbol, udf, verify_matches_highprec_with_trig_scale, FastMatchConfig, Report,
+    ReportConfig, ReportDisplayFormat, StabilityAnalyzer, StabilityConfig, SymbolTable,
+    DEGENERATE_DERIVATIVE,
 };
 
 mod cli;
@@ -21,7 +23,6 @@ use cli::{
     print_show_work_details, print_symbol_table, run_search, Args, CliExit, DisplayFormat,
     NormalizedArgs,
 };
-use report::{Report, ReportConfig};
 use ries_rs::{
     canonical_expression_key, expression_respects_constraints, solve_for_x_rhs_expression,
     ExpressionConstraintOptions,
@@ -76,7 +77,7 @@ fn main() {
 
     // Handle --list-presets (print available presets and exit)
     if args.list_presets {
-        presets::print_presets();
+        print_presets();
         return;
     }
 
@@ -116,9 +117,10 @@ fn main() {
         eprintln!("         Using standard f64 precision (~15 digits) for verification.");
     }
 
+    let mut trig_argument_scale = eval::DEFAULT_TRIG_ARGUMENT_SCALE;
     if let Some(scale) = args.trig_argument_scale {
         if scale.is_finite() && scale != 0.0 {
-            eval::set_trig_argument_scale(scale);
+            trig_argument_scale = scale;
         } else if !args.no_slow_messages {
             eprintln!(
                 "Warning: --trig-argument-scale must be finite and non-zero (got {}).",
@@ -149,7 +151,7 @@ fn main() {
         Err(err) => exit_with(err),
     };
 
-    match handle_special_modes(&args, resolved_target, &profile) {
+    match handle_special_modes(&args, resolved_target, &profile, trig_argument_scale) {
         Ok(true) => return,
         Ok(false) => {}
         Err(err) => exit_with(err),
@@ -248,8 +250,7 @@ fn main() {
     };
 
     // Set the symbol table from the profile (for per-run weights and names)
-    gen_config.symbol_table =
-        std::sync::Arc::new(symbol_table::SymbolTable::from_profile(&profile));
+    gen_config.symbol_table = std::sync::Arc::new(SymbolTable::from_profile(&profile));
 
     // Determine pool size based on mode
     let use_report = args.report && !args.classic;
@@ -308,6 +309,7 @@ fn main() {
         newton_iterations: args.newton_iterations,
         user_constants: gen_config.user_constants.clone(),
         user_functions: gen_config.user_functions.clone(),
+        trig_argument_scale,
         refine_with_newton: !args.no_refinement,
         rhs_allowed_symbols,
         rhs_excluded_symbols,
@@ -320,7 +322,7 @@ fn main() {
         derivative_margin: args
             .derivative_margin
             .or(args.significance_loss_margin)
-            .unwrap_or(thresholds::DEGENERATE_DERIVATIVE),
+            .unwrap_or(DEGENERATE_DERIVATIVE),
         ranking_mode,
     };
 
@@ -333,6 +335,8 @@ fn main() {
         // One-sided mode ranks direct x = RHS matches, so keep only display count.
         search_config.max_matches = effective_max_matches;
     }
+
+    let eval_context = search_config.context().eval;
 
     let explicit_streaming = args.streaming;
     let mut use_streaming = args.streaming;
@@ -389,7 +393,7 @@ fn main() {
     };
 
     // Build fast match config
-    let fast_config = fast_match::FastMatchConfig {
+    let fast_config = FastMatchConfig {
         excluded_symbols: &excluded_symbols,
         allowed_symbols: fast_allowed_storage.as_ref(),
         min_num_type: min_type,
@@ -399,9 +403,9 @@ fn main() {
     // This handles cases like pi, e, sqrt(2), phi, integers, etc. instantly
     let (matches, stats, search_elapsed) = if stop_at_exact || args.classic {
         // Only use fast path when we're looking for quick results
-        if let Some(fast_match) = fast_match::find_fast_match(
+        if let Some(fast_match) = ries_rs::find_fast_match_with_context(
             target,
-            &profile.constants,
+            &eval_context,
             &fast_config,
             &gen_config.symbol_table,
         ) {
@@ -455,12 +459,12 @@ fn main() {
     // Stability check: run multiple passes with different tolerances
     let stability_results = if args.stability_check {
         let config = if args.stability_thorough {
-            stability::StabilityConfig::thorough()
+            StabilityConfig::thorough()
         } else {
-            stability::StabilityConfig::default()
+            StabilityConfig::default()
         };
         let tolerance_factors = config.tolerance_factors.clone();
-        let mut analyzer = stability::StabilityAnalyzer::new(config);
+        let mut analyzer = StabilityAnalyzer::new(config);
 
         // Add the base matches
         analyzer.add_level(matches.clone());
@@ -662,8 +666,7 @@ fn main() {
                 &shown,
                 output_format,
                 args.explicit_multiply,
-                &profile.constants,
-                &profile.functions,
+                &eval_context,
                 Some(&gen_config.symbol_table),
             );
         }
@@ -690,12 +693,12 @@ fn main() {
             report_config = report_config.without_stable();
         }
 
-        // Convert main.rs DisplayFormat to report::DisplayFormat
+        // Convert main.rs DisplayFormat to report display format
         let report_format = match output_format {
-            DisplayFormat::Infix(fmt) => report::DisplayFormat::Infix(fmt),
-            DisplayFormat::PostfixCompact => report::DisplayFormat::PostfixCompact,
-            DisplayFormat::PostfixVerbose => report::DisplayFormat::PostfixVerbose,
-            DisplayFormat::Condensed => report::DisplayFormat::Condensed,
+            DisplayFormat::Infix(fmt) => ReportDisplayFormat::Infix(fmt),
+            DisplayFormat::PostfixCompact => ReportDisplayFormat::PostfixCompact,
+            DisplayFormat::PostfixVerbose => ReportDisplayFormat::PostfixVerbose,
+            DisplayFormat::Condensed => ReportDisplayFormat::Condensed,
         };
 
         let report = Report::generate(matches, target, &report_config);
@@ -728,7 +731,7 @@ fn main() {
         println!("  === Stability Analysis ===");
         print!(
             "{}",
-            stability::format_stability_report(results, effective_max_matches)
+            format_stability_report(results, effective_max_matches)
         );
     }
 
@@ -739,15 +742,16 @@ fn main() {
             "  === High-Precision Verification ({} bits) ===",
             precision_bits
         );
-        let hp_results = highprec_verify::verify_matches_highprec(
+        let hp_results = verify_matches_highprec_with_trig_scale(
             manifest_matches.clone(),
             target,
             precision_bits,
             &profile.constants,
+            trig_argument_scale,
         );
         print!(
             "{}",
-            highprec_verify::format_verification_report(&hp_results, effective_max_matches)
+            format_verification_report(&hp_results, effective_max_matches)
         );
     }
 

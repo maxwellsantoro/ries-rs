@@ -3,13 +3,7 @@
 //! This module provides functions for formatting expressions, matches,
 //! and other output for display to the user.
 
-use crate::expr;
-use crate::profile;
-use crate::search;
-use crate::symbol;
-use crate::symbol_table::SymbolTable;
-use crate::thresholds::EXACT_MATCH_TOLERANCE;
-use crate::udf;
+use ries_rs::{expr, search, symbol, EvalContext, SymbolTable, EXACT_MATCH_TOLERANCE};
 
 /// Display format for expression output.
 #[derive(Debug, Clone, Copy)]
@@ -267,19 +261,13 @@ fn print_expression_steps(
     x: f64,
     format: DisplayFormat,
     explicit_multiply: bool,
-    user_constants: &[profile::UserConstant],
-    user_functions: &[udf::UserFunction],
+    eval_context: &EvalContext<'_>,
     table: Option<&SymbolTable>,
 ) {
     println!("    {} steps:", label);
     for (idx, step_expr) in decompose_subexpressions(expression).iter().enumerate() {
         let rendered = format_expression_for_display(step_expr, format, explicit_multiply, table);
-        match crate::eval::evaluate_with_constants_and_functions(
-            step_expr,
-            x,
-            user_constants,
-            user_functions,
-        ) {
+        match ries_rs::eval::evaluate_with_context(step_expr, x, eval_context) {
             Ok(result) => println!(
                 "      {:>2}. {:<28} value={:+.12e} deriv={:+.12e}",
                 idx + 1,
@@ -302,8 +290,7 @@ pub fn print_show_work_details(
     shown_matches: &[&search::Match],
     format: DisplayFormat,
     explicit_multiply: bool,
-    user_constants: &[profile::UserConstant],
-    user_functions: &[udf::UserFunction],
+    eval_context: &EvalContext<'_>,
     table: Option<&SymbolTable>,
 ) {
     if shown_matches.is_empty() {
@@ -320,8 +307,7 @@ pub fn print_show_work_details(
             m.x_value,
             format,
             explicit_multiply,
-            user_constants,
-            user_functions,
+            eval_context,
             table,
         );
         print_expression_steps(
@@ -330,8 +316,7 @@ pub fn print_show_work_details(
             m.x_value,
             format,
             explicit_multiply,
-            user_constants,
-            user_functions,
+            eval_context,
             table,
         );
     }

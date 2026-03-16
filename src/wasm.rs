@@ -366,6 +366,7 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
         newton_iterations: 15,
         user_constants: gen_config.user_constants.clone(),
         user_functions: gen_config.user_functions.clone(),
+        trig_argument_scale: crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE,
         refine_with_newton: true,
         rhs_allowed_symbols: None,
         rhs_excluded_symbols: None,

@@ -3,11 +3,10 @@
 //! This module provides types and functions for serializing search results
 //! to JSON format.
 
-use crate::expr::OutputFormat;
-use crate::pool::RankingMode;
-use crate::search::SearchStats;
-use crate::symbol_table::SymbolTable;
-use crate::thresholds;
+use ries_rs::expr::OutputFormat;
+use ries_rs::pool::RankingMode;
+use ries_rs::search::SearchStats;
+use ries_rs::{SymbolTable, EXACT_MATCH_TOLERANCE};
 use serde::Serialize;
 
 use super::DisplayFormat;
@@ -188,7 +187,7 @@ pub fn build_json_output(
                 canonical_key,
                 x_value: m.x_value,
                 error: m.error,
-                exact: m.error.abs() < thresholds::EXACT_MATCH_TOLERANCE,
+                exact: m.error.abs() < EXACT_MATCH_TOLERANCE,
                 complexity: m.complexity,
                 operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
                 tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),

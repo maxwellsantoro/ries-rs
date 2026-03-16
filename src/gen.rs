@@ -13,7 +13,7 @@
 //! Streaming reduces memory from O(expressions) to O(depth) by processing expressions
 //! as they're generated rather than accumulating them.
 
-use crate::eval::evaluate_fast_with_constants_and_functions;
+use crate::eval::{evaluate_fast_with_context, EvalContext};
 use crate::symbol_table::SymbolTable;
 use std::sync::Arc;
 
@@ -484,6 +484,19 @@ pub fn quantize_value(v: f64) -> i64 {
 
 /// Generate all valid expressions up to the configured limits
 pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
+    generate_all_with_context(
+        config,
+        target,
+        &EvalContext::from_slices(&config.user_constants, &config.user_functions),
+    )
+}
+
+/// Generate all valid expressions up to the configured limits using an explicit evaluation context.
+pub fn generate_all_with_context(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+) -> GeneratedExprs {
     let mut lhs_raw = Vec::new();
     let mut rhs_raw = Vec::new();
 
@@ -495,6 +508,7 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
         generate_recursive(
             &lhs_config,
             target,
+            *eval_context,
             &mut Expression::new(),
             0,
             &mut lhs_raw,
@@ -506,6 +520,7 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
         generate_recursive(
             &rhs_config,
             target,
+            *eval_context,
             &mut Expression::new(),
             0,
             &mut lhs_raw,
@@ -516,6 +531,7 @@ pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
         generate_recursive(
             config,
             target,
+            *eval_context,
             &mut Expression::new(),
             0, // current stack depth
             &mut lhs_raw,
@@ -580,6 +596,21 @@ pub fn generate_all_with_limit(
     target: f64,
     max_expressions: usize,
 ) -> Option<GeneratedExprs> {
+    generate_all_with_limit_and_context(
+        config,
+        target,
+        &EvalContext::from_slices(&config.user_constants, &config.user_functions),
+        max_expressions,
+    )
+}
+
+/// Generate expressions with an early-abort limit using an explicit evaluation context.
+pub fn generate_all_with_limit_and_context(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+    max_expressions: usize,
+) -> Option<GeneratedExprs> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -610,7 +641,7 @@ pub fn generate_all_with_limit(
         },
     };
 
-    generate_streaming(config, target, &mut callbacks);
+    generate_streaming_with_context(config, target, eval_context, &mut callbacks);
 
     // Check if we exceeded the limit
     let final_count = count.load(Ordering::Relaxed);
@@ -693,21 +724,50 @@ pub fn generate_all_with_limit(
 /// generate_streaming(&config, target, &mut callbacks);
 /// ```
 pub fn generate_streaming(config: &GenConfig, target: f64, callbacks: &mut StreamingCallbacks) {
+    generate_streaming_with_context(
+        config,
+        target,
+        &EvalContext::from_slices(&config.user_constants, &config.user_functions),
+        callbacks,
+    );
+}
+
+/// Generate expressions with streaming callbacks using an explicit evaluation context.
+pub fn generate_streaming_with_context(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+    callbacks: &mut StreamingCallbacks,
+) {
     if config.generate_lhs && config.generate_rhs && has_rhs_symbol_overrides(config) {
         let mut lhs_config = config.clone();
         lhs_config.generate_lhs = true;
         lhs_config.generate_rhs = false;
-        if !generate_recursive_streaming(&lhs_config, target, &mut Expression::new(), 0, callbacks)
-        {
+        if !generate_recursive_streaming(
+            &lhs_config,
+            target,
+            *eval_context,
+            &mut Expression::new(),
+            0,
+            callbacks,
+        ) {
             return;
         }
 
         let rhs_config = rhs_only_config(config);
-        generate_recursive_streaming(&rhs_config, target, &mut Expression::new(), 0, callbacks);
+        generate_recursive_streaming(
+            &rhs_config,
+            target,
+            *eval_context,
+            &mut Expression::new(),
+            0,
+            callbacks,
+        );
     } else {
         generate_recursive_streaming(
             config,
             target,
+            *eval_context,
             &mut Expression::new(),
             0, // current stack depth
             callbacks,
@@ -794,6 +854,7 @@ fn exceeds_symbol_limit(config: &GenConfig, current: &Expression, sym: Symbol) -
 fn generate_recursive_streaming(
     config: &GenConfig,
     target: f64,
+    eval_context: EvalContext<'_>,
     current: &mut Expression,
     stack_depth: usize,
     callbacks: &mut StreamingCallbacks,
@@ -801,12 +862,7 @@ fn generate_recursive_streaming(
     // Check if we have a complete expression
     if stack_depth == 1 && !current.is_empty() {
         // Try to evaluate it with user constants and functions support
-        match evaluate_fast_with_constants_and_functions(
-            current,
-            target,
-            &config.user_constants,
-            &config.user_functions,
-        ) {
+        match evaluate_fast_with_context(current, target, &eval_context) {
             Ok(result) => {
                 // Use shared validation helper
                 if should_include_expression(
@@ -879,7 +935,14 @@ fn generate_recursive_streaming(
         }
 
         current.push_with_table(sym, &config.symbol_table);
-        if !generate_recursive_streaming(config, target, current, stack_depth + 1, callbacks) {
+        if !generate_recursive_streaming(
+            config,
+            target,
+            eval_context,
+            current,
+            stack_depth + 1,
+            callbacks,
+        ) {
             current.pop_with_table(&config.symbol_table);
             return false;
         }
@@ -894,7 +957,14 @@ fn generate_recursive_streaming(
             && !exceeds_symbol_limit(config, current, sym)
         {
             current.push_with_table(sym, &config.symbol_table);
-            if !generate_recursive_streaming(config, target, current, stack_depth + 1, callbacks) {
+            if !generate_recursive_streaming(
+                config,
+                target,
+                eval_context,
+                current,
+                stack_depth + 1,
+                callbacks,
+            ) {
                 current.pop_with_table(&config.symbol_table);
                 return false;
             }
@@ -919,7 +989,14 @@ fn generate_recursive_streaming(
             }
 
             current.push_with_table(sym, &config.symbol_table);
-            if !generate_recursive_streaming(config, target, current, stack_depth, callbacks) {
+            if !generate_recursive_streaming(
+                config,
+                target,
+                eval_context,
+                current,
+                stack_depth,
+                callbacks,
+            ) {
                 current.pop_with_table(&config.symbol_table);
                 return false;
             }
@@ -944,7 +1021,14 @@ fn generate_recursive_streaming(
             }
 
             current.push_with_table(sym, &config.symbol_table);
-            if !generate_recursive_streaming(config, target, current, stack_depth - 1, callbacks) {
+            if !generate_recursive_streaming(
+                config,
+                target,
+                eval_context,
+                current,
+                stack_depth - 1,
+                callbacks,
+            ) {
                 current.pop_with_table(&config.symbol_table);
                 return false;
             }
@@ -959,6 +1043,7 @@ fn generate_recursive_streaming(
 fn generate_recursive(
     config: &GenConfig,
     target: f64,
+    eval_context: EvalContext<'_>,
     current: &mut Expression,
     stack_depth: usize,
     lhs_out: &mut Vec<EvaluatedExpr>,
@@ -967,12 +1052,7 @@ fn generate_recursive(
     // Check if we have a complete expression
     if stack_depth == 1 && !current.is_empty() {
         // Try to evaluate it with user constants and functions support
-        match evaluate_fast_with_constants_and_functions(
-            current,
-            target,
-            &config.user_constants,
-            &config.user_functions,
-        ) {
+        match evaluate_fast_with_context(current, target, &eval_context) {
             Ok(result) => {
                 // Use shared validation helper
                 if should_include_expression(
@@ -1042,7 +1122,15 @@ fn generate_recursive(
         }
 
         current.push_with_table(sym, &config.symbol_table);
-        generate_recursive(config, target, current, stack_depth + 1, lhs_out, rhs_out);
+        generate_recursive(
+            config,
+            target,
+            eval_context,
+            current,
+            stack_depth + 1,
+            lhs_out,
+            rhs_out,
+        );
         current.pop_with_table(&config.symbol_table);
     }
 
@@ -1054,7 +1142,15 @@ fn generate_recursive(
             && !exceeds_symbol_limit(config, current, sym)
         {
             current.push_with_table(sym, &config.symbol_table);
-            generate_recursive(config, target, current, stack_depth + 1, lhs_out, rhs_out);
+            generate_recursive(
+                config,
+                target,
+                eval_context,
+                current,
+                stack_depth + 1,
+                lhs_out,
+                rhs_out,
+            );
             current.pop_with_table(&config.symbol_table);
         }
     }
@@ -1076,7 +1172,15 @@ fn generate_recursive(
             }
 
             current.push_with_table(sym, &config.symbol_table);
-            generate_recursive(config, target, current, stack_depth, lhs_out, rhs_out);
+            generate_recursive(
+                config,
+                target,
+                eval_context,
+                current,
+                stack_depth,
+                lhs_out,
+                rhs_out,
+            );
             current.pop_with_table(&config.symbol_table);
         }
     }
@@ -1098,7 +1202,15 @@ fn generate_recursive(
             }
 
             current.push_with_table(sym, &config.symbol_table);
-            generate_recursive(config, target, current, stack_depth - 1, lhs_out, rhs_out);
+            generate_recursive(
+                config,
+                target,
+                eval_context,
+                current,
+                stack_depth - 1,
+                lhs_out,
+                rhs_out,
+            );
             current.pop_with_table(&config.symbol_table);
         }
     }
@@ -1325,11 +1437,25 @@ fn is_constant(sym: Symbol) -> bool {
 /// Generate expressions in parallel using Rayon
 #[cfg(feature = "parallel")]
 pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs {
+    generate_all_parallel_with_context(
+        config,
+        target,
+        &EvalContext::from_slices(&config.user_constants, &config.user_functions),
+    )
+}
+
+/// Generate expressions in parallel using Rayon with an explicit evaluation context.
+#[cfg(feature = "parallel")]
+pub fn generate_all_parallel_with_context(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+) -> GeneratedExprs {
     use rayon::prelude::*;
 
     // Parallel path currently assumes shared LHS/RHS symbol sets.
     if has_rhs_symbol_overrides(config) {
-        return generate_all(config, target);
+        return generate_all_with_context(config, target, eval_context);
     }
 
     // Generate valid prefixes of length 1 and 2 to create smaller,
@@ -1372,12 +1498,7 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
         }
 
         // 1. Evaluate length-1 prefix (simulate top of generate_recursive)
-        if let Ok(result) = evaluate_fast_with_constants_and_functions(
-            &expr1,
-            target,
-            &config.user_constants,
-            &config.user_functions,
-        ) {
+        if let Ok(result) = evaluate_fast_with_context(&expr1, target, eval_context) {
             if result.value.is_finite()
                 && result.value.abs() <= MAX_GENERATED_VALUE
                 && result.num_type >= config.min_num_type
@@ -1454,7 +1575,15 @@ pub fn generate_all_parallel(config: &GenConfig, target: f64) -> GeneratedExprs 
         .map(|(mut expr, depth)| {
             let mut lhs = Vec::new();
             let mut rhs = Vec::new();
-            generate_recursive(config, target, &mut expr, depth, &mut lhs, &mut rhs);
+            generate_recursive(
+                config,
+                target,
+                *eval_context,
+                &mut expr,
+                depth,
+                &mut lhs,
+                &mut rhs,
+            );
             (lhs, rhs)
         })
         .collect();

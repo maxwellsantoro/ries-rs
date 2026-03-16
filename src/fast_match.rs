@@ -4,7 +4,7 @@
 //! is a simple exact match (like pi, e, sqrt(2), etc.) that can be
 //! found instantly.
 
-use crate::eval::evaluate;
+use crate::eval::{evaluate_with_context, EvalContext};
 use crate::expr::{EvaluatedExpr, Expression};
 use crate::profile::UserConstant;
 use crate::search::Match;
@@ -316,6 +316,17 @@ pub fn find_fast_match(
     config: &FastMatchConfig<'_>,
     table: &SymbolTable,
 ) -> Option<Match> {
+    let context = EvalContext::from_slices(user_constants, &[]);
+    find_fast_match_with_context(target, &context, config, table)
+}
+
+/// Try to find a fast exact match for the target value using an explicit evaluation context.
+pub fn find_fast_match_with_context(
+    target: f64,
+    context: &EvalContext<'_>,
+    config: &FastMatchConfig<'_>,
+    table: &SymbolTable,
+) -> Option<Match> {
     // First check integers (fastest)
     if let Some((n, error)) = check_integer(target) {
         if (1..=9).contains(&n) {
@@ -336,20 +347,20 @@ pub fn find_fast_match(
             if passes_symbol_filters(symbols, config)
                 && get_num_type(symbols) >= config.min_num_type
             {
-                if let Some(m) = make_match(symbols, target, error, table) {
+                if let Some(m) = make_match(symbols, target, error, table, context) {
                     return Some(m);
                 }
             }
         }
         // For other integers, check if they match user constants
-        for (idx, uc) in user_constants.iter().enumerate() {
+        for (idx, uc) in context.user_constants.iter().enumerate() {
             if idx < 16 && (uc.value - target).abs() < EXACT_TOLERANCE {
                 if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
                     let symbols = [sym];
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
                         if let Some(m) =
-                            make_match(&symbols, target, (uc.value - target).abs(), table)
+                            make_match(&symbols, target, (uc.value - target).abs(), table, context)
                         {
                             return Some(m);
                         }
@@ -360,7 +371,7 @@ pub fn find_fast_match(
     }
 
     // Check user constants first (they're explicitly defined)
-    for (idx, uc) in user_constants.iter().enumerate() {
+    for (idx, uc) in context.user_constants.iter().enumerate() {
         if idx >= 16 {
             break;
         }
@@ -368,7 +379,8 @@ pub fn find_fast_match(
             if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
                 let symbols = [sym];
                 if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type {
-                    if let Some(m) = make_match(&symbols, target, (uc.value - target).abs(), table)
+                    if let Some(m) =
+                        make_match(&symbols, target, (uc.value - target).abs(), table, context)
                     {
                         return Some(m);
                     }
@@ -390,10 +402,10 @@ pub fn find_fast_match(
         }
 
         let expr = expr_from_symbols_with_table(candidate.symbols, table);
-        if let Ok(result) = evaluate(&expr, target) {
+        if let Ok(result) = evaluate_with_context(&expr, target, context) {
             let error = (result.value - target).abs();
             if error < EXACT_TOLERANCE {
-                if let Some(m) = make_match(candidate.symbols, target, error, table) {
+                if let Some(m) = make_match(candidate.symbols, target, error, table, context) {
                     return Some(m);
                 }
             }
@@ -401,7 +413,7 @@ pub fn find_fast_match(
     }
 
     // Check user constants with simple operations
-    for (idx, uc) in user_constants.iter().enumerate() {
+    for (idx, uc) in context.user_constants.iter().enumerate() {
         if idx >= 16 {
             break;
         }
@@ -414,7 +426,7 @@ pub fn find_fast_match(
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
                         if let Some(m) =
-                            make_match(&symbols, target, (recip_val - target).abs(), table)
+                            make_match(&symbols, target, (recip_val - target).abs(), table, context)
                         {
                             return Some(m);
                         }
@@ -429,7 +441,7 @@ pub fn find_fast_match(
                     if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
                     {
                         if let Some(m) =
-                            make_match(&symbols, target, (sqrt_val - target).abs(), table)
+                            make_match(&symbols, target, (sqrt_val - target).abs(), table, context)
                         {
                             return Some(m);
                         }
@@ -443,13 +455,19 @@ pub fn find_fast_match(
 }
 
 /// Create a Match from symbols representing the RHS value
-fn make_match(symbols: &[Symbol], target: f64, error: f64, table: &SymbolTable) -> Option<Match> {
+fn make_match(
+    symbols: &[Symbol],
+    target: f64,
+    error: f64,
+    table: &SymbolTable,
+    context: &EvalContext<'_>,
+) -> Option<Match> {
     let lhs_expr = expr_from_symbols_with_table(&[Symbol::X], table);
     let rhs_expr = expr_from_symbols_with_table(symbols, table);
     let complexity = lhs_expr.complexity() + rhs_expr.complexity();
 
-    let lhs_eval = evaluate(&lhs_expr, target).ok()?;
-    let rhs_eval = evaluate(&rhs_expr, target).ok()?;
+    let lhs_eval = evaluate_with_context(&lhs_expr, target, context).ok()?;
+    let rhs_eval = evaluate_with_context(&rhs_expr, target, context).ok()?;
 
     Some(Match {
         lhs: EvaluatedExpr {

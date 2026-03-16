@@ -9,8 +9,8 @@ use ries_rs::gen::{generate_all, GenConfig};
 use ries_rs::profile::UserConstant;
 use ries_rs::search::{search_with_stats_and_options, ExprDatabase};
 use ries_rs::symbol::{NumType, Symbol};
-use ries_rs::symbol_table::SymbolTable;
 use ries_rs::udf::UserFunction;
+use ries_rs::SymbolTable;
 use std::collections::HashMap;
 use std::sync::Arc;
 

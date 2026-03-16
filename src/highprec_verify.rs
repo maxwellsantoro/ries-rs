@@ -49,6 +49,24 @@ pub fn verify_matches_highprec(
     precision_bits: u32,
     user_constants: &[crate::profile::UserConstant],
 ) -> Vec<VerificationResult> {
+    verify_matches_highprec_with_trig_scale(
+        matches,
+        target,
+        precision_bits,
+        user_constants,
+        crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE,
+    )
+}
+
+/// Verify matches at high precision using an explicit trig argument scale.
+#[cfg(feature = "highprec")]
+pub fn verify_matches_highprec_with_trig_scale(
+    matches: Vec<Match>,
+    target: f64,
+    precision_bits: u32,
+    user_constants: &[crate::profile::UserConstant],
+    trig_argument_scale: f64,
+) -> Vec<VerificationResult> {
     let target_hp = HighPrec::from_f64_with_prec(target, precision_bits);
     let tolerance_hp = HighPrec::from_f64_with_prec(EXACT_MATCH_TOLERANCE, precision_bits);
 
@@ -62,10 +80,22 @@ pub fn verify_matches_highprec(
                 .collect();
 
             // Evaluate LHS(x) at high precision
-            let lhs_val = evaluate_highprec(&m.lhs.expr, m.x_value, precision_bits, &hp_constants);
+            let lhs_val = evaluate_highprec(
+                &m.lhs.expr,
+                m.x_value,
+                precision_bits,
+                &hp_constants,
+                trig_argument_scale,
+            );
 
             // Evaluate RHS at high precision
-            let rhs_val = evaluate_highprec(&m.rhs.expr, m.x_value, precision_bits, &hp_constants);
+            let rhs_val = evaluate_highprec(
+                &m.rhs.expr,
+                m.x_value,
+                precision_bits,
+                &hp_constants,
+                trig_argument_scale,
+            );
 
             match (lhs_val, rhs_val) {
                 (Some(lhs), Some(rhs)) => {
@@ -119,6 +149,24 @@ pub fn verify_matches_highprec(
     _precision_bits: u32,
     _user_constants: &[crate::profile::UserConstant],
 ) -> Vec<VerificationResult> {
+    verify_matches_highprec_with_trig_scale(
+        matches,
+        _target,
+        _precision_bits,
+        _user_constants,
+        crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE,
+    )
+}
+
+/// Fallback for non-highprec builds with explicit trig scaling.
+#[cfg(not(feature = "highprec"))]
+pub fn verify_matches_highprec_with_trig_scale(
+    matches: Vec<Match>,
+    _target: f64,
+    _precision_bits: u32,
+    _user_constants: &[crate::profile::UserConstant],
+    _trig_argument_scale: f64,
+) -> Vec<VerificationResult> {
     matches
         .into_iter()
         .map(VerificationResult::f64_result)
@@ -132,11 +180,12 @@ fn evaluate_highprec(
     x: f64,
     precision_bits: u32,
     user_constants: &[HighPrec],
+    trig_argument_scale: f64,
 ) -> Option<HighPrec> {
     // Use precision-aware constructors for full accuracy beyond f64 limits
     let zero = HighPrec::zero_with_prec(precision_bits);
     let one = HighPrec::one_with_prec(precision_bits);
-    let trig_scale = HighPrec::pi_with_prec(precision_bits); // High-prec π for trig
+    let trig_scale = HighPrec::from_f64_with_prec(trig_argument_scale, precision_bits);
     let x_hp = HighPrec::from_f64_with_prec(x, precision_bits);
 
     let mut stack: Vec<HighPrec> = Vec::with_capacity(32);
@@ -405,8 +454,14 @@ mod tests {
         let expr = crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant0]);
         let constants = vec![HighPrec::from_f64_with_prec(1.234567890123456, 256)];
 
-        let evaluated = evaluate_highprec(&expr, 0.0, 256, &constants)
-            .expect("expected user constant slot to resolve");
+        let evaluated = evaluate_highprec(
+            &expr,
+            0.0,
+            256,
+            &constants,
+            crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE,
+        )
+        .expect("expected user constant slot to resolve");
         assert!((evaluated.to_f64() - 1.234567890123456).abs() < 1e-15);
     }
 
@@ -416,7 +471,13 @@ mod tests {
         let expr = crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant1]);
         let constants = vec![HighPrec::from_f64_with_prec(1.0, 256)];
 
-        let evaluated = evaluate_highprec(&expr, 0.0, 256, &constants);
+        let evaluated = evaluate_highprec(
+            &expr,
+            0.0,
+            256,
+            &constants,
+            crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE,
+        );
         assert!(
             evaluated.is_none(),
             "missing user constant slot should fail verification evaluation"

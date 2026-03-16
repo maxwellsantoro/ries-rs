@@ -82,24 +82,24 @@
 
 pub mod eval;
 pub mod expr;
-pub mod fast_match;
+mod fast_match;
 pub mod gen;
-pub mod highprec_verify;
-pub mod manifest;
-pub mod metrics;
+mod highprec_verify;
+mod manifest;
+mod metrics;
 pub mod pool;
 #[cfg(feature = "highprec")]
 pub mod precision;
-pub mod presets;
+mod presets;
 pub mod profile;
-pub mod pslq;
-pub mod report;
+mod pslq;
+mod report;
 pub mod search;
-pub mod solver;
-pub mod stability;
+mod solver;
+mod stability;
 pub mod symbol;
-pub mod symbol_table;
-pub mod thresholds;
+mod symbol_table;
+mod thresholds;
 pub mod udf;
 #[cfg(feature = "wasm")]
 mod wasm;
@@ -130,14 +130,14 @@ pub use search::search;
 pub use solver::{canonical_expression_key, solve_for_x_rhs_expression};
 
 // Fast exact match detection
-pub use fast_match::find_fast_match;
+pub use fast_match::{find_fast_match, find_fast_match_with_context, FastMatchConfig};
 
 // Common types
-pub use eval::{EvalError, EvalResult};
+pub use eval::{EvalContext, EvalError, EvalResult, DEFAULT_TRIG_ARGUMENT_SCALE};
 pub use expr::{Expression, OutputFormat};
 pub use gen::{expression_respects_constraints, ExpressionConstraintOptions, GenConfig};
 pub use profile::{Profile, UserConstant};
-pub use search::{Match, SearchConfig, SearchStats};
+pub use search::{Match, SearchConfig, SearchContext, SearchStats};
 pub use symbol::{NumType, Symbol};
 pub use symbol_table::SymbolTable;
 pub use udf::UserFunction;
@@ -150,4 +150,17 @@ pub use thresholds::{DEGENERATE_DERIVATIVE, EXACT_MATCH_TOLERANCE, NEWTON_TOLERA
 pub use precision::{HighPrec, RiesFloat, DEFAULT_PRECISION};
 
 // Manifest types for reproducibility
-pub use manifest::{MatchInfo, RunManifest, SearchConfigInfo};
+pub use manifest::{MatchInfo, RunManifest, SearchConfigInfo, UserConstantInfo};
+
+// Structured reporting and analysis
+pub use highprec_verify::{
+    format_verification_report, verify_matches_highprec, verify_matches_highprec_with_trig_scale,
+    VerificationResult,
+};
+pub use metrics::MatchMetrics;
+pub use presets::{print_presets, Preset};
+pub use pslq::{find_integer_relation, find_rational_approximation, IntegerRelation, PslqConfig};
+pub use report::{DisplayFormat as ReportDisplayFormat, Report, ReportConfig};
+pub use stability::{
+    format_stability_report, StabilityAnalyzer, StabilityClass, StabilityConfig, StabilityResult,
+};

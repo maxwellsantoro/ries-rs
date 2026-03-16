@@ -1,10 +1,8 @@
 //! Runtime helpers for CLI startup and special modes.
 
-use crate::eval;
-use crate::expr;
-use crate::presets;
-use crate::profile::{Profile, UserConstant, UserFunction};
-use crate::pslq;
+use ries_rs::eval::{self, EvalContext};
+use ries_rs::expr;
+use ries_rs::{find_integer_relation, find_rational_approximation, Preset, Profile, PslqConfig};
 
 use super::{
     parse_symbol_names_from_cli, parse_symbol_weights_from_cli, parse_user_constant_from_cli,
@@ -33,16 +31,11 @@ impl CliExit {
     }
 }
 
-fn evaluate_and_print(
-    expr_str: &str,
-    x: f64,
-    constants: &[UserConstant],
-    functions: &[UserFunction],
-) -> Result<(), CliExit> {
+fn evaluate_and_print(expr_str: &str, x: f64, context: &EvalContext<'_>) -> Result<(), CliExit> {
     let expr = expr::Expression::parse(expr_str)
         .ok_or_else(|| CliExit::usage(format!("Error: Invalid expression '{}'", expr_str)))?;
 
-    match eval::evaluate_with_constants_and_functions(&expr, x, constants, functions) {
+    match eval::evaluate_with_context(&expr, x, context) {
         Ok(result) => {
             println!("Expression: {}", expr_str);
             println!("At x = {}", x);
@@ -65,7 +58,7 @@ pub fn load_runtime_profile(args: &Args, profile_arg: Option<&str>) -> Result<Pr
     };
 
     if let Some(preset_name) = &args.preset {
-        let preset = presets::Preset::from_str(preset_name).ok_or_else(|| {
+        let preset = Preset::from_str(preset_name).ok_or_else(|| {
             CliExit::usage(format!(
                 "Error: Unknown preset '{}'. Use --list-presets to see available presets.",
                 preset_name
@@ -120,16 +113,20 @@ pub fn handle_special_modes(
     args: &Args,
     resolved_target: Option<f64>,
     profile: &Profile,
+    trig_argument_scale: f64,
 ) -> Result<bool, CliExit> {
+    let context = EvalContext::from_slices(&profile.constants, &profile.functions)
+        .with_trig_argument_scale(trig_argument_scale);
+
     if let Some(expr_str) = &args.find_expression {
         let x = args.at.or(resolved_target).unwrap_or(1.0);
-        evaluate_and_print(expr_str, x, &profile.constants, &profile.functions)?;
+        evaluate_and_print(expr_str, x, &context)?;
         return Ok(true);
     }
 
     if let Some(expr_str) = &args.eval_expression {
         let x = args.at.unwrap_or(1.0);
-        evaluate_and_print(expr_str, x, &profile.constants, &profile.functions)?;
+        evaluate_and_print(expr_str, x, &context)?;
         return Ok(true);
     }
 
@@ -140,7 +137,7 @@ pub fn handle_special_modes(
     let target =
         resolved_target.ok_or_else(|| CliExit::usage("Error: TARGET is required for PSLQ"))?;
 
-    let config = pslq::PslqConfig {
+    let config = PslqConfig {
         max_coefficient: args.pslq_max_coeff,
         max_iterations: 10000,
         tolerance: 1e-10,
@@ -156,7 +153,7 @@ pub fn handle_special_modes(
     }
     println!();
 
-    if let Some((num, den)) = pslq::find_rational_approximation(target, config.max_coefficient) {
+    if let Some((num, den)) = find_rational_approximation(target, config.max_coefficient) {
         let approx = num as f64 / den as f64;
         let error = (approx - target).abs();
         println!("   Rational approximation:");
@@ -167,7 +164,7 @@ pub fn handle_special_modes(
         println!();
     }
 
-    match pslq::find_integer_relation(target, &config) {
+    match find_integer_relation(target, &config) {
         Some(relation) => {
             println!("   Integer relation found:");
             println!("   {}", relation.format());
