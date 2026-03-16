@@ -20,6 +20,7 @@
 //! - [`legacy`] - Legacy argument normalization for backward compatibility
 //! - [`json_types`] - JSON output types and building functions
 //! - [`manifest`] - Run manifest creation for reproducibility
+//! - [`runtime`] - Startup/runtime helpers for special CLI modes
 
 pub mod args;
 pub mod config_builder;
@@ -28,6 +29,7 @@ pub mod json_types;
 pub mod legacy;
 pub mod manifest;
 pub mod output;
+pub mod runtime;
 pub mod search_runner;
 
 // Re-export the main public API
@@ -48,6 +50,8 @@ pub use output::{
     print_header, print_match_absolute, print_match_relative, print_show_work_details,
     DisplayFormat,
 };
+
+pub use runtime::{cli_level_to_complexity, handle_special_modes, load_runtime_profile, CliExit};
 
 pub use search_runner::run_search;
 

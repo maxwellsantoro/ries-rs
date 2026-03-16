@@ -96,6 +96,15 @@ fn test_user_constant() {
 }
 
 #[test]
+fn test_missing_user_constant_is_error() {
+    let mut expr = Expression::new();
+    expr.push(ries_rs::symbol::Symbol::UserConstant0);
+
+    let result = evaluate_with_constants(&expr, 0.0, &[]);
+    assert!(matches!(result, Err(EvalError::MissingUserConstant(0))));
+}
+
+#[test]
 fn test_lambert_w() {
     // W(1) ≈ 0.5671432904
     let expr = Expression::parse("1W").unwrap();

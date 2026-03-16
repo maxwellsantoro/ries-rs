@@ -108,7 +108,7 @@ See `docs/COMPLEXITY.md` for the default weight table and rationale.
 
 The CLI and library APIs use different level mappings.
 
-### CLI (`src/main.rs`)
+### CLI (`src/cli/runtime.rs::cli_level_to_complexity`)
 
 For CLI `-l/--level = L`:
 

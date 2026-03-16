@@ -60,11 +60,25 @@ fn test_expression_validity() {
     // Valid: x 2 ^ (x squared)
     assert!(Expression::parse("xs").unwrap().is_valid());
 
+    // Manually-built malformed expressions can still be validated explicitly.
+    let mut underflow = Expression::new();
+    underflow.push(Symbol::Three);
+    underflow.push(Symbol::Add);
+    assert!(!underflow.is_valid());
+
+    let mut incomplete = Expression::new();
+    incomplete.push(Symbol::Three);
+    incomplete.push(Symbol::Two);
+    assert!(!incomplete.is_valid());
+}
+
+#[test]
+fn test_parse_rejects_malformed_postfix() {
     // Invalid: 3 + (not enough operands)
-    assert!(!Expression::parse("3+").unwrap().is_valid());
+    assert!(Expression::parse("3+").is_none());
 
     // Invalid: 3 2 (two values left on stack)
-    assert!(!Expression::parse("32").unwrap().is_valid());
+    assert!(Expression::parse("32").is_none());
 }
 
 #[test]

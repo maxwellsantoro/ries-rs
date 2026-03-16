@@ -165,7 +165,7 @@ impl SearchStats {
 ///
 /// # Note
 ///
-/// The CLI uses a different formula with higher bases (25/25) and multiplier (10)
+/// The CLI uses a different formula with higher bases (35/35) and multiplier (10)
 /// to match the original RIES command-line behavior. This function is for
 /// programmatic API consumers.
 #[inline]

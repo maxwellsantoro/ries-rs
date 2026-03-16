@@ -33,6 +33,9 @@ pub enum EvalError {
     /// Stack underflow during evaluation
     #[error("Stack underflow: not enough operands on stack")]
     StackUnderflow,
+    /// User constant slot referenced by the expression is not configured
+    #[error("Missing user constant: slot u{0} is not configured")]
+    MissingUserConstant(usize),
     /// Division by zero
     #[error("Division by zero: divisor was zero or near-zero")]
     DivisionByZero,
@@ -258,7 +261,7 @@ pub fn evaluate_with_workspace_and_constants_and_functions(
     for &sym in expr.symbols() {
         match sym.seft() {
             Seft::A => {
-                let entry = eval_constant_with_user(sym, x, user_constants);
+                let entry = eval_constant_with_user(sym, x, user_constants)?;
                 stack.push(entry);
             }
             Seft::B => {
@@ -458,28 +461,41 @@ pub fn evaluate_fast_with_constants_and_functions(
     })
 }
 
-/// Evaluate a constant or variable symbol with user constant lookup
-fn eval_constant_with_user(sym: Symbol, x: f64, user_constants: &[UserConstant]) -> StackEntry {
+/// Evaluate a constant or variable symbol with user constant lookup.
+fn eval_constant_with_user(
+    sym: Symbol,
+    x: f64,
+    user_constants: &[UserConstant],
+) -> Result<StackEntry, EvalError> {
     use Symbol::*;
     match sym {
-        One => StackEntry::constant(1.0, NumType::Integer),
-        Two => StackEntry::constant(2.0, NumType::Integer),
-        Three => StackEntry::constant(3.0, NumType::Integer),
-        Four => StackEntry::constant(4.0, NumType::Integer),
-        Five => StackEntry::constant(5.0, NumType::Integer),
-        Six => StackEntry::constant(6.0, NumType::Integer),
-        Seven => StackEntry::constant(7.0, NumType::Integer),
-        Eight => StackEntry::constant(8.0, NumType::Integer),
-        Nine => StackEntry::constant(9.0, NumType::Integer),
-        Pi => StackEntry::constant(constants::PI, NumType::Transcendental),
-        E => StackEntry::constant(constants::E, NumType::Transcendental),
-        Phi => StackEntry::constant(constants::PHI, NumType::Algebraic),
+        One => Ok(StackEntry::constant(1.0, NumType::Integer)),
+        Two => Ok(StackEntry::constant(2.0, NumType::Integer)),
+        Three => Ok(StackEntry::constant(3.0, NumType::Integer)),
+        Four => Ok(StackEntry::constant(4.0, NumType::Integer)),
+        Five => Ok(StackEntry::constant(5.0, NumType::Integer)),
+        Six => Ok(StackEntry::constant(6.0, NumType::Integer)),
+        Seven => Ok(StackEntry::constant(7.0, NumType::Integer)),
+        Eight => Ok(StackEntry::constant(8.0, NumType::Integer)),
+        Nine => Ok(StackEntry::constant(9.0, NumType::Integer)),
+        Pi => Ok(StackEntry::constant(constants::PI, NumType::Transcendental)),
+        E => Ok(StackEntry::constant(constants::E, NumType::Transcendental)),
+        Phi => Ok(StackEntry::constant(constants::PHI, NumType::Algebraic)),
         // New constants
-        Gamma => StackEntry::constant(constants::GAMMA, NumType::Transcendental),
-        Plastic => StackEntry::constant(constants::PLASTIC, NumType::Algebraic),
-        Apery => StackEntry::constant(constants::APERY, NumType::Transcendental),
-        Catalan => StackEntry::constant(constants::CATALAN, NumType::Transcendental),
-        X => StackEntry::new(x, 1.0, NumType::Integer), // x can be any value, including integer
+        Gamma => Ok(StackEntry::constant(
+            constants::GAMMA,
+            NumType::Transcendental,
+        )),
+        Plastic => Ok(StackEntry::constant(constants::PLASTIC, NumType::Algebraic)),
+        Apery => Ok(StackEntry::constant(
+            constants::APERY,
+            NumType::Transcendental,
+        )),
+        Catalan => Ok(StackEntry::constant(
+            constants::CATALAN,
+            NumType::Transcendental,
+        )),
+        X => Ok(StackEntry::new(x, 1.0, NumType::Integer)), // x can be any value, including integer
         // User constants - look up value from the user_constants slice
         UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 | UserConstant4
         | UserConstant5 | UserConstant6 | UserConstant7 | UserConstant8 | UserConstant9
@@ -490,15 +506,9 @@ fn eval_constant_with_user(sym: Symbol, x: f64, user_constants: &[UserConstant])
             user_constants
                 .get(idx)
                 .map(|uc| StackEntry::constant(uc.value, uc.num_type))
-                .unwrap_or_else(|| {
-                    // No user constant at this index - return 0.0 as fallback
-                    // This maintains backward compatibility when user constants aren't configured
-                    StackEntry::constant(0.0, NumType::Transcendental)
-                })
+                .ok_or(EvalError::MissingUserConstant(idx))
         }
-        // This should never happen if the caller correctly filters by seft()
-        // But return a safe default instead of panicking
-        _ => StackEntry::constant(0.0, NumType::Transcendental),
+        _ => Err(EvalError::Invalid),
     }
 }
 
@@ -540,7 +550,7 @@ fn eval_user_function(
                     match sym.seft() {
                         Seft::A => {
                             // Constant - push onto stack
-                            let entry = eval_constant_with_user(*sym, x, user_constants);
+                            let entry = eval_constant_with_user(*sym, x, user_constants)?;
                             stack.push(entry);
                         }
                         Seft::B => {
@@ -1115,12 +1125,13 @@ mod tests {
     }
 
     #[test]
-    fn test_user_constant_missing_returns_zero() {
-        // When no user constants are provided, user constant symbols return 0.0
+    fn test_user_constant_missing_returns_error() {
+        // Missing user constant slots must fail explicitly instead of silently
+        // changing the expression's meaning.
         let expr = Expression::from_symbols(&[Symbol::UserConstant0]);
 
-        let result = evaluate_with_constants(&expr, 0.0, &[]).unwrap();
-        assert!(approx_eq(result.value, 0.0));
+        let result = evaluate_with_constants(&expr, 0.0, &[]);
+        assert!(matches!(result, Err(EvalError::MissingUserConstant(0))));
     }
 
     #[test]

@@ -112,11 +112,18 @@ impl Expression {
         }
     }
 
-    /// Parse an expression from a postfix string (e.g., "32s1+s*")
+    /// Parse a well-formed postfix expression (e.g., "32s1+s*").
+    ///
+    /// This validates stack discipline while parsing, so malformed or incomplete
+    /// postfix strings return `None` instead of constructing an expression that
+    /// will later panic during formatting.
     pub fn parse(s: &str) -> Option<Self> {
         let mut symbols = SmallVec::new();
         for b in s.bytes() {
             symbols.push(Symbol::from_byte(b)?);
+        }
+        if !Self::is_valid_postfix(&symbols) {
+            return None;
         }
         // Use saturating_add to prevent overflow with maliciously large weights
         let complexity: u32 = symbols
@@ -173,8 +180,12 @@ impl Expression {
     /// validate expressions before processing them.
     #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
+        Self::is_valid_postfix(&self.symbols)
+    }
+
+    fn is_valid_postfix(symbols: &[Symbol]) -> bool {
         let mut depth: i32 = 0;
-        for sym in &self.symbols {
+        for sym in symbols {
             match sym.seft() {
                 Seft::A => depth += 1,
                 Seft::B => { /* pop 1, push 1 - no change */ }
@@ -832,10 +843,10 @@ mod tests {
         assert!(Expression::parse("xs").unwrap().is_valid());
 
         // Invalid: 3 + (not enough operands)
-        assert!(!Expression::parse("3+").unwrap().is_valid());
+        assert!(Expression::parse("3+").is_none());
 
         // Invalid: 3 2 (two values left on stack)
-        assert!(!Expression::parse("32").unwrap().is_valid());
+        assert!(Expression::parse("32").is_none());
     }
 
     #[test]
@@ -894,7 +905,10 @@ mod tests {
     #[test]
     fn test_tree_depth_malformed() {
         // Malformed expressions return 0
-        assert_eq!(Expression::parse("x1").unwrap().tree_depth(), 0); // Two values on stack
+        assert_eq!(
+            Expression::from_symbols(&[Symbol::X, Symbol::One]).tree_depth(),
+            0
+        );
     }
 
     #[test]

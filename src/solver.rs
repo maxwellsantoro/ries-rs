@@ -647,7 +647,7 @@ mod tests {
     #[test]
     fn test_build_solve_ast_malformed() {
         // Expression that would cause stack underflow: + without operands
-        let malformed = expr("+");
+        let malformed = Expression::from_symbols(&[Symbol::Add]);
         let result = build_solve_ast(&malformed);
         assert!(result.is_none(), "Malformed expression should return None");
     }
@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn test_build_solve_ast_incomplete() {
         // Expression with too many operands left on stack: 1 2 3
-        let incomplete = expr("123");
+        let incomplete = Expression::from_symbols(&[Symbol::One, Symbol::Two, Symbol::Three]);
         let result = build_solve_ast(&incomplete);
         assert!(result.is_none(), "Incomplete expression should return None");
     }

@@ -1849,14 +1849,15 @@ mod tests {
         let opts = ExpressionConstraintOptions::default();
 
         // Expression that would cause stack underflow
-        let expr = expr_from_postfix("+"); // Just a binary op
+        let expr = Expression::from_symbols(&[crate::symbol::Symbol::Add]); // Just a binary op
         assert!(
             !expression_respects_constraints(&expr, opts),
             "Malformed expression should return false"
         );
 
         // Incomplete expression (too many values)
-        let expr = expr_from_postfix("12");
+        let expr =
+            Expression::from_symbols(&[crate::symbol::Symbol::One, crate::symbol::Symbol::Two]);
         assert!(
             !expression_respects_constraints(&expr, opts),
             "Incomplete expression should return false"

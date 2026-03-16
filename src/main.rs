@@ -14,14 +14,13 @@ mod cli;
 use clap::Parser;
 use cli::{
     build_gen_config, build_json_output, build_manifest, canon_reduction_enabled,
-    compute_significant_digits_tolerance, format_bytes_binary, format_value, normalize_legacy_args,
-    parse_diagnostics, parse_display_format, parse_memory_size_bytes, parse_symbol_names_from_cli,
-    parse_symbol_sets, parse_symbol_weights_from_cli, parse_user_constant_from_cli,
-    parse_user_function_from_cli, peak_memory_bytes, print_footer, print_header,
-    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table,
-    run_search, Args, DisplayFormat, NormalizedArgs,
+    cli_level_to_complexity, compute_significant_digits_tolerance, format_bytes_binary,
+    format_value, handle_special_modes, load_runtime_profile, normalize_legacy_args,
+    parse_diagnostics, parse_display_format, parse_memory_size_bytes, parse_symbol_sets,
+    peak_memory_bytes, print_footer, print_header, print_match_absolute, print_match_relative,
+    print_show_work_details, print_symbol_table, run_search, Args, CliExit, DisplayFormat,
+    NormalizedArgs,
 };
-use profile::Profile;
 use report::{Report, ReportConfig};
 use ries_rs::{
     canonical_expression_key, expression_respects_constraints, solve_for_x_rhs_expression,
@@ -62,31 +61,9 @@ fn match_is_numeric_anagram(m: &search::Match) -> bool {
     !lhs.is_empty() && lhs == rhs
 }
 
-/// Evaluates an expression and prints the result.
-/// Returns Ok(()) on success, Err with message on failure.
-fn evaluate_and_print(
-    expr_str: &str,
-    x: f64,
-    constants: &[profile::UserConstant],
-    functions: &[profile::UserFunction],
-) -> Result<(), String> {
-    let expr = match expr::Expression::parse(expr_str) {
-        Some(e) => e,
-        None => {
-            return Err(format!("Invalid expression '{}'", expr_str));
-        }
-    };
-
-    match eval::evaluate_with_constants_and_functions(&expr, x, constants, functions) {
-        Ok(result) => {
-            println!("Expression: {}", expr_str);
-            println!("At x = {}", x);
-            println!("Value = {:.15}", result.value);
-            println!("Derivative = {:.15}", result.derivative);
-            Ok(())
-        }
-        Err(e) => Err(format!("Error evaluating expression: {:?}", e)),
-    }
+fn exit_with(err: CliExit) -> ! {
+    eprintln!("{}", err.message);
+    std::process::exit(err.code);
 }
 
 fn main() {
@@ -167,155 +144,15 @@ fn main() {
         args.target,
     );
 
-    // Load profile early (needed for both --eval-expression and search modes)
-    let mut profile = if let Some(profile_path) = profile_arg.as_deref() {
-        match Profile::from_file(profile_path) {
-            Ok(profile) => profile,
-            Err(e) => {
-                eprintln!("{}", e);
-                std::process::exit(2);
-            }
-        }
-    } else {
-        Profile::load_default()
+    let profile = match load_runtime_profile(&args, profile_arg.as_deref()) {
+        Ok(profile) => profile,
+        Err(err) => exit_with(err),
     };
 
-    // Apply preset if specified (before includes, so includes can override)
-    if let Some(preset_name) = &args.preset {
-        if let Some(preset) = presets::Preset::from_str(preset_name) {
-            let preset_profile = preset.to_profile();
-            profile = profile.merge(preset_profile);
-        } else {
-            eprintln!(
-                "Error: Unknown preset '{}'. Use --list-presets to see available presets.",
-                preset_name
-            );
-            std::process::exit(1);
-        }
-    }
-
-    // Include additional profiles
-    for include_path in &args.include {
-        match Profile::from_file(include_path) {
-            Ok(included) => profile = profile.merge(included),
-            Err(e) => {
-                eprintln!("{}", e);
-                std::process::exit(2);
-            }
-        }
-    }
-
-    // Parse user constants from CLI
-    for constant_spec in &args.user_constant {
-        if let Err(e) = parse_user_constant_from_cli(&mut profile, constant_spec) {
-            eprintln!(
-                "Warning: Failed to parse user constant '{}': {}",
-                constant_spec, e
-            );
-        }
-    }
-
-    // Parse user-defined functions from CLI
-    for func_spec in &args.define {
-        if let Err(e) = parse_user_function_from_cli(&mut profile, func_spec) {
-            eprintln!(
-                "Warning: Failed to parse user function '{}': {}",
-                func_spec, e
-            );
-        }
-    }
-
-    // Parse CLI symbol weight overrides
-    if let Some(spec) = &args.symbol_weights {
-        if let Err(e) = parse_symbol_weights_from_cli(&mut profile, spec) {
-            eprintln!(
-                "Warning: Failed to parse --symbol-weights '{}': {}",
-                spec, e
-            );
-        }
-    }
-    if let Some(spec) = &args.symbol_names {
-        if let Err(e) = parse_symbol_names_from_cli(&mut profile, spec) {
-            eprintln!("Warning: Failed to parse --symbol-names '{}': {}", spec, e);
-        }
-    }
-
-    // Handle --find-expression mode (evaluate and exit)
-    if let Some(expr_str) = &args.find_expression {
-        let x = args.at.or(resolved_target).unwrap_or(1.0);
-        if let Err(e) = evaluate_and_print(expr_str, x, &profile.constants, &profile.functions) {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-
-    // Handle --eval-expression mode (evaluate and exit)
-    if let Some(expr_str) = &args.eval_expression {
-        let x = args.at.unwrap_or(1.0);
-        if let Err(e) = evaluate_and_print(expr_str, x, &profile.constants, &profile.functions) {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-
-    // Handle --pslq mode (integer relation detection)
-    if args.pslq {
-        let target = match resolved_target {
-            Some(t) => t,
-            None => {
-                eprintln!("Error: TARGET is required for PSLQ");
-                std::process::exit(1);
-            }
-        };
-
-        let config = pslq::PslqConfig {
-            max_coefficient: args.pslq_max_coeff,
-            max_iterations: 10000,
-            tolerance: 1e-10,
-            extended_constants: args.pslq_extended,
-        };
-
-        println!();
-        println!("   PSLQ Integer Relation Detection");
-        println!("   Target: {:.15}", target);
-        println!("   Max coefficient: {}", config.max_coefficient);
-        if config.extended_constants {
-            println!("   Using extended constant set");
-        }
-        println!();
-
-        // Try to find rational approximation first
-        if let Some((num, den)) = pslq::find_rational_approximation(target, config.max_coefficient)
-        {
-            let approx = num as f64 / den as f64;
-            let error = (approx - target).abs();
-            println!("   Rational approximation:");
-            println!(
-                "   {} / {} = {:.15}  (error: {:.2e})",
-                num, den, approx, error
-            );
-            println!();
-        }
-
-        // Try PSLQ
-        match pslq::find_integer_relation(target, &config) {
-            Some(relation) => {
-                println!("   Integer relation found:");
-                println!("   {}", relation.format());
-                println!("   Residual: {:.2e}", relation.residual);
-                if relation.is_exact {
-                    println!("   (exact match)");
-                }
-            }
-            None => {
-                println!("   No integer relation found within coefficient bounds.");
-                println!("   Try increasing --pslq-max-coeff or using --pslq-extended.");
-            }
-        }
-        println!();
-        return;
+    match handle_special_modes(&args, resolved_target, &profile) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(err) => exit_with(err),
     }
 
     // Target is required when not using --eval-expression
@@ -344,16 +181,8 @@ fn main() {
         println!();
     }
 
-    // Convert level to complexity limits
-    // Calibrated for better coverage while avoiding expression explosion.
-    // Original RIES runs at ~67 complexity with its weight scheme.
-    // Formula: 35 + 10×L gives level 2 = 55, which produces rich match sets
-    // without the OOM risk that complexity 67+ would cause with the full symbol set.
-    let base_lhs: f32 = 35.0;
-    let base_rhs: f32 = 35.0;
-    let level_factor = 10.0 * level_value;
-    let max_lhs_complexity = (base_lhs + level_factor) as u32;
-    let max_rhs_complexity = (base_rhs + level_factor) as u32;
+    // Convert level to CLI complexity limits.
+    let (max_lhs_complexity, max_rhs_complexity) = cli_level_to_complexity(level_value);
 
     // Handle -i/-ie/-r/-re flags
     // --ie = integer exact mode (stops at first exact match)
