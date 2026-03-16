@@ -41,8 +41,8 @@ fn test_wasm_search_with_options() {
     // Convert options to JsValue
     let options_js = options.to_json().expect("options should serialize");
 
-    let result = search(3.14159, Some(options_js)).expect("search with options should succeed");
-    assert!(!result.is_empty(), "search should return results for pi");
+    let result = search(2.0, Some(options_js)).expect("search with options should succeed");
+    assert!(!result.is_empty(), "search should return results for 2.0");
     assert!(result.len() <= 5, "should respect max_matches limit");
 }
 
