@@ -3,6 +3,8 @@
 //! These tests use high complexity limits and all operators.
 //! Run with `cargo test -- --ignored` to include them.
 
+#![cfg(not(target_arch = "wasm32"))]
+
 use ries_rs::gen::{generate_all, GenConfig};
 
 #[test]

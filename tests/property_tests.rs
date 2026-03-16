@@ -3,6 +3,8 @@
 //! Uses proptest to verify mathematical properties of expression evaluation,
 //! including derivative correctness via finite differences and calculus rules.
 
+#![cfg(not(target_arch = "wasm32"))]
+
 use proptest::prelude::*;
 use ries_rs::eval::{evaluate, EvalError};
 use ries_rs::expr::Expression;

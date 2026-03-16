@@ -7,11 +7,10 @@
 
 #![cfg(all(feature = "wasm", target_arch = "wasm32"))]
 
-use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
 
 // Import the WASM functions
-use ries_rs::{init, list_presets, version, wasm_search as search, SearchOptions, WasmMatch};
+use ries_rs::{init, list_presets, version, wasm_search as search, SearchOptions};
 
 #[wasm_bindgen_test]
 fn test_wasm_init() {

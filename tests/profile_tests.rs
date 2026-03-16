@@ -1,5 +1,6 @@
 //! Integration tests for the profile module
 
+#![cfg(not(target_arch = "wasm32"))]
 #![allow(clippy::field_reassign_with_default)]
 
 use ries_rs::profile::{Profile, UserConstant};

@@ -1,5 +1,6 @@
 //! Integration tests for the search module
 
+#![cfg(not(target_arch = "wasm32"))]
 #![allow(clippy::field_reassign_with_default)]
 
 use ries_rs::eval;

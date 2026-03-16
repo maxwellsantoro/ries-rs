@@ -1,5 +1,6 @@
 //! Integration tests for full search functionality
 
+#![cfg(not(target_arch = "wasm32"))]
 #![allow(clippy::field_reassign_with_default)]
 
 mod common;

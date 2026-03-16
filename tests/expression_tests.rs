@@ -1,5 +1,6 @@
 //! Tests for expression parsing, conversion, and complexity
 
+#![cfg(not(target_arch = "wasm32"))]
 #![allow(clippy::field_reassign_with_default)]
 
 mod common;

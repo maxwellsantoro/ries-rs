@@ -94,9 +94,14 @@ thiserror = "1.0"
 libc = "0.2"
 
 [dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dev-dependencies]
 criterion = "0.5"
 proptest = "1.4"
-wasm-bindgen-test = "0.3"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [[bench]]
 name = "evaluation"
