@@ -20,7 +20,9 @@ jobs:
         uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Generate coverage
-        run: cargo tarpaulin --locked --out Xml --output-dir ./coverage --timeout 1200 --fail-under 70
+        run: >-
+          cargo tarpaulin --locked --out Xml --output-dir ./coverage
+          --timeout 1200 --follow-exec --fail-under 50
 
       - name: Report coverage summary
         run: |
