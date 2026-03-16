@@ -20,6 +20,7 @@ Before tagging a release:
    - `cargo build --features wasm --locked`
 4. Sanity-check packaging:
    - `cargo package --allow-dirty --locked`
+   - `cd ries-py && maturin sdist --out dist-check`
 5. Review pending changes:
    - `git status --short`
 
@@ -28,6 +29,12 @@ Before tagging a release:
 - Release automation is tag-driven via `push` tags matching `v*` in `.github/workflows/release.yml`.
 - CI coverage for release-related surfaces is defined in `.github/workflows/ci.yml` (Rust checks/tests, WASM tests, Python bindings crate check).
 - The parity check job is optional when `ries-original/ries.c` is not vendored (it skips automatically).
+- GitHub release publishing now assumes both registry publishing paths are configured:
+  - crates.io via repository secret `CARGO_REGISTRY_TOKEN`
+  - PyPI via Trusted Publishing for the GitHub environment named `pypi`
+  - Registry publish steps are rerun-safe:
+    - crates.io skips upload if the tagged `ries` version already exists
+    - PyPI uses `skip-existing` for already-uploaded files
 
 ### Create the Release
 
@@ -41,7 +48,10 @@ Before tagging a release:
    - `build-binaries` (Linux/macOS/Windows CLI artifacts)
    - `build-wasm` (`pkg`, `pkg-node`, `pkg-bundler`)
    - `build-python` (wheels from `ries-py/`)
-   - `create-release` (GitHub release publication)
+   - `build-python-sdist` (source distribution from `ries-py/`)
+   - `publish-crate` (crates.io upload)
+   - `publish-python` (PyPI upload)
+   - `create-release` (GitHub release publication after registry publishes succeed)
 
 ### Artifact Verification
 
@@ -50,6 +60,7 @@ After the workflow finishes, verify the GitHub release contains:
 - CLI archives for Linux/macOS (x86_64 + aarch64 macOS) and Windows zip
 - WASM tarball (`ries-rs-wasm.tar.gz`)
 - Python wheels (`*.whl`)
+- Python source distribution (`*.tar.gz`)
 
 Spot-check at least one artifact per surface if possible:
 
@@ -64,11 +75,15 @@ Use this as the final pass/fail checklist before announcing a release.
 Go only if all of the following are true:
 
 - `CI` is green for the release commit/tag (at minimum: format, clippy, tests, WASM tests, audit, feature checks)
-- GitHub release workflow completed successfully (`build-binaries`, `build-wasm`, `build-python`, `create-release`)
+- GitHub release workflow completed successfully (`build-binaries`, `build-wasm`, `build-python`, `build-python-sdist`, `publish-crate`, `publish-python`, `create-release`)
 - Expected artifact groups are present on the GitHub release:
   - 4 CLI artifacts (Linux x86_64, macOS x86_64, macOS aarch64, Windows x86_64 zip)
   - 1 WASM tarball (`ries-rs-wasm.tar.gz`)
   - >=1 Python wheel artifact set (platform-dependent wheel files)
+  - 1 Python source distribution (`ries_rs-*.tar.gz`)
+- Registry publishes completed and are externally visible:
+  - crates.io package page for the tagged version
+  - PyPI project page for the tagged version
 - `CHANGELOG.md` and release notes describe the shipped version accurately
 - No known P0 regressions discovered during smoke checks
 

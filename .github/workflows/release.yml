@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build-binaries:
@@ -134,9 +135,99 @@ jobs:
           name: python-wheel-${{ matrix.os }}
           path: ries-py/dist/*.whl
 
+  build-python-sdist:
+    name: Build Python sdist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: ries-py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: ries-py/dist/*.tar.gz
+
+  publish-crate:
+    name: Publish crate to crates.io
+    needs: [build-binaries, build-wasm, build-python, build-python-sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Read crate version
+        id: crate_meta
+        shell: bash
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data=json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "ries"))')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Check crates.io for existing version
+        id: crate_exists
+        shell: bash
+        run: |
+          if curl --fail --silent --show-error "https://crates.io/api/v1/crates/ries/${{ steps.crate_meta.outputs.version }}" > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish crate
+        if: steps.crate_exists.outputs.exists != 'true'
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Note skipped crate publish
+        if: steps.crate_exists.outputs.exists == 'true'
+        run: echo "ries ${{ steps.crate_meta.outputs.version }} is already published on crates.io; skipping upload."
+
+  publish-python:
+    name: Publish Python distributions to PyPI
+    needs: [build-python, build-python-sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ries-rs/
+    steps:
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheel-*
+          path: python-dist
+          merge-multiple: true
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: python-dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python-dist
+          skip-existing: true
+
   create-release:
     name: Create Release
-    needs: [build-binaries, build-wasm, build-python]
+    needs: [build-binaries, build-wasm, build-python, build-python-sdist, publish-crate, publish-python]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
