@@ -2,7 +2,7 @@
 //!
 //! Tests for WebAssembly bindings. Run with:
 //! ```bash
-//! wasm-pack test --node
+//! wasm-pack test --node -- --features wasm
 //! ```
 
 #![cfg(all(feature = "wasm", target_arch = "wasm32"))]

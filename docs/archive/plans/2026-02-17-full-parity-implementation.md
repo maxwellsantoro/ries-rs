@@ -575,7 +575,7 @@ git commit -m "feat: implement --derivative-margin threshold"
 #!/bin/bash
 # Compare ries-rs output with original RIES
 
-ORIGINAL="/path/to/original/ries"
+ORIGINAL="${RIES_ORIGINAL_BIN:-/path/to/original/ries}"
 RIES_RS="cargo run --quiet --"
 
 TARGET=${1:-"2.5063"}

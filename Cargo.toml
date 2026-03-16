@@ -11,8 +11,7 @@ readme = "README.md"
 keywords = ["math", "equation", "solver", "algebraic", "ries"]
 categories = ["mathematics", "science"]
 exclude = [
-    # Local dev / agent tooling
-    ".claude/**",
+    # Local dev tooling
     ".playwright-mcp/**",
     ".codex-playwright/**",
 

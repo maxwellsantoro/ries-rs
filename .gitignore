@@ -19,11 +19,9 @@ env/
 # Node.js and WASM artifacts
 node_modules/
 package-lock.json
-web/
 pkg/
 *.wasm
-*.js
-*.d.ts
+test_wasm.js
 
 # IDE and editor files
 .idea/
@@ -41,13 +39,21 @@ pkg/
 *.tmp
 *.bak
 test-results/
+output/
 playwright-report/
 .playwright-mcp/
 .codex-playwright/
-output/playwright/
 
-# Claude local config
+# Local assistant config
+.claude/
+CLAUDE.md
 .claude/settings.local.json
+
+# Local cargo config
+.cargo/
+
+# Local binaries
+rust_out
 
 # Tool backups
 Cargo.toml.orig
