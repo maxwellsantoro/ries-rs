@@ -80,6 +80,8 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
     strategy:
       fail-fast: false
       matrix:
@@ -91,21 +93,29 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --tests --locked
+        run: cargo nextest run --tests --locked
 
   test-highprec:
     name: Test (highprec feature)
     runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
@@ -114,7 +124,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgmp-dev libmpfr-dev
 
       - name: Run tests with highprec feature
-        run: cargo test --tests --features highprec --locked
+        run: cargo nextest run --tests --features highprec --locked
 
   test-wasm:
     name: Test (WASM)
