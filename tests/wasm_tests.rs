@@ -55,8 +55,8 @@ fn test_wasm_basic_search() {
 #[wasm_bindgen_test]
 fn test_wasm_search_with_options() {
     // Match the public JS API by passing a plain options object.
-    let limited =
-        search(2.0, Some(search_options(3, 1))).expect("search with limited options should succeed");
+    let limited = search(2.0, Some(search_options(3, 1)))
+        .expect("search with limited options should succeed");
     let expanded = search(2.0, Some(search_options(3, 5)))
         .expect("search with expanded options should succeed");
 
