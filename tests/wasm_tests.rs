@@ -7,10 +7,29 @@
 
 #![cfg(all(feature = "wasm", target_arch = "wasm32"))]
 
+use js_sys::{Object, Reflect};
+use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
 
 // Import the WASM functions
-use ries_rs::{init, list_presets, version, wasm_search as search, SearchOptions};
+use ries_rs::{init, list_presets, version, wasm_search as search};
+
+fn search_options(level: u32, max_matches: u32) -> JsValue {
+    let options = Object::new();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("level"),
+        &JsValue::from_f64(level.into()),
+    )
+    .expect("level should be set");
+    Reflect::set(
+        &options,
+        &JsValue::from_str("maxMatches"),
+        &JsValue::from_f64(max_matches.into()),
+    )
+    .expect("maxMatches should be set");
+    options.into()
+}
 
 #[wasm_bindgen_test]
 fn test_wasm_init() {
@@ -35,15 +54,17 @@ fn test_wasm_basic_search() {
 
 #[wasm_bindgen_test]
 fn test_wasm_search_with_options() {
-    // Test search with custom options
-    let options = SearchOptions::new().level(1).max_matches(5);
+    // Match the public JS API by passing a plain options object.
+    let limited =
+        search(2.0, Some(search_options(3, 1))).expect("search with limited options should succeed");
+    let expanded = search(2.0, Some(search_options(3, 5)))
+        .expect("search with expanded options should succeed");
 
-    // Convert options to JsValue
-    let options_js = options.to_json().expect("options should serialize");
-
-    let result = search(2.0, Some(options_js)).expect("search with options should succeed");
-    assert!(!result.is_empty(), "search should return results for 2.0");
-    assert!(result.len() <= 5, "should respect max_matches limit");
+    assert_eq!(limited.len(), 1, "maxMatches=1 should cap the result count");
+    assert!(
+        expanded.len() > limited.len(),
+        "raising maxMatches should allow more results"
+    );
 }
 
 #[wasm_bindgen_test]
