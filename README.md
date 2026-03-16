@@ -12,6 +12,8 @@ The historical acronym is RIES, for "RILYBOT Inverse Equation Solver". This
 repository aims to be a modern, documented, reproducible reference
 implementation rather than a historical clone.
 
+![RIES-RS web UI](docs/assets/web-ui.png)
+
 ## Install
 
 Until packaged release binaries are published, the primary CLI install path is

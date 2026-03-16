@@ -35,6 +35,8 @@ Before tagging a release:
 2. Create and push an annotated tag:
    - `git tag -a vX.Y.Z -m "vX.Y.Z"`
    - `git push origin vX.Y.Z`
+   - If present, the release workflow will use `docs/releases/vX.Y.Z.md` as the
+     GitHub release body; otherwise it falls back to `.github/release-template.md`
 3. Monitor the GitHub Actions release workflow:
    - `build-binaries` (Linux/macOS/Windows CLI artifacts)
    - `build-wasm` (`pkg`, `pkg-node`, `pkg-bundler`)

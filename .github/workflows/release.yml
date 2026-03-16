@@ -150,31 +150,19 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -la artifacts/
 
+      - name: Select release notes
+        id: release_notes
+        shell: bash
+        run: |
+          BODY_PATH=".github/release-template.md"
+          if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
+            BODY_PATH="docs/releases/${GITHUB_REF_NAME}.md"
+          fi
+          echo "body_path=${BODY_PATH}" >> "$GITHUB_OUTPUT"
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             artifacts/**/*
-          body: |
-            ## ries-rs Release
-
-            ### Downloads
-
-            | Platform | File |
-            |----------|------|
-            | Linux x86_64 | `ries-rs-linux-x86_64.tar.gz` |
-            | macOS x86_64 | `ries-rs-macos-x86_64.tar.gz` |
-            | macOS ARM | `ries-rs-macos-aarch64.tar.gz` |
-            | Windows | `ries-rs-windows-x86_64.exe.zip` |
-            | WASM | `ries-rs-wasm.tar.gz` |
-            | Python wheels | `*.whl` |
-
-            ### Citation
-
-            If you use this software in academic work, please cite using the BibTeX entry in the repository's CITATION.cff file.
-
-            A DOI for this release will be available on Zenodo after the release is published.
-
-            ### Changes
-
-            See CHANGELOG.md for details.
+          body_path: ${{ steps.release_notes.outputs.body_path }}
