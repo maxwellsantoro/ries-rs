@@ -182,15 +182,45 @@ jobs:
         id: crate_exists
         shell: bash
         run: |
-          if curl --fail --silent --show-error "https://crates.io/api/v1/crates/ries/${{ steps.crate_meta.outputs.version }}" > /dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          http_code=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/crates-version.json \
+            --write-out "%{http_code}" \
+            --user-agent "ries-rs-release/${{ steps.crate_meta.outputs.version }} github-actions" \
+            "https://crates.io/api/v1/crates/ries/${{ steps.crate_meta.outputs.version }}")
+
+          case "$http_code" in
+            200)
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "exists=unknown" >> "$GITHUB_OUTPUT"
+              echo "Unexpected crates.io response code: $http_code; continuing to publish attempt."
+              ;;
+          esac
 
       - name: Publish crate
         if: steps.crate_exists.outputs.exists != 'true'
-        run: cargo publish --locked
+        shell: bash
+        run: |
+          set -o pipefail
+          publish_log="$(mktemp)"
+
+          if cargo publish --locked 2>&1 | tee "$publish_log"; then
+            exit 0
+          fi
+
+          status=${PIPESTATUS[0]}
+          if grep -Eqi 'already (exists|uploaded|present)' "$publish_log"; then
+            echo "ries ${{ steps.crate_meta.outputs.version }} is already published on crates.io; treating rerun as success."
+            exit 0
+          fi
+
+          exit "$status"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -223,6 +253,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: python-dist
+          password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
 
   create-release:

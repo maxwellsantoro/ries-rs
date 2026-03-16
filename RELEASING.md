@@ -31,7 +31,7 @@ Before tagging a release:
 - The parity check job is optional when `ries-original/ries.c` is not vendored (it skips automatically).
 - GitHub release publishing now assumes both registry publishing paths are configured:
   - crates.io via repository secret `CARGO_REGISTRY_TOKEN`
-  - PyPI via Trusted Publishing for the GitHub environment named `pypi`
+  - PyPI via repository secret `PYPI_API_TOKEN`
   - Registry publish steps are rerun-safe:
     - crates.io skips upload if the tagged `ries` version already exists
     - PyPI uses `skip-existing` for already-uploaded files
