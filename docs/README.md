@@ -9,6 +9,8 @@ This directory is split into current reference docs, active planning notes, and 
 - `COMPLEXITY.md`: Symbol weight model and ranking rationale used by `ries-rs`
 - `PERFORMANCE.md`: Benchmarking, profiling, and performance guidance
 - `PARITY_STATUS.md`: Current parity/compatibility status summary and links to detailed history
+- `PYTHON_BINDINGS.md`: Python install, API surface, and troubleshooting
+- `WASM_BINDINGS.md`: JavaScript/TypeScript and static web deployment guide
 - `benchmarks/`: Reproducible benchmark baselines and raw measurement artifacts
 
 ## Active Plans
