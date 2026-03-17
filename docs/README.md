@@ -9,8 +9,9 @@ This directory is split into current reference docs, active planning notes, and 
 - `COMPLEXITY.md`: Symbol weight model and ranking rationale used by `ries-rs`
 - `PERFORMANCE.md`: Benchmarking, profiling, and performance guidance
 - `PARITY_STATUS.md`: Current parity/compatibility status summary and links to detailed history
-- `PYTHON_BINDINGS.md`: Python install, API surface, and troubleshooting
-- `WASM_BINDINGS.md`: JavaScript/TypeScript and static web deployment guide
+- `PYTHON_BINDINGS.md`: PyPI install, source development, API surface, and troubleshooting
+- `WASM_BINDINGS.md`: JavaScript/TypeScript bindings, release artifacts, and static web deployment guide
+- `releases/`: Versioned GitHub release notes and shipped artifact summaries
 - `benchmarks/`: Reproducible benchmark baselines and raw measurement artifacts
 
 ## Active Plans
@@ -32,3 +33,9 @@ For runtime behavior, trust these in order:
 1. CLI/runtime code in `src/`
 2. Regression tests in `tests/`
 3. High-level summaries (`README.md`, `PARITY_STATUS.md`)
+
+For public install and release surfaces, trust these in order:
+
+1. crates.io for the Rust CLI package (`ries`)
+2. PyPI for the Python package (`ries-rs`)
+3. GitHub Releases for platform binaries and WASM artifacts

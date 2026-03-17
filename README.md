@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml)
 [![Coverage](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml)
+[![Crates.io](https://img.shields.io/crates/v/ries.svg)](https://crates.io/crates/ries)
+[![PyPI](https://img.shields.io/pypi/v/ries-rs.svg)](https://pypi.org/project/ries-rs/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `ries-rs` is a Rust implementation of Robert P. Munafo's RIES inverse equation
@@ -16,10 +18,18 @@ implementation rather than a historical clone.
 
 ## Install
 
-Until packaged release binaries are published, the primary CLI install path is
-from git or source.
-
 ### CLI
+
+The crates.io package is named `ries`; the installed binary is `ries-rs`.
+
+```bash
+cargo install ries --locked
+```
+
+Prebuilt Linux, macOS, and Windows archives are attached to each
+[GitHub release](https://github.com/maxwellsantoro/ries-rs/releases).
+
+For unreleased development builds:
 
 ```bash
 cargo install --git https://github.com/maxwellsantoro/ries-rs --locked
@@ -31,12 +41,21 @@ cargo install --path . --locked
 ### Python Bindings
 
 ```bash
+pip install ries-rs
+```
+
+For local source development of the bindings:
+
+```bash
 pip install maturin
 cd ries-py
 maturin develop --release
 ```
 
 ### Web App / WASM
+
+GitHub releases include a `ries-rs-wasm.tar.gz` artifact with the generated WASM
+packages. To build the browser bundle locally:
 
 ```bash
 npm run build:web:site
@@ -165,8 +184,8 @@ historical notes.
 ### Python
 
 The Python bindings expose `ries-rs.search()` and typed match objects through
-PyO3. See [docs/PYTHON_BINDINGS.md](docs/PYTHON_BINDINGS.md) for installation,
-API details, and troubleshooting.
+PyO3. See [docs/PYTHON_BINDINGS.md](docs/PYTHON_BINDINGS.md) for PyPI install,
+source development, API details, and troubleshooting.
 
 ### WebAssembly
 

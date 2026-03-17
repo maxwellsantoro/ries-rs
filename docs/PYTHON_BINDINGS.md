@@ -5,6 +5,14 @@ The Python bindings expose the `ries-rs` search engine through PyO3 and
 
 ## Install
 
+Install the published package from PyPI:
+
+```bash
+pip install ries-rs
+```
+
+## Source Development
+
 From the repository root:
 
 ```bash
@@ -17,7 +25,8 @@ To build a wheel for distribution:
 
 ```bash
 cd ries-py
-maturin build --release
+maturin build --release --locked
+maturin sdist --out dist
 ```
 
 If you only want to verify the Rust side without building a wheel:
@@ -119,7 +128,8 @@ print(json.dumps(payload, indent=2))
 
 **ImportError: cannot import name `ries_rs`**
 
-- Rebuild with `maturin develop --release`.
+- Reinstall with `pip install --force-reinstall ries-rs`, or rebuild with
+  `maturin develop --release`.
 - Make sure you are using the same Python environment where `maturin` ran.
 
 **Build fails with linking errors**

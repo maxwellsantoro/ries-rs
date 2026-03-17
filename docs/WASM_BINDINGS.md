@@ -3,6 +3,10 @@
 The WebAssembly build exposes `ries-rs` to JavaScript and TypeScript in
 browsers, Node.js, and static web deployments.
 
+GitHub releases include a `ries-rs-wasm.tar.gz` artifact containing the built
+`pkg`, `pkg-node`, and `pkg-bundler` outputs. Rebuild locally if you need a
+fresh bundle from the current checkout.
+
 ## Build Targets
 
 From the repository root:

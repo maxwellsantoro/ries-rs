@@ -57,6 +57,10 @@ Deploy the contents of `dist/web-site/` to the target directory on your site.
 The bundle is subpath-safe, so it can live at `/projects/ries-rs/` instead of
 only `/web/`.
 
+GitHub Releases provide the compiled WASM package tarball
+(`ries-rs-wasm.tar.gz`). The static-site bundle itself is still intended to be
+built from the repository checkout.
+
 ## Threaded Build (Optional)
 
 For parallel search in browsers:
