@@ -18,7 +18,7 @@ status = "active"
 visibility = "public"
 languages = ["rust"]
 build = "cargo build --release --locked"
-test = "cargo test --tests --locked"
+test = "cargo nextest run --tests --locked"
 topics = [
     "equation-solver",
     "inverse-symbolic-calculator",
