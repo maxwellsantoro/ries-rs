@@ -9,7 +9,7 @@ description = "Find algebraic equations given their solution"
 readme = "PYPI.md"
 license = {text = "MIT"}
 authors = [
-    {name = "RIES Contributors"}
+    {name = "Maxwell Santoro"}
 ]
 keywords = ["math", "equation", "solver", "algebraic", "inverse-symbolic-calculator"]
 classifiers = [

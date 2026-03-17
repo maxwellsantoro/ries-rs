@@ -61,6 +61,14 @@ GitHub Releases provide the compiled WASM package tarball
 (`ries-rs-wasm.tar.gz`). The static-site bundle itself is still intended to be
 built from the repository checkout.
 
+## Test The Web UI
+
+Build the static bundle and run the Playwright smoke tests:
+
+```bash
+npm run test:web:smoke:build
+```
+
 ## Threaded Build (Optional)
 
 For parallel search in browsers:

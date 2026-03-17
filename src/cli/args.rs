@@ -13,7 +13,7 @@ use crate::udf;
 /// Find algebraic equations given their solution
 #[derive(Parser, Debug)]
 #[command(name = "ries-rs")]
-#[command(author = "RIES Contributors")]
+#[command(author = "Maxwell Santoro")]
 #[command(version)]
 #[command(about = "Find algebraic equations given their solution", long_about = None)]
 pub struct Args {

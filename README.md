@@ -16,6 +16,21 @@ implementation rather than a historical clone.
 
 ![RIES-RS web UI](docs/assets/web-ui.png)
 
+## Who It's For
+
+- Researchers who want reproducible constant-recognition runs with structured output
+- Programmers who want a library or CLI for equation search instead of an interactive calculator
+- Math enthusiasts exploring compact identities for familiar constants or strange decimals
+- Educators and demo authors who want Python and browser-facing interfaces in addition to the CLI
+
+## Why Use `ries-rs`
+
+- Rust implementation with a cleaner architecture and broad regression coverage
+- Deterministic mode for reproducible output ordering
+- Structured JSON and manifests for automation and research workflows
+- Browser and library integrations in addition to the CLI
+- Public benchmark artifacts and explicit parity tracking against older versions
+
 ## Install
 
 ### CLI
@@ -117,14 +132,6 @@ Out of scope for v1.0:
 - PSLQ research-platform ambitions beyond the shipped CLI mode
 - Experimental search branches outside the core RIES model
 
-## Why Use `ries-rs`
-
-- Rust implementation with a cleaner architecture and broad regression coverage
-- Deterministic mode for reproducible output ordering
-- Structured JSON and manifests for automation and research workflows
-- Browser and library integrations in addition to the CLI
-- Public benchmark artifacts and explicit parity tracking against older versions
-
 ## Performance
 
 Performance claims are tracked conservatively with separate benchmark artifacts
@@ -206,7 +213,7 @@ If you use `ries-rs` in academic work, cite the project version you used.
 
 ```bibtex
 @software{ries-rs2026,
-  author       = {RIES Contributors},
+  author       = {Santoro, Maxwell},
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
   version      = {1.0.1},

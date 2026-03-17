@@ -39,7 +39,7 @@
     "wasm",
     "webassembly"
   ],
-  "author": "RIES Contributors",
+  "author": "Maxwell Santoro",
   "license": "MIT",
   "repository": {
     "type": "git",

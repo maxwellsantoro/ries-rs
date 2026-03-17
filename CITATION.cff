@@ -5,8 +5,8 @@ version: 1.0.1
 date-released: 2026-03-16
 url: "https://github.com/maxwellsantoro/ries-rs"
 authors:
-  - given-names: RIES
-    family-names: Contributors
+  - given-names: Maxwell
+    family-names: Santoro
 repository-code: "https://github.com/maxwellsantoro/ries-rs"
 license: MIT
 keywords:
