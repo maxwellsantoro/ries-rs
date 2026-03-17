@@ -105,8 +105,8 @@ src/
 2. Make your changes with appropriate tests
 3. Ensure all CI checks pass:
    - `cargo fmt -- --check`
-   - `cargo clippy --all-targets -- -D warnings`
-   - `cargo test --tests --locked`
+   - `cargo clippy --all-targets --locked -- -D warnings`
+   - `cargo nextest run --tests --locked`
 4. Update documentation if changing public APIs
 5. Submit PR with a clear description of changes
 

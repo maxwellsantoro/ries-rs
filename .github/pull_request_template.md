@@ -15,6 +15,6 @@
 ## Checklist
 
 - [ ] `cargo fmt -- --check` passes
-- [ ] `cargo clippy --all-targets -- -D warnings` passes
-- [ ] `cargo test --tests --locked` passes
+- [ ] `cargo clippy --all-targets --locked -- -D warnings` passes
+- [ ] `cargo nextest run --tests --locked` passes
 - [ ] Documentation updated if public APIs changed
