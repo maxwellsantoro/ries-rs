@@ -2,7 +2,9 @@
 
 Current parity/compatibility status for `ries-rs` relative to the original RIES and the `clsn/ries` fork.
 
-## Current State (2026-02-24)
+## Current State (2026-03-17)
+
+Last reviewed after the `v1.0.1` release packaging/docs update.
 
 - No known mandatory parity blockers remain from the tracked P0/P1/P2 parity work.
 - `--classic` mode defaults to parity-style ranking; `--complexity-ranking` remains available.

@@ -49,10 +49,8 @@
     "url": "https://github.com/maxwellsantoro/ries-rs/issues"
   },
   "homepage": "https://github.com/maxwellsantoro/ries-rs#readme",
-  "dependencies": {
-    "wasm-pack": "^0.14.0"
-  },
   "devDependencies": {
-    "@playwright/test": "^1.58.2"
+    "@playwright/test": "^1.58.2",
+    "wasm-pack": "^0.14.0"
   }
 }

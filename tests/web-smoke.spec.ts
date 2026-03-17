@@ -5,10 +5,17 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function runSmokeTest(page: Page, entryPath: string, screenshotName: string) {
   const consoleErrors: string[] = [];
+  const externalCdnRequests: string[] = [];
 
   page.on("console", (msg) => {
     if (msg.type() === "error") {
       consoleErrors.push(msg.text());
+    }
+  });
+  page.on("request", (req) => {
+    const url = req.url();
+    if (url.includes("cdn.tailwindcss.com") || url.includes("cdn.jsdelivr.net")) {
+      externalCdnRequests.push(url);
     }
   });
   page.on("pageerror", (err) => {
@@ -128,6 +135,7 @@ async function runSmokeTest(page: Page, entryPath: string, screenshotName: strin
   });
 
   expect(consoleErrors).toEqual([]);
+  expect(externalCdnRequests).toEqual([]);
 }
 
 test("web UI loads from the repo layout, shows web-only limitations, and runs a search", async ({

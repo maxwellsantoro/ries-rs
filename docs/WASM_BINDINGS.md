@@ -7,6 +7,18 @@ GitHub releases include a `ries-rs-wasm.tar.gz` artifact containing the built
 `pkg`, `pkg-node`, and `pkg-bundler` outputs. Rebuild locally if you need a
 fresh bundle from the current checkout.
 
+## Prerequisites
+
+From the repository root:
+
+```bash
+npm install
+rustup toolchain install nightly
+```
+
+The local build scripts currently use nightly `wasm-pack` together with
+`-Z build-std`.
+
 ## Build Targets
 
 From the repository root:
@@ -25,8 +37,10 @@ npm run build:node
 npm run build:web:site
 ```
 
-The deployable web bundle ends up in `dist/web-site/`. For the browser UI
-itself, including subpath hosting, see [`web/README.md`](../web/README.md).
+The deployable web bundle ends up in `dist/web-site/`. It includes the vendored
+browser assets needed by `web/index.html`, so it can be served without runtime
+CDN dependencies. For the browser UI itself, including subpath hosting, see
+[`web/README.md`](../web/README.md).
 
 ## Quick Start
 

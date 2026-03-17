@@ -1,10 +1,11 @@
 # RIES-RS Web Interface
 
-Modern, user-friendly web interface for RIES-RS with beautiful math rendering, instant search, and progressive disclosure for beginners and experts.
+Modern, user-friendly web interface for RIES-RS with beautiful math rendering,
+shareable links, and progressive disclosure for beginners and experts.
 
 ## Features
 
-- **Instant Search**: Find algebraic equations for any number in milliseconds
+- **Client-Side Search**: Fast exact-constant lookups and interactive in-browser search controls
 - **Beautiful Math**: KaTeX rendering for LaTeX-quality equations
 - **Quick Constants**: One-click access to built-in constants like π, e, φ, γ, G, and ζ(3)
 - **Advanced Options**: Ranking modes and other power-user controls (with clear web-only/CLI-only guidance)
@@ -13,6 +14,21 @@ Modern, user-friendly web interface for RIES-RS with beautiful math rendering, i
 - **Copy Formats**: Export as plain text, LaTeX, or SymPy equation syntax
 
 Note: PSLQ is currently **CLI-only**; the web UI surfaces it as an unsupported option with guidance.
+
+Search time depends heavily on the target and search level. Exact fast-path
+constants can return immediately, while non-exact searches may take
+substantially longer.
+
+## Prerequisites
+
+From the repository root:
+
+```bash
+npm install
+rustup toolchain install nightly
+```
+
+The current local WASM build scripts use nightly `wasm-pack` via `-Z build-std`.
 
 ## Build WASM
 
@@ -54,8 +70,9 @@ This creates:
 - `dist/web-site/pkg/ries_rs_bg.wasm`
 
 Deploy the contents of `dist/web-site/` to the target directory on your site.
-The bundle is subpath-safe, so it can live at `/projects/ries-rs/` instead of
-only `/web/`.
+The bundle is subpath-safe and self-contained, so it can live at
+`/projects/ries-rs/` instead of only `/web/` and does not need runtime CDN
+access.
 
 GitHub Releases provide the compiled WASM package tarball
 (`ries-rs-wasm.tar.gz`). The static-site bundle itself is still intended to be

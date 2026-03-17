@@ -9,10 +9,16 @@ if [ ! -f "$ROOT_DIR/pkg/ries_rs.js" ]; then
   exit 1
 fi
 
+if [ ! -d "$ROOT_DIR/web/vendor" ]; then
+  echo "error: web/vendor not found; restore vendored browser assets" >&2
+  exit 1
+fi
+
 rm -rf "$SITE_DIR"
 mkdir -p "$SITE_DIR/pkg"
 
 cp "$ROOT_DIR/web/index.html" "$SITE_DIR/index.html"
+cp -R "$ROOT_DIR/web/vendor" "$SITE_DIR/vendor"
 cp -R "$ROOT_DIR/pkg/." "$SITE_DIR/pkg/"
 
 echo "Prepared static site bundle in $SITE_DIR"

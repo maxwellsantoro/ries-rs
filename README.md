@@ -70,14 +70,19 @@ maturin develop --release
 ### Web App / WASM
 
 GitHub releases include a `ries-rs-wasm.tar.gz` artifact with the generated WASM
-packages. To build the browser bundle locally:
+packages. To build the browser bundle locally, install the JS dependencies and
+the nightly Rust toolchain first:
 
 ```bash
+npm install
+rustup toolchain install nightly
 npm run build:web:site
 ```
 
 Deploy the contents of `dist/web-site/` to a path such as
 `https://example.com/projects/ries-rs/`.
+
+The current local WASM build scripts use nightly `wasm-pack` via `-Z build-std`.
 
 Detailed setup guides:
 
