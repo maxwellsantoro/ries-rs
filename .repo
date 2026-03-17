@@ -33,12 +33,13 @@ topics = [
 
 [owners]
 maintainers = ["@maxwellsantoro"]
-security_contact = "unknown"
+security_contact = "https://github.com/maxwellsantoro/ries-rs/security/advisories/new"
 
 [docs]
 root = "docs/"
 getting_started = "README.md"
 architecture = "docs/ARCHITECTURE.md"
+api = "docs/README.md"
 
 [readme]
 title = "RIES-RS"
@@ -51,11 +52,20 @@ sections = [
     "citation",
 ]
 
+[readme.custom_sections.install]
+content = "Install via `cargo install ries --locked` (CLI), `pip install ries-rs` (Python), or download a prebuilt archive from the GitHub releases page."
+
+[readme.custom_sections.documentation]
+content = "Full documentation lives in `docs/`. Start with the [documentation map](docs/README.md) for an index of all guides."
+
+[readme.custom_sections.citation]
+content = "Cite via `CITATION.cff` (canonical). A BibTeX entry and Zenodo DOI are in the README under *How to Cite*."
+
 [compat.github]
-codeowners = "skip"
-security = "skip"
-contributing = "skip"
-pull_request_template = "skip"
+codeowners = "generate"
+security = "generate"
+contributing = "generate"
+pull_request_template = "generate"
 
 [relations]
 references = []
