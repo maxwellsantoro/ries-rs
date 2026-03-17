@@ -6,11 +6,11 @@ Modern, user-friendly web interface for RIES-RS with beautiful math rendering, i
 
 - **Instant Search**: Find algebraic equations for any number in milliseconds
 - **Beautiful Math**: KaTeX rendering for LaTeX-quality equations
-- **Quick Constants**: One-click access to π, e, φ, and more
+- **Quick Constants**: One-click access to built-in constants like π, e, φ, γ, G, and ζ(3)
 - **Advanced Options**: Ranking modes and other power-user controls (with clear web-only/CLI-only guidance)
 - **Shareable Links**: Every search has a unique URL
 - **Dark/Light Mode**: Toggle between themes with persistence
-- **Copy Formats**: Export as plain text, LaTeX, or SymPy
+- **Copy Formats**: Export as plain text, LaTeX, or SymPy equation syntax
 
 Note: PSLQ is currently **CLI-only**; the web UI surfaces it as an unsupported option with guidance.
 
@@ -89,5 +89,5 @@ Cross-Origin-Embedder-Policy: require-corp
 All options can be set via URL for sharing:
 
 ```
-?target=3.14159&level=3&preset=analytic-nt&maxMatches=20&advanced=true
+?target=3.14159&level=3&preset=analytic-nt&max-matches=20&advanced=1
 ```

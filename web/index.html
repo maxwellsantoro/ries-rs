@@ -228,7 +228,7 @@
             class="w-full px-4 py-3 text-lg font-mono bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all placeholder-zinc-400 dark:placeholder-zinc-600"
             autocomplete="off"
             spellcheck="false"
-            aria-describedby="quick-constants"
+            aria-describedby="quick-constants-note"
           />
         </div>
 
@@ -236,6 +236,9 @@
         <div id="quick-constants" class="mb-6 flex flex-wrap gap-2">
           <!-- Constant buttons will be rendered here -->
         </div>
+        <p id="quick-constants-note" class="text-xs text-zinc-600 dark:text-zinc-500 -mt-4 mb-6">
+          Built-in constants the solver can represent directly.
+        </p>
 
         <!-- Controls row -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -337,7 +340,7 @@
                   class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
                   title="PSLQ mode is not available in the web build yet"
                 />
-                <span class="text-sm text-zinc-300">Use PSLQ (CLI only)</span>
+                <span class="text-sm text-zinc-700 dark:text-zinc-300">Use PSLQ (CLI only)</span>
               </label>
 
               <label class="flex items-center gap-2 cursor-pointer">
@@ -347,7 +350,7 @@
                   name="match-all-digits"
                   class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
                 />
-                <span class="text-sm text-zinc-300">Match all digits</span>
+                <span class="text-sm text-zinc-700 dark:text-zinc-300">Match all digits</span>
               </label>
             </div>
             <p id="advanced-support-note" class="text-xs text-zinc-600 dark:text-zinc-500">
@@ -453,15 +456,14 @@
     // Configuration & State (Task 7)
     // ============================================================
 
-    const FAMOUS_CONSTANTS = [
+    const QUICK_CONSTANTS = [
       { name: 'π', value: 3.141592653589793, label: 'Pi', color: 'purple' },
       { name: 'e', value: 2.718281828459045, label: "Euler's number", color: 'purple' },
       { name: 'φ', value: 1.618033988749895, label: 'Golden ratio', color: 'purple' },
       { name: '√2', value: 1.414213562373095, label: 'Square root of 2', color: 'purple' },
-      { name: 'γ', value: 0.577215664901532, label: 'Euler–Mascheroni constant', color: 'purple' },
-      { name: 'c', value: 299792458, label: 'Speed of light (m/s)', color: 'blue' },
-      { name: 'h', value: 6.62607015e-34, label: 'Planck constant', color: 'blue' },
-      { name: 'G', value: 6.67430e-11, label: 'Gravitational constant', color: 'blue' },
+      { name: 'γ', value: 0.5772156649015329, label: 'Euler-Mascheroni constant', color: 'blue' },
+      { name: 'G', value: 0.915965594177219, label: "Catalan's constant", color: 'blue' },
+      { name: 'ζ(3)', value: 1.2020569031595942, label: "Apery's constant", color: 'blue' },
     ];
 
     function getPkgCandidates() {
@@ -545,6 +547,22 @@
       return String(err);
     }
 
+    function getFirstParam(params, names) {
+      for (const name of names) {
+        const value = params.get(name);
+        if (value !== null) {
+          return value;
+        }
+      }
+      return null;
+    }
+
+    function hasAnyParam(params, names) {
+      return names.some(function(name) {
+        return params.has(name);
+      });
+    }
+
     // ============================================================
     // LaTeX Conversion (ASCII infix → LaTeX for KaTeX rendering)
     // ============================================================
@@ -563,6 +581,26 @@
     const CONSTANT_LATEX = {
       pi: '\\pi', phi: '\\varphi', gamma: '\\gamma',
       plastic: 'P', apery: '\\zeta(3)', catalan: 'G',
+    };
+
+    const POSTFIX_SYMPY_ATOMS = {
+      '1': '1',
+      '2': '2',
+      '3': '3',
+      '4': '4',
+      '5': '5',
+      '6': '6',
+      '7': '7',
+      '8': '8',
+      '9': '9',
+      p: 'pi',
+      e: 'E',
+      f: 'GoldenRatio',
+      g: 'EulerGamma',
+      P: 'plastic',
+      z: 'zeta(3)',
+      G: 'Catalan',
+      x: 'x',
     };
 
     function toLatex(expr) {
@@ -603,6 +641,121 @@
         result += ch; i++;
       }
       return result;
+    }
+
+    function postfixToSympy(postfix) {
+      if (!postfix) {
+        return '';
+      }
+
+      const stack = [];
+
+      function popArg() {
+        return stack.length > 0 ? stack.pop() : '?';
+      }
+
+      for (const token of postfix) {
+        if (Object.prototype.hasOwnProperty.call(POSTFIX_SYMPY_ATOMS, token)) {
+          stack.push(POSTFIX_SYMPY_ATOMS[token]);
+          continue;
+        }
+
+        switch (token) {
+          case 'n': {
+            const arg = popArg();
+            stack.push(`-(${arg})`);
+            break;
+          }
+          case 'r': {
+            const arg = popArg();
+            stack.push(`1/(${arg})`);
+            break;
+          }
+          case 'q': {
+            const arg = popArg();
+            stack.push(`sqrt(${arg})`);
+            break;
+          }
+          case 's': {
+            const arg = popArg();
+            stack.push(`(${arg})**2`);
+            break;
+          }
+          case 'l': {
+            const arg = popArg();
+            stack.push(`log(${arg})`);
+            break;
+          }
+          case 'E': {
+            const arg = popArg();
+            stack.push(`exp(${arg})`);
+            break;
+          }
+          case 'S': {
+            const arg = popArg();
+            stack.push(`sin(pi*(${arg}))`);
+            break;
+          }
+          case 'C': {
+            const arg = popArg();
+            stack.push(`cos(pi*(${arg}))`);
+            break;
+          }
+          case 'T': {
+            const arg = popArg();
+            stack.push(`tan(pi*(${arg}))`);
+            break;
+          }
+          case 'W': {
+            const arg = popArg();
+            stack.push(`LambertW(${arg})`);
+            break;
+          }
+          case '+':
+          case '-':
+          case '*':
+          case '/':
+          case '^':
+          case 'v':
+          case 'L':
+          case 'A': {
+            const b = popArg();
+            const a = popArg();
+            switch (token) {
+              case '+':
+                stack.push(`(${a})+(${b})`);
+                break;
+              case '-':
+                stack.push(`(${a})-(${b})`);
+                break;
+              case '*':
+                stack.push(`(${a})*(${b})`);
+                break;
+              case '/':
+                stack.push(`(${a})/(${b})`);
+                break;
+              case '^':
+                stack.push(`(${a})**(${b})`);
+                break;
+              case 'v':
+                stack.push(`(${b})**(1/(${a}))`);
+                break;
+              case 'L':
+                stack.push(`log(${b}, ${a})`);
+                break;
+              case 'A':
+                stack.push(`atan2(${a}, ${b})`);
+                break;
+            }
+            break;
+          }
+          default:
+            stack.push(token);
+            break;
+        }
+      }
+
+      return stack.length > 0 ? stack[stack.length - 1] : '';
     }
 
     // ============================================================
@@ -702,7 +855,7 @@
       const container = document.getElementById('quick-constants');
       container.textContent = '';
 
-      FAMOUS_CONSTANTS.forEach(function(constant) {
+      QUICK_CONSTANTS.forEach(function(constant) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'constant-btn px-3 py-1.5 text-sm font-medium rounded-lg border transition-all';
@@ -820,7 +973,7 @@
         const targetValue = parseFloat(target);
 
         // Build search config object (target is passed separately, not in config)
-        // Note: WASM only supports level, maxMatches, and preset options
+        // Web build supports rankingMode and matchAllDigits in addition to the base search options.
         const searchConfig = {
           level: options.level,
           maxMatches: options.maxMatches,
@@ -980,6 +1133,17 @@
         copyLatexBtn.dataset.value = latexEquation;
         copyLatexBtn.dataset.latex = latexEquation;
         actionsDiv.appendChild(copyLatexBtn);
+
+        // Copy SymPy equation syntax
+        const copySympyBtn = document.createElement('button');
+        copySympyBtn.type = 'button';
+        copySympyBtn.className = 'copy-btn px-3 py-1 text-xs font-medium rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition-colors';
+        copySympyBtn.textContent = 'SymPy';
+        copySympyBtn.dataset.format = 'sympy';
+        copySympyBtn.dataset.value = match.solve_for_x_postfix
+          ? 'Eq(x, ' + postfixToSympy(match.solve_for_x_postfix) + ')'
+          : 'Eq(' + postfixToSympy(match.lhs_postfix || '') + ', ' + postfixToSympy(match.rhs_postfix || '') + ')';
+        actionsDiv.appendChild(copySympyBtn);
 
         cardInner.appendChild(leftDiv);
         cardInner.appendChild(actionsDiv);
@@ -1261,21 +1425,23 @@
         document.getElementById('preset').value = params.get('preset');
       }
 
-      if (params.has('max-matches')) {
-        const maxMatches = parseInt(params.get('max-matches'), 10);
+      const maxMatchesParam = getFirstParam(params, ['max-matches', 'maxMatches']);
+      if (maxMatchesParam !== null) {
+        const maxMatches = parseInt(maxMatchesParam, 10);
         if (!isNaN(maxMatches) && maxMatches >= 1 && maxMatches <= 1000) {
           document.getElementById('max-matches').value = maxMatches;
         }
       }
 
-      if (params.has('ranking-mode')) {
-        document.getElementById('ranking-mode').value = params.get('ranking-mode');
+      const rankingModeParam = getFirstParam(params, ['ranking-mode', 'rankingMode']);
+      if (rankingModeParam !== null) {
+        document.getElementById('ranking-mode').value = rankingModeParam;
       }
 
       const usePslqEl = document.getElementById('use-pslq');
       const matchAllDigitsEl = document.getElementById('match-all-digits');
-      usePslqEl.checked = !usePslqEl.disabled && params.has('use-pslq');
-      matchAllDigitsEl.checked = params.has('match-all-digits');
+      usePslqEl.checked = !usePslqEl.disabled && hasAnyParam(params, ['use-pslq', 'usePslq']);
+      matchAllDigitsEl.checked = hasAnyParam(params, ['match-all-digits', 'matchAllDigits']);
 
       // Show advanced panel if requested
       if (params.has('advanced')) {

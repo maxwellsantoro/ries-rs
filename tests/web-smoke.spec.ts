@@ -19,6 +19,10 @@ async function runSmokeTest(page: Page, entryPath: string, screenshotName: strin
   await page.waitForSelector("#search-button:not([disabled])");
 
   await expect(page.locator("#worker-status")).toContainText("WASM ready");
+  await expect(page.getByText("Built-in constants the solver can represent directly.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Speed of light/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Planck constant/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Gravitational constant/ })).toHaveCount(0);
   const presetOptionCount = await page.locator("#preset option").count();
   expect(presetOptionCount).toBeGreaterThan(1);
 
@@ -38,7 +42,10 @@ async function runSmokeTest(page: Page, entryPath: string, screenshotName: strin
   await expect(page.locator("#status")).toContainText("Found");
   const firstCard = page.locator("#results-container > .result-card").first();
   await expect(firstCard).toBeVisible();
-  await expect(firstCard.locator(".copy-btn")).toHaveCount(2);
+  await expect(firstCard.locator(".copy-btn")).toHaveCount(3);
+  const sympyButton = firstCard.getByRole("button", { name: "SymPy" });
+  await expect(sympyButton).toBeVisible();
+  await expect(sympyButton).toHaveAttribute("data-value", "Eq(x, pi)");
 
   const firstCardText = await firstCard.innerText();
   expect(firstCardText).toContain("Error:");
@@ -136,4 +143,20 @@ test("web UI loads from the static site bundle and runs a search", async ({ page
   );
 
   await runSmokeTest(page, "/dist/web-site/index.html", "web-site-smoke-test.png");
+});
+
+test("web UI accepts legacy camelCase URL params for shared links", async ({ page }) => {
+  await page.goto(
+    "/web/index.html?target=3.141592653589793&maxMatches=5&rankingMode=complexity&matchAllDigits=1&advanced=1",
+    { waitUntil: "domcontentloaded" },
+  );
+  await page.waitForSelector("#search-button:not([disabled])");
+  await expect(page.locator("#advanced-panel")).toBeVisible();
+  await expect(page.locator("#max-matches")).toHaveValue("5");
+  await expect(page.locator("#ranking-mode")).toHaveValue("complexity");
+  await expect(page.locator("#match-all-digits")).toBeChecked();
+  await page.waitForSelector("#results-section:not(.hidden)");
+  const renderedCount = await page.locator("#results-container > .result-card").count();
+  expect(renderedCount).toBeGreaterThan(0);
+  expect(renderedCount).toBeLessThanOrEqual(5);
 });

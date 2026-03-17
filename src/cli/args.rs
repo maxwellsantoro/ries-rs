@@ -20,8 +20,8 @@ pub struct Args {
     /// Target value to find equations for (optional if using --eval-expression)
     pub target: Option<f64>,
 
-    /// Search level (each increment ? 10x more equations)
-    /// Level 0 ? 89M equations, Level 2 ? 11B, Level 5 ? 15T
+    /// Search level (each increment ~10x more equations)
+    /// Level 0 ~ 89M equations, Level 2 ~ 11B, Level 5 ~ 15T
     /// Legacy: "-l 2.5" (with no explicit target) means Liouvillian mode + target 2.5
     #[arg(short = 'l', long, default_value = "2")]
     pub level: String,
@@ -30,7 +30,7 @@ pub struct Args {
     #[arg(short = 'n', long = "max-matches", default_value = "16")]
     pub max_matches: usize,
 
-    /// Show absolute x values instead of T ? error
+    /// Show absolute x values instead of T +/- error
     #[arg(short = 'x', long, alias = "absolute-roots")]
     pub absolute: bool,
 
@@ -381,11 +381,11 @@ pub struct Args {
 
     /// Run PSLQ integer relation detection on the target
     /// Searches for integer coefficients relating target to known constants
-    /// Example: ries-rs 3.14159 --pslq might find x - ? 0
+    /// Example: ries-rs 3.14159 --pslq might find x - pi ~= 0
     #[arg(long)]
     pub pslq: bool,
 
-    /// Use extended constant set for PSLQ (includes ?3, ?5, ln(3), etc.)
+    /// Use extended constant set for PSLQ (includes sqrt(3), sqrt(5), ln(3), etc.)
     #[arg(long)]
     pub pslq_extended: bool,
 
