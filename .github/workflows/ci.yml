@@ -8,6 +8,25 @@ on:
     branches: [main, master]
 
 jobs:
+  dotrepo:
+    name: dotrepo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dotrepo
+        run: cargo install --git https://github.com/maxwellsantoro/dotrepo dotrepo-cli --locked
+
+      - name: Validate manifest
+        run: dotrepo validate
+
+      - name: Check generated surfaces
+        run: dotrepo generate --check
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

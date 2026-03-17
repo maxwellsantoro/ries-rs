@@ -64,8 +64,8 @@ content = "Cite via `CITATION.cff` (canonical). A BibTeX entry and Zenodo DOI ar
 [compat.github]
 codeowners = "generate"
 security = "generate"
-contributing = "generate"
-pull_request_template = "generate"
+contributing = "skip"
+pull_request_template = "skip"
 
 [relations]
 references = []
