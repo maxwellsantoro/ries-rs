@@ -1,0 +1,28 @@
+# Vendored third-party assets — minified JS/CSS and binary fonts are not project code
+web/vendor/
+
+# Binary assets
+*.png
+*.ttf
+*.woff
+*.woff2
+
+# Dependency lock files — long and low signal for code review
+Cargo.lock
+ries-py/Cargo.lock
+
+# Archived and superseded documents — current docs cover the same ground
+docs/archive/
+
+# Internal AI-assistant planning artifacts
+docs/superpowers/
+
+# Raw benchmark data — the markdown summaries in docs/benchmarks/*.md are more useful
+docs/benchmarks/artifacts/
+
+# Academic citation metadata
+.zenodo.json
+CITATION.cff
+
+# PropTest machine-generated regression state
+tests/property_tests.proptest-regressions

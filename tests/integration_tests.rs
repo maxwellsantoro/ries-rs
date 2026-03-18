@@ -111,3 +111,30 @@ fn test_pi_search() {
         .any(|m| m.error.abs() < 1e-14 && m.rhs.expr.to_postfix() == "p");
     assert!(has_pi, "Should find x = pi");
 }
+
+#[test]
+fn test_search_nan_target_returns_empty() {
+    let matches = search(f64::NAN, &default_config(), 20);
+    assert!(
+        matches.is_empty(),
+        "search(NaN) should return empty, got {} matches",
+        matches.len()
+    );
+}
+
+#[test]
+fn test_search_infinite_target_returns_empty() {
+    let matches_pos = search(f64::INFINITY, &default_config(), 20);
+    assert!(
+        matches_pos.is_empty(),
+        "search(+Inf) should return empty, got {} matches",
+        matches_pos.len()
+    );
+
+    let matches_neg = search(f64::NEG_INFINITY, &default_config(), 20);
+    assert!(
+        matches_neg.is_empty(),
+        "search(-Inf) should return empty, got {} matches",
+        matches_neg.len()
+    );
+}

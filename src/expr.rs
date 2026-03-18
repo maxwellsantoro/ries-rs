@@ -264,19 +264,18 @@ impl Expression {
     ///   - 5: Addition, subtraction
     /// - Right-associative operators (power) bind right-to-left
     /// - Left-associative operators bind left-to-right
-    pub fn to_infix(&self) -> String {
-        /// Precedence levels for operators
-        const PREC_ATOM: u8 = 100; // Constants, x, function calls
-        const PREC_POWER: u8 = 9; // ^ (right-associative)
-        const PREC_UNARY: u8 = 8; // Unary minus, reciprocal
-        const PREC_MUL: u8 = 6; // *, /
-        const PREC_ADD: u8 = 4; // +, -
+    /// Convert to infix notation, returning `Err(EvalError::StackUnderflow)` if
+    /// the expression is malformed (e.g. a binary operator with no operands).
+    ///
+    /// Prefer this over [`to_infix`](Self::to_infix) when the expression may come
+    /// from untrusted or user-provided input.
+    pub fn try_to_infix(&self) -> Result<String, crate::eval::EvalError> {
+        const PREC_ATOM: u8 = 100;
+        const PREC_POWER: u8 = 9;
+        const PREC_UNARY: u8 = 8;
+        const PREC_MUL: u8 = 6;
+        const PREC_ADD: u8 = 4;
 
-        /// Check if we need parentheses around an operand
-        /// parent_prec: precedence of the parent operator
-        /// child_prec: precedence of the child expression
-        /// is_right_assoc: true if parent is right-associative
-        /// is_right_operand: true if this is the right operand
         fn needs_paren(
             parent_prec: u8,
             child_prec: u8,
@@ -286,15 +285,12 @@ impl Expression {
             if child_prec < parent_prec {
                 return true;
             }
-            // For right-associative operators, the right operand needs parens
-            // if it has the same precedence (e.g., a^(b^c) needs parens)
             if is_right_assoc && is_right_operand && child_prec == parent_prec {
                 return true;
             }
             false
         }
 
-        /// Wrap in parentheses if needed
         fn maybe_paren_prec(
             s: &str,
             prec: u8,
@@ -309,7 +305,7 @@ impl Expression {
             }
         }
 
-        let mut stack: Vec<(String, u8)> = Vec::new(); // (string, precedence)
+        let mut stack: Vec<(String, u8)> = Vec::new();
 
         for &sym in &self.symbols {
             match sym.seft() {
@@ -319,10 +315,9 @@ impl Expression {
                 Seft::B => {
                     let (arg, arg_prec) = stack
                         .pop()
-                        .expect("stack underflow in to_infix: expression is not valid postfix");
+                        .ok_or(crate::eval::EvalError::StackUnderflow)?;
                     let result = match sym {
                         Symbol::Neg => {
-                            // Negation needs parens around low-precedence expressions
                             let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_UNARY, false, false);
                             format!("-{}", arg_s)
                         }
@@ -362,31 +357,27 @@ impl Expression {
                         | Symbol::UserFunction15 => format!("{}({})", sym.display_name(), arg),
                         _ => "?".to_string(),
                     };
-                    stack.push((result, PREC_ATOM)); // Function calls are atomic
+                    stack.push((result, PREC_ATOM));
                 }
                 Seft::C => {
                     let (b, b_prec) = stack
                         .pop()
-                        .expect("stack underflow in to_infix: expression is not valid postfix");
+                        .ok_or(crate::eval::EvalError::StackUnderflow)?;
                     let (a, a_prec) = stack
                         .pop()
-                        .expect("stack underflow in to_infix: expression is not valid postfix");
+                        .ok_or(crate::eval::EvalError::StackUnderflow)?;
                     let (result, prec) = match sym {
                         Symbol::Add => {
-                            // Left operand never needs parens for left-associative +
-                            // Right operand needs parens if lower precedence
                             let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}+{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Sub => {
-                            // Right operand needs parens for - and +
                             let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}-{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Mul => {
                             let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
                             let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL, false, true);
-                            // Omit * in some cases: 2x instead of 2*x
                             if a_s.chars().last().is_some_and(|c| c.is_ascii_digit())
                                 && b_s.chars().next().is_some_and(|c| c.is_alphabetic())
                             {
@@ -401,10 +392,7 @@ impl Expression {
                             (format!("{}/{}", a_s, b_s), PREC_MUL)
                         }
                         Symbol::Pow => {
-                            // Power is right-associative: a^b^c = a^(b^c)
-                            // Left operand needs parens if lower precedence
                             let a_s = maybe_paren_prec(&a, a_prec, PREC_POWER, true, false);
-                            // Right operand needs parens if same or lower precedence (due to right-assoc)
                             let b_s = maybe_paren_prec(&b, b_prec, PREC_POWER, true, true);
                             (format!("{}^{}", a_s, b_s), PREC_POWER)
                         }
@@ -418,7 +406,12 @@ impl Expression {
             }
         }
 
-        stack.pop().map(|(s, _)| s).unwrap_or_else(|| "?".into())
+        Ok(stack.pop().map(|(s, _)| s).unwrap_or_else(|| "?".into()))
+    }
+
+    pub fn to_infix(&self) -> String {
+        self.try_to_infix()
+            .expect("stack underflow in to_infix: expression is not valid postfix")
     }
 
     /// Convert to infix notation using a symbol table for display names
@@ -976,5 +969,25 @@ mod tests {
         // on the first pop inside the loop. from_symbols bypasses parse validation.
         let expr = Expression::from_symbols(&[Symbol::Add]);
         let _ = expr.to_infix();
+    }
+
+    #[test]
+    fn test_try_to_infix_returns_err_on_malformed_expression() {
+        // from_symbols bypasses parse validation, producing a malformed postfix string.
+        // try_to_infix should return Err(StackUnderflow) rather than panicking.
+        let expr = Expression::from_symbols(&[Symbol::Add]);
+        let result = expr.try_to_infix();
+        assert!(
+            result.is_err(),
+            "try_to_infix on malformed expression should return Err, got Ok({:?})",
+            result.ok()
+        );
+    }
+
+    #[test]
+    fn test_try_to_infix_succeeds_on_valid_expression() {
+        let expr = Expression::parse("32+").unwrap();
+        let result = expr.try_to_infix();
+        assert_eq!(result.unwrap(), "3+2");
     }
 }

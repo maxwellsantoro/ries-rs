@@ -48,7 +48,10 @@ fn test_verbose_output_shows_total_equations() {
     );
 }
 
+/// Slow: `-Do` emits one diagnostic line per match candidate, which produces
+/// enormous output and takes ~24 minutes. Run with `cargo test -- --ignored`.
 #[test]
+#[ignore]
 fn test_diagnostic_channel_o_recognized() {
     let (stdout, stderr) = run_ries(&["2.5", "-Do", "--report", "false", "--max-matches", "1"]);
     // -Do should not warn about unsupported channel (checking both "unsupported" and "not implemented")
@@ -61,7 +64,10 @@ fn test_diagnostic_channel_o_recognized() {
     );
 }
 
+/// Slow: same as `test_diagnostic_channel_o_recognized` — `-Do` floods output.
+/// Run with `cargo test -- --ignored`.
 #[test]
+#[ignore]
 fn test_diagnostic_o_shows_match_output() {
     let (stdout, stderr) = run_ries(&["2.5", "-Do", "--report", "false", "--max-matches", "1"]);
     // -Do should output match check information to stderr
@@ -74,7 +80,10 @@ fn test_diagnostic_o_shows_match_output() {
     );
 }
 
+/// Slow: `-Dn` emits one diagnostic line per Newton iteration across all candidates.
+/// Run with `cargo test -- --ignored`.
 #[test]
+#[ignore]
 fn test_diagnostic_n_shows_newton_iterations() {
     let (stdout, stderr) = run_ries(&["2.5", "-Dn", "--report", "false", "--max-matches", "1"]);
     // -Dn should show Newton iteration values

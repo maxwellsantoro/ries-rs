@@ -20,6 +20,9 @@ env/
 node_modules/
 package-lock.json
 pkg/
+pkg-node/
+pkg-bundler/
+pkg-threads/
 *.wasm
 test_wasm.js
 
@@ -47,7 +50,6 @@ playwright-report/
 # Local assistant config
 .claude/
 CLAUDE.md
-.claude/settings.local.json
 
 # Local cargo config
 .cargo/
@@ -56,8 +58,24 @@ CLAUDE.md
 rust_out
 
 # Tool backups
-Cargo.toml.orig
+*.orig
 
 # Git worktrees
 .worktrees/
 repomix-output.xml
+
+# Coverage reports
+tarpaulin-report.html
+lcov.info
+coverage/
+*.lcov
+
+# Profiling
+flamegraph.svg
+perf.data
+perf.data.old
+*.folded
+
+# Environment
+.env
+.env.*

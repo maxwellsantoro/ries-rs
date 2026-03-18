@@ -431,10 +431,11 @@ impl Symbol {
 
             // Power: depends on exponent
             Pow => {
-                // If exponent is integer, preserves algebraic-ness
-                // Otherwise, generally transcendental
-                if arg_types.len() >= 2 && arg_types[0] == Integer {
-                    arg_types[1]
+                // If exponent is integer, result has the same type as the base.
+                // Otherwise (fractional/algebraic/transcendental exponent), generally transcendental.
+                // arg_types = [base_type, exponent_type] in postfix stack order.
+                if arg_types.len() >= 2 && arg_types[1] == Integer {
+                    arg_types[0]
                 } else {
                     Transcendental
                 }
@@ -824,5 +825,43 @@ mod tests {
         assert_eq!(Symbol::Pi.seft(), Seft::A);
         assert_eq!(Symbol::Sqrt.seft(), Seft::B);
         assert_eq!(Symbol::Add.seft(), Seft::C);
+    }
+
+    // result_type arg order: for postfix `a b Pow`, arg_types = [base_type, exponent_type]
+    // Rule: integer exponent preserves the base's type; non-integer exponent → Transcendental.
+
+    #[test]
+    fn test_pow_result_type_algebraic_base_integer_exponent() {
+        // sqrt(2)^2 → Algebraic^Integer → should be Algebraic (an algebraic number raised
+        // to an integer power is still algebraic)
+        let result = Symbol::Pow.result_type(&[NumType::Algebraic, NumType::Integer]);
+        assert_eq!(
+            result,
+            NumType::Algebraic,
+            "Algebraic^Integer should be Algebraic"
+        );
+    }
+
+    #[test]
+    fn test_pow_result_type_integer_base_algebraic_exponent() {
+        // 2^phi → Integer^Algebraic → should be Transcendental
+        // (non-integer exponent makes the result transcendental by Gelfond-Schneider)
+        let result = Symbol::Pow.result_type(&[NumType::Integer, NumType::Algebraic]);
+        assert_eq!(
+            result,
+            NumType::Transcendental,
+            "Integer^Algebraic should be Transcendental"
+        );
+    }
+
+    #[test]
+    fn test_pow_result_type_integer_base_integer_exponent() {
+        // 2^3 = 8 → Integer
+        let result = Symbol::Pow.result_type(&[NumType::Integer, NumType::Integer]);
+        assert_eq!(
+            result,
+            NumType::Integer,
+            "Integer^Integer should be Integer"
+        );
     }
 }

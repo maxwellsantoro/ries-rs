@@ -540,6 +540,9 @@ pub fn search_with_stats_and_options(
     stop_at_exact: bool,
     stop_below: Option<f64>,
 ) -> (Vec<Match>, SearchStats) {
+    if !target.is_finite() {
+        return (Vec::new(), SearchStats::default());
+    }
     let config = SearchConfig {
         target,
         max_matches,
@@ -562,6 +565,10 @@ pub fn search_with_stats_and_config(
     gen_config: &crate::gen::GenConfig,
     config: &SearchConfig,
 ) -> (Vec<Match>, SearchStats) {
+    if !config.target.is_finite() {
+        return (Vec::new(), SearchStats::default());
+    }
+
     use crate::gen::generate_all_with_limit_and_context;
 
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
