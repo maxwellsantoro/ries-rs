@@ -21,6 +21,8 @@ fn test_verbose_output_shows_target() {
         "false",
         "--max-matches",
         "1",
+        "-l",
+        "0",
     ]);
     assert!(
         stdout.contains("Target:") || stdout.contains("target"),
@@ -38,6 +40,8 @@ fn test_verbose_output_shows_total_equations() {
         "false",
         "--max-matches",
         "1",
+        "-l",
+        "0",
     ]);
     // Should show total equations tested or similar summary info
     let lower = stdout.to_lowercase();
@@ -98,7 +102,7 @@ fn test_diagnostic_n_shows_newton_iterations() {
 
 #[test]
 fn test_diagnostic_a_recognized() {
-    let (_stdout, stderr) = run_ries(&["2.5", "-DA", "--report", "false", "--max-matches", "1"]);
+    let (_stdout, stderr) = run_ries(&["2.5", "-DA", "--report", "false", "--max-matches", "1", "-l", "0"]);
     // -DA should not warn about unsupported channel
     assert!(!stderr.to_lowercase().contains("unsupported"));
 }
@@ -113,6 +117,8 @@ fn test_match_all_digits_option_accepted() {
         "false",
         "--max-matches",
         "1",
+        "-l",
+        "0",
     ]);
     assert!(stdout.contains("x"));
 }
@@ -128,13 +134,15 @@ fn test_derivative_margin_option_accepted() {
         "false",
         "--max-matches",
         "1",
+        "-l",
+        "0",
     ]);
     assert!(stdout.contains("x"));
 }
 
 #[test]
 fn test_diagnostic_g_recognized() {
-    let (stdout, stderr) = run_ries(&["2.5", "-DG", "--report", "false", "--max-matches", "1"]);
+    let (stdout, stderr) = run_ries(&["2.5", "-DG", "--report", "false", "--max-matches", "1", "-l", "0"]);
     // -DG should not warn about unsupported channel
     let combined = format!("{}{}", stdout, stderr).to_lowercase();
     assert!(
@@ -147,7 +155,7 @@ fn test_diagnostic_g_recognized() {
 
 #[test]
 fn test_diagnostic_g_shows_db_add_output() {
-    let (stdout, stderr) = run_ries(&["2.5", "-DG", "--report", "false", "--max-matches", "1"]);
+    let (stdout, stderr) = run_ries(&["2.5", "-DG", "--report", "false", "--max-matches", "1", "-l", "0"]);
     // -DG should output database add information to stderr
     let output = format!("{}{}", stdout, stderr).to_lowercase();
     assert!(
@@ -160,7 +168,7 @@ fn test_diagnostic_g_shows_db_add_output() {
 
 #[test]
 fn test_diagnostic_b_recognized() {
-    let (_stdout, stderr) = run_ries(&["2.5", "-DB", "--report", "false", "--max-matches", "1"]);
+    let (_stdout, stderr) = run_ries(&["2.5", "-DB", "--report", "false", "--max-matches", "1", "-l", "0"]);
     // -DB should not warn about unsupported channel
     assert!(!stderr.to_lowercase().contains("unsupported"));
 }
@@ -174,6 +182,8 @@ fn test_additional_diagnostic_channels_are_recognized() {
         "false",
         "--max-matches",
         "1",
+        "-l",
+        "0",
     ]);
     let lower = stderr.to_lowercase();
     assert!(
@@ -186,9 +196,9 @@ fn test_additional_diagnostic_channels_are_recognized() {
 #[test]
 fn test_report_mode_honors_format() {
     // Report mode with -F0 should show postfix format
-    let (stdout0, _) = run_ries(&["2.5", "-F0", "--max-matches", "1"]);
+    let (stdout0, _) = run_ries(&["2.5", "-F0", "--max-matches", "1", "-l", "0"]);
     // Report mode with -F2 should show infix format
-    let (stdout2, _) = run_ries(&["2.5", "-F2", "--max-matches", "1"]);
+    let (stdout2, _) = run_ries(&["2.5", "-F2", "--max-matches", "1", "-l", "0"]);
 
     // -F0 should show postfix notation (compact postfix like "x52/" without spaces)
     // Classic mode shows "52/" for 5/2, report mode should do the same
@@ -220,6 +230,8 @@ fn test_no_slow_messages_suppresses_precision_warning() {
         "--precision",
         "256",
         "--no-slow-messages",
+        "-l",
+        "0",
     ]);
     assert!(output.status.success(), "command should still succeed");
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();

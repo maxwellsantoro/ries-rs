@@ -264,6 +264,7 @@ impl Expression {
     ///   - 5: Addition, subtraction
     /// - Right-associative operators (power) bind right-to-left
     /// - Left-associative operators bind left-to-right
+    ///
     /// Convert to infix notation, returning `Err(EvalError::StackUnderflow)` if
     /// the expression is malformed (e.g. a binary operator with no operands).
     ///

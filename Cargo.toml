@@ -47,6 +47,8 @@ exclude = [
 [lib]
 name = "ries_rs"
 path = "src/lib.rs"
+# cdylib is required for wasm-pack (WASM) builds. Pure Rust consumers only
+# need rlib; use `cargo build --bin ries-rs` to skip the cdylib link step.
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
