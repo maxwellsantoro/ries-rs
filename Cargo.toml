@@ -122,9 +122,9 @@ codegen-units = 1
 opt-level = 3
 panic = "abort"
 
-# Benchmarks need unwinding for Criterion to work
 [profile.bench]
 inherits = "release"
-panic = "unwind"
+# Cargo's bench harness already forces unwinding, so an explicit `panic`
+# setting here only generates a warning during normal release checks.
 
 # Create .cargo/config.toml for native CPU optimization
