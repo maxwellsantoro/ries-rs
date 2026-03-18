@@ -3,7 +3,7 @@
 [![CI](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml)
 [![Coverage](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml)
 [![Crates.io](https://img.shields.io/crates/v/ries.svg)](https://crates.io/crates/ries)
-[![PyPI](https://img.shields.io/pypi/v/ries-rs.svg)](https://pypi.org/project/ries-rs/)
+[![PyPI](https://img.shields.io/pypi/v/ries-rs.svg?cacheSeconds=300)](https://pypi.org/project/ries-rs/)
 [![DOI](https://zenodo.org/badge/1123876688.svg)](https://doi.org/10.5281/zenodo.19101924)
 [![Live Demo](https://img.shields.io/badge/live-demo-0f766e)](https://maxwellsantoro.com/projects/ries-rs/app/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
