@@ -45,7 +45,8 @@ def local_markdown_images(markdown: str) -> list[str]:
 def main() -> int:
     cargo_toml = load_toml(ROOT / "Cargo.toml")
     package_json = load_json(ROOT / "package.json")
-    package_lock = load_json(ROOT / "package-lock.json")
+    package_lock_path = ROOT / "package-lock.json"
+    package_lock = load_json(package_lock_path) if package_lock_path.is_file() else None
     ries_py_cargo = load_toml(ROOT / "ries-py" / "Cargo.toml")
     ries_py_project = load_toml(ROOT / "ries-py" / "pyproject.toml")
     citation_text = read_text(ROOT / "CITATION.cff")
@@ -55,8 +56,6 @@ def main() -> int:
     versions = {
         "Cargo.toml": expected_version,
         "package.json": package_json["version"],
-        "package-lock.json": package_lock["version"],
-        'package-lock.json packages[""]': package_lock["packages"][""]["version"],
         "ries-py/Cargo.toml": ries_py_cargo["package"]["version"],
         "ries-py/Cargo.toml dependency": ries_py_cargo["dependencies"]["ries_core"]["version"],
         "ries-py/pyproject.toml": ries_py_project["project"]["version"],
@@ -67,6 +66,9 @@ def main() -> int:
             "README BibTeX version",
         ),
     }
+    if package_lock is not None:
+        versions["package-lock.json"] = package_lock["version"]
+        versions['package-lock.json packages[""]'] = package_lock["packages"][""]["version"]
 
     homepage_checks = {
         "Cargo.toml homepage": cargo_toml["package"]["homepage"],

@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "ries"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "clap",
  "dirs",
@@ -424,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "ries-py"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "pyo3",
  "ries",
