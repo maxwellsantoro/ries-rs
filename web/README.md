@@ -1,23 +1,21 @@
-# RIES-RS Web Interface
+# Web Interface
 
-Modern, user-friendly web interface for RIES-RS with beautiful math rendering,
-shareable links, and progressive disclosure for beginners and experts.
+`web/index.html` is the repository's browser UI for the WASM build. It is a
+static client-side application that loads the generated `pkg/` bundle, renders
+results with KaTeX, and supports shareable URLs plus a deployable static-site
+bundle.
 
-## Features
+## Current Capabilities
 
-- **Client-Side Search**: Fast exact-constant lookups and interactive in-browser search controls
-- **Beautiful Math**: KaTeX rendering for LaTeX-quality equations
-- **Quick Constants**: One-click access to built-in constants like π, e, φ, γ, G, and ζ(3)
-- **Advanced Options**: Ranking modes and other power-user controls (with clear web-only/CLI-only guidance)
-- **Shareable Links**: Every search has a unique URL
-- **Dark/Light Mode**: Toggle between themes with persistence
-- **Copy Formats**: Export as plain text, LaTeX, or SymPy equation syntax
+- in-browser search against the WASM engine
+- quick constant buttons for built-in constants
+- ranking-mode and match-precision controls
+- cards/text result views with copy and download actions
+- shareable URL parameters
+- dark/light theme toggle
 
-Note: PSLQ is currently **CLI-only**; the web UI surfaces it as an unsupported option with guidance.
-
-Search time depends heavily on the target and search level. Exact fast-path
-constants can return immediately, while non-exact searches may take
-substantially longer.
+PSLQ remains CLI-only; the web UI exposes it only as an unsupported option with
+guidance.
 
 ## Prerequisites
 
@@ -75,8 +73,8 @@ The bundle is subpath-safe and self-contained, so it can live at
 access.
 
 GitHub Releases provide the compiled WASM package tarball
-(`ries-rs-wasm.tar.gz`). The static-site bundle itself is still intended to be
-built from the repository checkout.
+(`ries-rs-wasm.tar.gz`). The static-site bundle itself is intended to be built
+from the repository checkout.
 
 ## Test The Web UI
 
@@ -111,7 +109,7 @@ Cross-Origin-Embedder-Policy: require-corp
 
 ## URL Parameters
 
-All options can be set via URL for sharing:
+The UI restores state from URL parameters for shared links. Example:
 
 ```
 ?target=3.14159&level=3&preset=analytic-nt&max-matches=20&advanced=1

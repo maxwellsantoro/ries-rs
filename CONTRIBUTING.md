@@ -1,119 +1,106 @@
 # Contributing to RIES-RS
 
-Thank you for your interest in contributing to RIES-RS! This document provides
-guidelines and instructions for contributing.
+This file covers local development expectations and the checks that matter for
+the repository's public release surfaces.
 
-## Documentation and Source of Truth
+## Source of Truth
 
-- `README.md`: User-facing overview, installation, and usage
-- `docs/README.md`: Documentation map (current docs vs archived materials)
-- `docs/PARITY_STATUS.md`: Current parity/compatibility summary
-- `RELEASING.md`: Release-process notes and templates
+- `src/`: runtime behavior
+- `tests/`: regression expectations
+- `README.md`: user-facing overview
+- `docs/README.md`: map of current docs vs archived material
+- `RELEASING.md`: maintainer release checklist
+
+When docs and code diverge, code and tests win.
 
 ## Development Setup
 
-### Prerequisites
+### Required tooling
 
-- Rust 1.70 or later (install via [rustup](https://rustup.rs/))
-- For `highprec` feature: GMP and MPFR libraries
+- Rust stable via [rustup](https://rustup.rs/)
+- For `highprec`: GMP and MPFR
   - Ubuntu/Debian: `sudo apt-get install libgmp-dev libmpfr-dev`
   - macOS: `brew install gmp mpfr`
-  - Windows: Use MSYS2 or WSL
+- For Python bindings: Python + `maturin`
+- For web/WASM work: Node.js and Rust nightly
 
-### Building
+### Common build commands
 
 ```bash
-# Standard build
+# Core crate / CLI
 cargo build
 
-# With all optional features
+# Optional features
 cargo build --all-features
 
-# Python bindings (requires maturin)
+# Python bindings
+cargo check --manifest-path ries-py/Cargo.toml --locked
+
+# WASM feature surface
+cargo build --features wasm --locked
+```
+
+If you are actively iterating on the Python package:
+
+```bash
 cd ries-py
 maturin develop --release
 ```
 
-> **Note:** The Python bindings live in `ries-py/`. If you just want type-checking
-> without building a wheel, run:
->
-> `cargo check --manifest-path ries-py/Cargo.toml`
+## Verification
 
-### Testing
+Match the CI surfaces relevant to your change.
 
-```bash
-# Run all tests
-cargo test
-
-# Run tests with highprec feature
-cargo test --features highprec
-
-# Run specific test file
-cargo test --test integration_tests
-
-# Run property tests only
-cargo test --test property_tests
-```
-
-## Code Style
-
-We use standard Rust conventions:
+Core Rust checks:
 
 ```bash
-# Format code
-cargo fmt
-
-# Check for linting issues
-cargo clippy --all-targets -- -D warnings
+cargo fmt --all -- --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --all-targets --no-default-features --locked -- -D warnings
+cargo nextest run --tests --locked
 ```
 
-### Key Conventions
-
-1. **Documentation**: All public APIs must have rustdoc comments
-2. **Error handling**: Use `thiserror` for error types
-3. **Testing**: New features require unit tests; mathematical features require property tests
-4. **Commits**: Follow conventional commit format (`feat:`, `fix:`, `docs:`, `refactor:`)
-
-## Project Structure
-
-```
-src/
-├── lib.rs          # Library entry point, re-exports
-├── main.rs         # CLI binary entry
-├── cli/            # CLI argument parsing and output
-├── expr.rs         # Expression representation
-├── eval.rs         # Expression evaluation with AD
-├── gen.rs          # Expression generation
-├── search.rs       # Search and matching
-├── symbol.rs       # Symbol definitions
-└── thresholds.rs   # Named constants
-```
-
-## Feature Flags
-
-| Flag | Description | Dependencies |
-|------|-------------|--------------|
-| `parallel` | Multi-threaded search (default) | rayon |
-| `highprec` | Arbitrary precision arithmetic | rug, GMP, MPFR |
-| `wasm` | WebAssembly bindings | wasm-bindgen |
-
-## Pull Request Process
-
-1. Fork the repository and create a feature branch
-2. Make your changes with appropriate tests
-3. Ensure all CI checks pass:
-   - `cargo fmt -- --check`
-   - `cargo clippy --all-targets --locked -- -D warnings`
-   - `cargo nextest run --tests --locked`
-4. Update documentation if changing public APIs
-5. Submit PR with a clear description of changes
-
-## Running Benchmarks
+Feature and packaging checks:
 
 ```bash
-cargo bench
+cargo clippy --all-targets --features highprec --locked -- -D warnings
+cargo check --manifest-path ries-py/Cargo.toml --locked
+cargo build --features wasm --locked
 ```
 
-## Questions?
+Web UI smoke test when touching `web/`, `src/wasm.rs`, or packaging:
 
-Open an issue for bugs, feature requests, or questions about the codebase.
+```bash
+npm install
+npm run test:web:smoke:build
+```
+
+## Project Layout
+
+- `src/`: engine, CLI layer, reporting, presets, stability, PSLQ, WASM bindings
+- `tests/`: CLI regressions, integration tests, property tests, and web smoke test
+- `ries-py/`: Python extension crate and PyPI packaging metadata
+- `web/`: browser UI
+- `docs/`: current docs plus archived historical material
+- `.github/workflows/`: CI, release, coverage, and benchmark automation
+
+See `docs/ARCHITECTURE.md` for a more complete architectural overview.
+
+## Conventions
+
+1. Public APIs and externally visible behavior changes should come with docs updates.
+2. New runtime behavior should come with regression coverage.
+3. Avoid changing release-surface metadata casually; keep versions and packaging docs in sync.
+4. Prefer small, reviewable commits with clear messages.
+
+## Pull Requests
+
+Before opening a PR, confirm the relevant checks above and call out any skipped
+surface explicitly in the PR description.
+
+If your change affects a public interface, update the matching docs:
+
+- CLI/library behavior: `README.md`, `docs/SEARCH_MODEL.md`, `docs/ARCHITECTURE.md`
+- Python API: `docs/PYTHON_BINDINGS.md`
+- WASM/browser surface: `docs/WASM_BINDINGS.md`, `web/README.md`
+- release process or artifacts: `RELEASING.md`, `docs/releases/`, `CHANGELOG.md`

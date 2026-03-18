@@ -1,19 +1,17 @@
 # Python Bindings
 
-The Python bindings expose the `ries-rs` search engine through PyO3 and
-`maturin`.
+The Python package exposes the `ries-rs` engine through PyO3 as the module
+`ries_rs`.
 
 ## Install
 
-Install the published package from PyPI:
+Published package:
 
 ```bash
 pip install ries-rs
 ```
 
-## Source Development
-
-From the repository root:
+Local development build:
 
 ```bash
 pip install maturin
@@ -21,7 +19,7 @@ cd ries-py
 maturin develop --release
 ```
 
-To build a wheel for distribution:
+Build distribution artifacts:
 
 ```bash
 cd ries-py
@@ -29,116 +27,116 @@ maturin build --release --locked
 maturin sdist --out dist
 ```
 
-If you only want to verify the Rust side without building a wheel:
+Rust-only verification without building a wheel:
 
 ```bash
 cargo check --manifest-path ries-py/Cargo.toml --locked
 ```
+
+## Module API
+
+The module exports:
+
+- `search(...)`
+- `list_presets()`
+- `version()`
+- `PyMatch`
 
 ## Quick Start
 
 ```python
 import ries_rs
 
-results = ries_rs.search(3.1415926535)
-for match in results:
-    print(f"{match.lhs} = {match.rhs}  (error: {match.error:.2e})")
-```
+print(ries_rs.version())
+print(ries_rs.list_presets())
 
-With options:
-
-```python
-import ries_rs
-
-results = ries_rs.search(
-    1.618033988,
-    level=3,
-    max_matches=20,
-    preset="physics",
-    parallel=True,
-)
+results = ries_rs.search(3.141592653589793, level=2, max_matches=8)
+for match in results[:3]:
+    print(match)
 ```
 
 ## `search()` Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `target` | float | required | Target value to search for |
-| `level` | int | 2 | Search depth (0-5) |
-| `max_matches` | int | 16 | Maximum matches to return |
-| `preset` | str | `None` | Domain preset name |
-| `parallel` | bool | `True` | Enable parallel search |
+| Parameter | Type | Default | Notes |
+|-----------|------|---------|-------|
+| `target` | `float` | required | numeric target value |
+| `level` | `int` | `2` | accepted range: `0..=5` |
+| `max_matches` | `int` | `16` | hard-capped at `10000` |
+| `preset` | `str \| None` | `None` | validated against `list_presets()` |
+| `parallel` | `bool` | `True` | falls back to sequential if the extension was built without the `parallel` feature |
+
+Notes:
+
+- The Python API currently exposes the lighter library-level complexity mapping,
+  not the CLI's heavier `-l/--level` mapping.
+- The Python API currently uses complexity-first ranking and does not expose the
+  CLI's broader flag surface.
 
 ## `PyMatch` Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `lhs` | str | Left-hand side expression (contains `x`) |
-| `rhs` | str | Right-hand side expression (constants only) |
-| `lhs_postfix` | str | Postfix representation of the LHS |
-| `rhs_postfix` | str | Postfix representation of the RHS |
-| `x_value` | float | Solved value of `x` |
-| `error` | float | `x_value - target` |
-| `complexity` | int | Complexity score (lower is simpler) |
-| `is_exact` | bool | `True` if error < `1e-14` |
+| `lhs` | `str` | left-hand side in infix form |
+| `rhs` | `str` | right-hand side in infix form |
+| `lhs_postfix` | `str` | left-hand side in postfix form |
+| `rhs_postfix` | `str` | right-hand side in postfix form |
+| `solve_for_x` | `str \| None` | solve-for-x rendering when the equation can be rearranged analytically |
+| `solve_for_x_postfix` | `str \| None` | postfix form of `solve_for_x` |
+| `canonical_key` | `str` | canonicalized equation key used for dedupe/reporting |
+| `x_value` | `float` | solved numeric value for `x` |
+| `error` | `float` | `x_value - target` |
+| `complexity` | `int` | total complexity score |
+| `operator_count` | `int` | total operator count across both sides |
+| `tree_depth` | `int` | maximum tree depth across both sides |
+| `is_exact` | `bool` | whether the match is within exact-match tolerance |
 
 ## `PyMatch` Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `to_dict()` | dict | Convert the match to a Python dictionary |
-| `__repr__()` | str | Developer-friendly representation |
-| `__str__()` | str | Human-readable equation + error string |
+| `to_dict()` | `dict` | materialize a serializable Python dictionary |
+| `__repr__()` | `str` | concise developer-oriented representation |
+| `__str__()` | `str` | formatted equation string with error/complexity |
 
 ## Examples
 
-Find equations for common constants:
+Use a preset:
 
 ```python
 import ries_rs
 
-for match in ries_rs.search(3.141592653589793, level=2):
-    print(match)
-
-for match in ries_rs.search(2.718281828459045, level=3):
-    print(match)
+results = ries_rs.search(137.035999, preset="physics", level=2)
+for match in results[:5]:
+    print(match.solve_for_x or f"{match.lhs} = {match.rhs}")
 ```
 
-Use presets for targeted searches:
-
-```python
-import ries_rs
-
-physics = ries_rs.search(137.035999, preset="physics", level=2)
-number_theory = ries_rs.search(2.678938534707747, preset="number-theory")
-```
-
-Export results for downstream analysis:
+Export results:
 
 ```python
 import json
 import ries_rs
 
-results = ries_rs.search(1.618033988749895)
-payload = [match.to_dict() for match in results]
+payload = [match.to_dict() for match in ries_rs.search(1.618033988749895)]
 print(json.dumps(payload, indent=2))
 ```
 
 ## Troubleshooting
 
-**ImportError: cannot import name `ries_rs`**
+**Import/build problems**
 
 - Reinstall with `pip install --force-reinstall ries-rs`, or rebuild with
   `maturin develop --release`.
-- Make sure you are using the same Python environment where `maturin` ran.
+- Make sure the Python environment used for import matches the one used for
+  `maturin`.
+- On Linux you may need `python3-dev`; on macOS, the Xcode command-line tools.
 
-**Build fails with linking errors**
+**Unexpected preset error**
 
-- Ubuntu/Debian: `sudo apt install python3-dev`
-- macOS: `xcode-select --install`
-- Windows: install Python from python.org
+- Call `ries_rs.list_presets()` and use one of those keys exactly.
 
 **Performance is slower than the CLI**
 
-- Keep `parallel=True` unless you need deterministic single-threaded behavior.
-- Reuse returned results instead of calling `search()` repeatedly in a tight loop.
+- Keep `parallel=True` unless you specifically need single-threaded behavior.
+- The Python API currently exposes a smaller configuration surface than the CLI,
+  so use the CLI when you need deterministic mode, JSON manifests, or parity
+  flags.

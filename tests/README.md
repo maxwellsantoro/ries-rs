@@ -1,19 +1,41 @@
-# Test Organization
+# Tests
 
-## Integration Test Layout
+## Layout
 
-- `cli_regression_tests.rs`: CLI test harness and shared helpers
-- `cli/`: CLI regression test modules split by topic
-- `search_tests.rs`, `evaluation_tests.rs`, `expression_tests.rs`, `profile_tests.rs`: subsystem integration tests
-- `property_tests.rs`: property-based tests
+- `cli_regression_tests.rs` and `cli/`: CLI behavior and compatibility coverage
+- `integration_tests.rs`, `search_tests.rs`, `evaluation_tests.rs`, `expression_tests.rs`, `profile_tests.rs`: engine integration coverage
+- `property_tests.rs`: property-based checks
+- `wasm_tests.rs` and `test_expr_wasm.rs`: WASM-oriented Rust tests
+- `web-smoke.spec.ts`: Playwright smoke test for the browser UI and static bundle
+- `compare_with_original.sh`: optional side-by-side comparison against an original `ries` binary
 
-## Comparison Tooling
+## Common Commands
 
-- `compare_with_original.sh`: side-by-side output comparison against original `ries`
-- Set `RIES_ORIGINAL_BIN` or pass original binary path as argument 4
-
-## Running
+Fast local Rust regression pass:
 
 ```bash
-cargo test
+cargo nextest run --tests --locked
 ```
+
+Simple local fallback:
+
+```bash
+cargo test --tests --locked
+```
+
+High-precision feature coverage:
+
+```bash
+cargo nextest run --tests --features highprec --locked
+```
+
+Browser smoke path:
+
+```bash
+npm run test:web:smoke:build
+```
+
+## Original-RIES Comparison
+
+`compare_with_original.sh` expects an original `ries` binary. Set
+`RIES_ORIGINAL_BIN` or pass the original binary path as argument 4.

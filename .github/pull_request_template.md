@@ -15,4 +15,5 @@
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo clippy --all-targets --locked -- -D warnings` passes
 - [ ] `cargo nextest run --tests --locked` passes
+- [ ] Relevant feature/surface checks run if touched (`ries-py`, `wasm`, `web`, release docs)
 - [ ] Documentation updated if public APIs changed

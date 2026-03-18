@@ -120,9 +120,9 @@ For the authoritative option list:
 ries-rs --help
 ```
 
-## What v1.0 Delivers
+## Project Scope
 
-Version 1.0 is scoped as a disciplined, modern reference implementation:
+`ries-rs` is intended to be a disciplined, modern reference implementation:
 
 - Faithful reimplementation of the core RIES search model
 - Deterministic and documented execution modes
@@ -131,7 +131,7 @@ Version 1.0 is scoped as a disciplined, modern reference implementation:
 - CLI, Rust library, Python bindings, and WebAssembly builds
 - Modular presets, profiles, and extension points
 
-Out of scope for v1.0:
+Not primary goals of this repository:
 
 - Symbolic AI or conjecture systems
 - PSLQ research-platform ambitions beyond the shipped CLI mode
@@ -195,7 +195,7 @@ historical notes.
 
 ### Python
 
-The Python bindings expose `ries-rs.search()` and typed match objects through
+The Python bindings expose `ries_rs.search()` and typed match objects through
 PyO3. See [docs/PYTHON_BINDINGS.md](docs/PYTHON_BINDINGS.md) for PyPI install,
 source development, API details, and troubleshooting.
 
@@ -208,8 +208,8 @@ See [docs/WASM_BINDINGS.md](docs/WASM_BINDINGS.md) for the JS/TS API and
 ### PSLQ
 
 The CLI includes PSLQ integer-relation detection via `--pslq`,
-`--pslq-extended`, and `--pslq-max-coeff`. This is part of the shipped tool, but
-it is not the primary scope of the v1.0 project definition.
+`--pslq-extended`, and `--pslq-max-coeff`. This is part of the shipped tool,
+but it is not the primary focus of the repository.
 
 ## How to Cite
 

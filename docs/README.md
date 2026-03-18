@@ -1,41 +1,42 @@
 # Documentation Map
 
-This directory is split into current reference docs, active planning notes, and archived historical material.
+This repository keeps current reference documentation separate from historical
+implementation notes.
 
 ## Current Reference
 
-- `ARCHITECTURE.md`: System architecture including streaming vs batch generation trade-offs
-- `SEARCH_MODEL.md`: Formal core search model (grammar, complexity, ranking, determinism)
-- `COMPLEXITY.md`: Symbol weight model and ranking rationale used by `ries-rs`
-- `PERFORMANCE.md`: Benchmarking, profiling, and performance guidance
-- `PARITY_STATUS.md`: Current parity/compatibility status summary and links to detailed history
-- `PYTHON_BINDINGS.md`: PyPI install, source development, API surface, and troubleshooting
-- `WASM_BINDINGS.md`: JavaScript/TypeScript bindings, release artifacts, and static web deployment guide
-- `releases/`: Versioned GitHub release notes and shipped artifact summaries
-- `benchmarks/`: Reproducible benchmark baselines and raw measurement artifacts
+- `../README.md`: project overview, install paths, and primary usage examples
+- `ARCHITECTURE.md`: codebase layout, runtime surfaces, and search pipeline
+- `SEARCH_MODEL.md`: formal search behavior, ranking, and determinism contract
+- `COMPLEXITY.md`: symbol weights and complexity rationale
+- `PERFORMANCE.md`: benchmarking policy, artifact sources, and profiling workflow
+- `PARITY_STATUS.md`: current compatibility summary relative to historical RIES baselines
+- `PYTHON_BINDINGS.md`: Python package install, API surface, and troubleshooting
+- `WASM_BINDINGS.md`: JS/WASM package API, build targets, and deployment notes
+- `../web/README.md`: browser UI, static-site bundle, and Playwright smoke flow
+- `../tests/README.md`: test suite layout and test commands
+- `../RELEASING.md`: maintainer release checklist and artifact verification
+- `benchmarks/`: reproducible benchmark reports and raw benchmark artifacts
+- `releases/`: versioned release notes used for GitHub releases
 
-## Active Plans
+## Historical Material
 
-- `plans/`: Dated design/implementation plans that are still in progress or recently active (created as needed; may be absent)
+- `archive/plans/`: selected archived design and implementation plans with ongoing technical value
+- `archive/parity/`: archived parity gap reports and compatibility investigations
+- `archive/artifacts/`: archived generated/debug artifacts
 
-## Archive
-
-- `archive/plans/`: Historical design/implementation plans retained for traceability
-- `archive/parity/`: Historical parity gap reports and detailed compatibility writeups
-- `archive/artifacts/`: Archived generated/debug artifacts (sample manifests, screenshots, one-off debug scripts)
-
-Archived files are retained for project history and decision traceability. They are not the source of truth for current behavior.
+Archived material is useful for project history, not for current behavior.
 
 ## Source-of-Truth Rule
 
 For runtime behavior, trust these in order:
 
-1. CLI/runtime code in `src/`
-2. Regression tests in `tests/`
-3. High-level summaries (`README.md`, `PARITY_STATUS.md`)
+1. `src/`
+2. `tests/`
+3. current public docs (`README.md`, files listed above)
 
-For public install and release surfaces, trust these in order:
+For published install and release surfaces, trust these in order:
 
-1. crates.io for the Rust CLI package (`ries`)
+1. crates.io for the Rust package (`ries`)
 2. PyPI for the Python package (`ries-rs`)
-3. GitHub Releases for platform binaries and WASM artifacts
+3. GitHub Releases for native binaries and WASM artifacts

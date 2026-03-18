@@ -1,25 +1,33 @@
 # Parity Status
 
-Current parity/compatibility status for `ries-rs` relative to the original RIES and the `clsn/ries` fork.
+`ries-rs` tracks behavior against two historical baselines:
 
-## Current State (2026-03-17)
+1. Robert Munafo's original RIES
+2. the `clsn/ries` fork and its compatibility-oriented CLI behavior
 
-Last reviewed after the `v1.0.1` release packaging/docs update.
+## Current Summary
 
-- No known mandatory parity blockers remain from the tracked P0/P1/P2 parity work.
-- `--classic` mode defaults to parity-style ranking; `--complexity-ranking` remains available.
-- Remaining work is optional quality enhancement (for example, extending `-s` solve-for-x support to more operator families).
+- No known release-blocking parity gaps are currently tracked.
+- `--classic` defaults to parity-style ranking; `--complexity-ranking` remains
+  available when you want simpler-first ordering instead.
+- Core search flow, classic-style output, and most compatibility flags are
+  covered by regression tests.
+- Exact output ordering and some complexity details can still differ from older
+  implementations because the engine is Rust-native.
+- Remaining parity work is incremental quality work, not a known blocker for
+  the published release surfaces.
 
 ## References
 
-- Historical detailed gap report (2026-02-18): `docs/archive/parity/2026-02-18-parity-remaining-report.md`
+- Historical detailed gap report:
+  `docs/archive/parity/2026-02-18-parity-remaining-report.md`
 - Comparison helper script: `tests/compare_with_original.sh`
 - Regression coverage: `tests/cli_regression_tests.rs` and `tests/cli/`
 
 ## Source of Truth
 
-For current behavior, prefer code and tests over historical parity reports:
+For current behavior, prefer:
 
 1. `src/`
 2. `tests/`
-3. `README.md`
+3. current public docs

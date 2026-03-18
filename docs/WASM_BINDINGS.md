@@ -1,46 +1,48 @@
 # WebAssembly Bindings
 
-The WebAssembly build exposes `ries-rs` to JavaScript and TypeScript in
-browsers, Node.js, and static web deployments.
+The WebAssembly build exposes the `ries-rs` engine to JavaScript and
+TypeScript. It supports browser-facing bundles, bundler output, Node-oriented
+output, and the repository's static browser UI.
 
-GitHub releases include a `ries-rs-wasm.tar.gz` artifact containing the built
-`pkg`, `pkg-node`, and `pkg-bundler` outputs. Rebuild locally if you need a
-fresh bundle from the current checkout.
-
-## Prerequisites
-
-From the repository root:
-
-```bash
-npm install
-rustup toolchain install nightly
-```
-
-The local build scripts currently use nightly `wasm-pack` together with
-`-Z build-std`.
+GitHub releases include a `ries-rs-wasm.tar.gz` artifact containing `pkg`,
+`pkg-node`, and `pkg-bundler`.
 
 ## Build Targets
 
 From the repository root:
 
 ```bash
+npm install
+rustup toolchain install nightly
+
 # Browser-friendly package
 npm run build
 
-# Bundler output (webpack, Vite, Rollup, ...)
+# Bundler output
 npm run build:bundler
 
-# Node.js output
+# Node-targeted output
 npm run build:node
 
-# Static site bundle for deployment at a subpath
+# Browser UI bundle
 npm run build:web:site
 ```
 
-The deployable web bundle ends up in `dist/web-site/`. It includes the vendored
-browser assets needed by `web/index.html`, so it can be served without runtime
-CDN dependencies. For the browser UI itself, including subpath hosting, see
-[`web/README.md`](../web/README.md).
+The local scripts currently use nightly `wasm-pack` with `-Z build-std`.
+
+For the browser UI and static bundle itself, see `web/README.md`.
+
+## Exported Functions
+
+The package exports:
+
+- `init()`
+- `search(target, options?)`
+- `listPresets()`
+- `version()`
+
+Threaded builds also re-export `initThreadPool(n)` when built with the
+`wasm-threads` feature.
 
 ## Quick Start
 
@@ -49,93 +51,83 @@ import init, { search, listPresets, version } from "ries-rs";
 
 await init();
 
-const results = search(3.1415926535, {
-  level: 3,
-  maxMatches: 20,
-});
-
 console.log(version());
 console.log(listPresets());
+
+const results = search(3.141592653589793, {
+  level: 3,
+  maxMatches: 8,
+  rankingMode: "complexity",
+});
+
 console.log(results[0].to_string());
+console.log(results[0].to_json());
 ```
 
-## `SearchOptions`
+## `search(target, options?)`
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `level` | number | 2 | Search depth (0-5) |
-| `maxMatches` | number | 16 | Maximum matches to return |
-| `preset` | string | `null` | Domain preset name |
+`target` is a required JavaScript number.
+
+Supported `options` fields:
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `level` | `number` | `2` | accepted range: `0..=5` |
+| `maxMatches` | `number` | `16` | hard-capped at `10000` |
+| `preset` | `string \| null` | `null` | validated against `listPresets()` |
+| `rankingMode` | `"complexity" \| "parity"` | `"complexity"` | controls the tie-break ranking mode |
+| `matchAllDigits` | `boolean` | `false` | uses target-significant-digit tolerance instead of the default relative tolerance |
+| `usePslq` | `boolean` | `false` | accepted for compatibility, but returns an error because PSLQ is not available in the WASM build |
+
+Notes:
+
+- The WASM bindings use the library-level complexity mapping, not the CLI's
+  heavier `-l/--level` mapping.
+- Non-threaded WASM builds search sequentially; threaded builds can use the
+  parallel engine after `initThreadPool(...)`.
 
 ## `WasmMatch` Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `lhs` | string | Left-hand side expression (contains `x`) |
-| `rhs` | string | Right-hand side expression (constants only) |
-| `lhs_postfix` | string | Postfix representation of the LHS |
-| `rhs_postfix` | string | Postfix representation of the RHS |
-| `x_value` | number | Solved value of `x` |
-| `error` | number | `x_value - target` |
-| `complexity` | number | Complexity score (lower is simpler) |
-| `is_exact` | boolean | `true` if error < `1e-14` |
+| `lhs` | `string` | left-hand side in infix form |
+| `rhs` | `string` | right-hand side in infix form |
+| `lhs_postfix` | `string` | left-hand side in postfix form |
+| `rhs_postfix` | `string` | right-hand side in postfix form |
+| `solve_for_x` | `string \| null` | solve-for-x rendering when analytically available |
+| `solve_for_x_postfix` | `string \| null` | postfix form of `solve_for_x` |
+| `canonical_key` | `string` | canonicalized equation key used for dedupe/reporting |
+| `x_value` | `number` | solved numeric value for `x` |
+| `error` | `number` | `x_value - target` |
+| `complexity` | `number` | total complexity score |
+| `operator_count` | `number` | total operator count across both sides |
+| `tree_depth` | `number` | maximum tree depth across both sides |
+| `is_exact` | `boolean` | whether the match is within exact-match tolerance |
 
-## Browser Example
+Methods:
 
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <script type="module">
-    import init, { search } from "./pkg/ries_rs.js";
-
-    async function run() {
-      await init();
-
-      const results = search(3.14159, { level: 2, maxMatches: 5 });
-      for (const match of results) {
-        document.body.innerHTML += `<p>${match.to_string()}</p>`;
-      }
-    }
-
-    run();
-  </script>
-</head>
-<body></body>
-</html>
-```
-
-## Node.js Example
-
-```javascript
-const { search, listPresets } = require("ries-rs");
-
-const results = search(2.718281828, { level: 3 });
-console.log(`Found ${results.length} matches`);
-console.log(listPresets());
-```
+- `to_string()`
+- `to_json()`
 
 ## Static Hosting
 
-To host the browser UI at a path such as
-`https://example.com/projects/ries-rs/`:
+To build the subpath-safe browser bundle:
 
 ```bash
 npm run build:web:site
 ```
 
-Then deploy the contents of `dist/web-site/` to the target directory.
+Deploy the contents of `dist/web-site/` to the target directory.
 
 ## Threaded Build
 
-For parallel search in browsers:
+For browser parallelism:
 
 ```bash
 npm run build:threads
 ```
 
-This requires nightly Rust plus the browser headers needed for
-`SharedArrayBuffer`:
+This requires nightly Rust and `SharedArrayBuffer` headers:
 
 ```text
 Cross-Origin-Opener-Policy: same-origin

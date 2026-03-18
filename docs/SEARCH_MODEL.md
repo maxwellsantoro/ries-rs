@@ -1,6 +1,6 @@
-# RIES-RS Search Model (v1.0)
+# RIES-RS Search Model
 
-This document defines the core computational model implemented by `ries-rs` for Phase A / v1.0.
+This document defines the core computational model implemented by `ries-rs`.
 
 Goal: make the search behavior explicit, reproducible, and reviewable.
 
@@ -97,7 +97,7 @@ For a match (equation) `lhs = rhs`:
 
 `C_match(lhs, rhs) = C_expr(lhs) + C_expr(rhs)`
 
-Important v1.0 note:
+Important note:
 
 - The core ranking metric does **not** add explicit tree-depth penalties.
 - Tree depth and operator count may be reported as metadata (for JSON/reporting), but they are not part of `C_match`.
@@ -170,7 +170,7 @@ For automation and archival:
 - `--json`: structured stdout results + search statistics
 - `--emit-manifest FILE`: full run manifest JSON for replay/audit metadata
 
-Recommended v1.0 reproducibility workflow:
+Recommended reproducibility workflow:
 
 ```bash
 ries-rs 3.141592653589793 --deterministic --json --emit-manifest run-manifest.json
