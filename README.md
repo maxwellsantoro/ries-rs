@@ -4,6 +4,7 @@
 [![Coverage](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml)
 [![Crates.io](https://img.shields.io/crates/v/ries.svg)](https://crates.io/crates/ries)
 [![PyPI](https://img.shields.io/pypi/v/ries-rs.svg)](https://pypi.org/project/ries-rs/)
+[![DOI](https://zenodo.org/badge/1123876688.svg)](https://doi.org/10.5281/zenodo.19101924)
 [![Live Demo](https://img.shields.io/badge/live-demo-0f766e)](https://maxwellsantoro.com/projects/ries-rs/app/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -230,15 +231,22 @@ If you use `ries-rs` in academic work, cite the project version you used.
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
   version      = {1.1.1},
+  doi          = {10.5281/zenodo.19101925},
   url          = {https://maxwellsantoro.com/projects/ries-rs},
   license      = {MIT},
   note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}
 }
 ```
 
-GitHub releases may also be archived on [Zenodo](https://zenodo.org). Record a
-release DOI in `CITATION.cff`, this README, and the release notes only after it
-has actually been minted and verified.
+Zenodo concept DOI for the latest archived release:
+`10.5281/zenodo.19101924`
+
+Zenodo version DOI for `v1.1.1`:
+`10.5281/zenodo.19101925`
+
+Use the concept DOI when you want a stable project-level reference that resolves
+to the latest archived release. Use the version DOI when you need to cite the
+specific archived release you used.
 
 For reproducible research runs, prefer `--deterministic` together with
 `--emit-manifest`.
