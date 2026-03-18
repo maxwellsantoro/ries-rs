@@ -4,6 +4,7 @@
 [![Coverage](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml)
 [![Crates.io](https://img.shields.io/crates/v/ries.svg)](https://crates.io/crates/ries)
 [![PyPI](https://img.shields.io/pypi/v/ries-rs.svg)](https://pypi.org/project/ries-rs/)
+[![Live Demo](https://img.shields.io/badge/live-demo-0f766e)](https://maxwellsantoro.com/projects/ries-rs/app/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `ries-rs` is a Rust implementation of Robert P. Munafo's RIES inverse equation
@@ -13,6 +14,9 @@ that number as a solution.
 The historical acronym is RIES, for "RILYBOT Inverse Equation Solver". This
 repository aims to be a modern, documented, reproducible reference
 implementation rather than a historical clone.
+
+Project page: [maxwellsantoro.com/projects/ries-rs](https://maxwellsantoro.com/projects/ries-rs)  
+Live demo: [maxwellsantoro.com/projects/ries-rs/app/](https://maxwellsantoro.com/projects/ries-rs/app/)
 
 ![RIES-RS web UI](docs/assets/web-ui.png)
 
@@ -83,6 +87,10 @@ Deploy the contents of `dist/web-site/` to a path such as
 `https://example.com/projects/ries-rs/`.
 
 The current local WASM build scripts use nightly `wasm-pack` via `-Z build-std`.
+
+For the public deployment, use the canonical landing page at
+`https://maxwellsantoro.com/projects/ries-rs` and the standalone app at
+`https://maxwellsantoro.com/projects/ries-rs/app/`.
 
 Detailed setup guides:
 
@@ -221,7 +229,7 @@ If you use `ries-rs` in academic work, cite the project version you used.
   author       = {Santoro, Maxwell},
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
-  version      = {1.1.0},
+  version      = {1.1.1},
   url          = {https://maxwellsantoro.com/projects/ries-rs},
   license      = {MIT},
   note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}

@@ -163,4 +163,5 @@ has been verified in project metadata.
 - `v0.1.0`: no Zenodo DOI recorded in this repository
 - `v1.0.0`: no Zenodo DOI recorded in this repository
 - `v1.0.1`: no Zenodo DOI recorded in this repository
-- `v1.1.0`: pending release
+- `v1.1.0`: no Zenodo DOI recorded in this repository
+- `v1.1.1`: pending release

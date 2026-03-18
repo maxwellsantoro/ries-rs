@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-03-18
+
+### Added
+- A direct live-demo link in the README and on the GitHub repository homepage
+
+### Changed
+- Refreshed GitHub Actions workflow dependencies to current Node 24-compatible
+  releases to remove deprecation warnings from CI and release automation
+- Updated public-facing README copy to make the landing page and standalone demo
+  entrypoints explicit
+
 ## [1.1.0] - 2026-03-18
 
 ### Added

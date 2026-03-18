@@ -1,6 +1,6 @@
 [package]
 name = "ries-py"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 authors = ["Maxwell Santoro"]
 description = "Find algebraic equations given their solution - Python bindings"
@@ -21,5 +21,5 @@ parallel = ["ries_core/parallel"]
 highprec = ["ries_core/highprec"]
 
 [dependencies]
-ries_core = { package = "ries", path = "..", version = "1.1.0" }
+ries_core = { package = "ries", path = "..", version = "1.1.1" }
 pyo3 = { version = "0.22", features = ["extension-module"] }
