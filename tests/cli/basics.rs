@@ -509,12 +509,14 @@ fn test_stability_thorough_uses_configured_level_count() {
 
 #[test]
 fn test_enable_reenables_symbol_after_exclude() {
-    let (stdout_no_enable, _stderr) = run_ries(&["2.5", "--report", "false", "-n", "1", "-N", "+", "-l", "1"]);
+    let (stdout_no_enable, _stderr) =
+        run_ries(&["2.5", "--report", "false", "-n", "1", "-N", "+", "-l", "1"]);
     let (lhs_no, rhs_no) =
         parse_generated_counts(&stdout_no_enable).expect("missing generated counts");
 
-    let (stdout_enable, _stderr) =
-        run_ries(&["2.5", "--report", "false", "-n", "1", "-N", "+", "-E", "+", "-l", "1"]);
+    let (stdout_enable, _stderr) = run_ries(&[
+        "2.5", "--report", "false", "-n", "1", "-N", "+", "-E", "+", "-l", "1",
+    ]);
     let (lhs_yes, rhs_yes) =
         parse_generated_counts(&stdout_enable).expect("missing generated counts");
 
@@ -533,7 +535,9 @@ fn test_orhs_reduces_rhs_generation() {
         parse_generated_counts(&base_stdout).expect("missing base generated counts");
 
     // --N-RHS p excludes pi from the RHS symbol set, which measurably reduces RHS count.
-    let (rhs_stdout, _stderr) = run_ries(&["2.5", "--report", "false", "-n", "1", "--N-RHS", "p", "-l", "1"]);
+    let (rhs_stdout, _stderr) = run_ries(&[
+        "2.5", "--report", "false", "-n", "1", "--N-RHS", "p", "-l", "1",
+    ]);
     let (_lhs_rhs, rhs_restricted) =
         parse_generated_counts(&rhs_stdout).expect("missing rhs-restricted generated counts");
 

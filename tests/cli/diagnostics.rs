@@ -102,7 +102,16 @@ fn test_diagnostic_n_shows_newton_iterations() {
 
 #[test]
 fn test_diagnostic_a_recognized() {
-    let (_stdout, stderr) = run_ries(&["2.5", "-DA", "--report", "false", "--max-matches", "1", "-l", "0"]);
+    let (_stdout, stderr) = run_ries(&[
+        "2.5",
+        "-DA",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+        "-l",
+        "0",
+    ]);
     // -DA should not warn about unsupported channel
     assert!(!stderr.to_lowercase().contains("unsupported"));
 }
@@ -142,7 +151,16 @@ fn test_derivative_margin_option_accepted() {
 
 #[test]
 fn test_diagnostic_g_recognized() {
-    let (stdout, stderr) = run_ries(&["2.5", "-DG", "--report", "false", "--max-matches", "1", "-l", "0"]);
+    let (stdout, stderr) = run_ries(&[
+        "2.5",
+        "-DG",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+        "-l",
+        "0",
+    ]);
     // -DG should not warn about unsupported channel
     let combined = format!("{}{}", stdout, stderr).to_lowercase();
     assert!(
@@ -155,7 +173,16 @@ fn test_diagnostic_g_recognized() {
 
 #[test]
 fn test_diagnostic_g_shows_db_add_output() {
-    let (stdout, stderr) = run_ries(&["2.5", "-DG", "--report", "false", "--max-matches", "1", "-l", "0"]);
+    let (stdout, stderr) = run_ries(&[
+        "2.5",
+        "-DG",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+        "-l",
+        "0",
+    ]);
     // -DG should output database add information to stderr
     let output = format!("{}{}", stdout, stderr).to_lowercase();
     assert!(
@@ -168,7 +195,16 @@ fn test_diagnostic_g_shows_db_add_output() {
 
 #[test]
 fn test_diagnostic_b_recognized() {
-    let (_stdout, stderr) = run_ries(&["2.5", "-DB", "--report", "false", "--max-matches", "1", "-l", "0"]);
+    let (_stdout, stderr) = run_ries(&[
+        "2.5",
+        "-DB",
+        "--report",
+        "false",
+        "--max-matches",
+        "1",
+        "-l",
+        "0",
+    ]);
     // -DB should not warn about unsupported channel
     assert!(!stderr.to_lowercase().contains("unsupported"));
 }

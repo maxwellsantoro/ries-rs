@@ -23,58 +23,6 @@ pub enum OutputFormat {
     SymPy,
 }
 
-impl OutputFormat {
-    /// Get the name for a symbol in this format
-    #[allow(dead_code)]
-    pub fn symbol_name(&self, sym: Symbol) -> &'static str {
-        use Symbol::*;
-        match self {
-            OutputFormat::Default => sym.name(),
-            OutputFormat::Pretty => match sym {
-                Pi => "π",
-                E => "ℯ",
-                Phi => "φ",
-                Sqrt => "√",
-                Square => "²",
-                Gamma => "γ",
-                Plastic => "ρ",
-                Catalan => "G",
-                _ => sym.name(),
-            },
-            OutputFormat::Mathematica => match sym {
-                Pi => "Pi",
-                E => "E",
-                Phi => "GoldenRatio",
-                Sqrt => "Sqrt",
-                Square => "²",
-                Ln => "Log",
-                Exp => "Exp",
-                SinPi => "Sin[Pi*",
-                CosPi => "Cos[Pi*",
-                TanPi => "Tan[Pi*",
-                LambertW => "ProductLog",
-                Gamma => "EulerGamma",
-                _ => sym.name(),
-            },
-            OutputFormat::SymPy => match sym {
-                Pi => "pi",
-                E => "E",
-                Phi => "GoldenRatio",
-                Sqrt => "sqrt",
-                Square => "²",
-                Ln => "log",
-                Exp => "exp",
-                SinPi => "sin(pi*",
-                CosPi => "cos(pi*",
-                TanPi => "tan(pi*",
-                LambertW => "lambertw",
-                Gamma => "EulerGamma",
-                _ => sym.name(),
-            },
-        }
-    }
-}
-
 /// A symbolic expression in postfix notation
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Expression {
@@ -314,9 +262,8 @@ impl Expression {
                     stack.push((sym.display_name(), PREC_ATOM));
                 }
                 Seft::B => {
-                    let (arg, arg_prec) = stack
-                        .pop()
-                        .ok_or(crate::eval::EvalError::StackUnderflow)?;
+                    let (arg, arg_prec) =
+                        stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
                     let result = match sym {
                         Symbol::Neg => {
                             let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_UNARY, false, false);
@@ -361,12 +308,8 @@ impl Expression {
                     stack.push((result, PREC_ATOM));
                 }
                 Seft::C => {
-                    let (b, b_prec) = stack
-                        .pop()
-                        .ok_or(crate::eval::EvalError::StackUnderflow)?;
-                    let (a, a_prec) = stack
-                        .pop()
-                        .ok_or(crate::eval::EvalError::StackUnderflow)?;
+                    let (b, b_prec) = stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
+                    let (a, a_prec) = stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
                     let (result, prec) = match sym {
                         Symbol::Add => {
                             let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
@@ -617,35 +560,86 @@ impl Expression {
         }
     }
 
-    fn to_infix_mathematica(&self) -> String {
-        let mut stack: Vec<String> = Vec::new();
+    pub fn to_infix_mathematica(&self) -> String {
+        const PREC_ATOM: u8 = 100;
+        const PREC_POWER: u8 = 9;
+        const PREC_UNARY: u8 = 8;
+        const PREC_MUL: u8 = 6;
+        const PREC_ADD: u8 = 4;
+
+        fn needs_paren(
+            parent_prec: u8,
+            child_prec: u8,
+            is_right_assoc: bool,
+            is_right_operand: bool,
+        ) -> bool {
+            if child_prec < parent_prec {
+                return true;
+            }
+            if is_right_assoc && is_right_operand && child_prec == parent_prec {
+                return true;
+            }
+            false
+        }
+
+        fn maybe_paren(
+            s: &str,
+            prec: u8,
+            parent_prec: u8,
+            is_right_assoc: bool,
+            is_right: bool,
+        ) -> String {
+            if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
+                format!("({})", s)
+            } else {
+                s.to_string()
+            }
+        }
+
+        let mut stack: Vec<(String, u8)> = Vec::new();
 
         for &sym in &self.symbols {
             match sym.seft() {
                 Seft::A => {
                     let s = match sym {
-                        Symbol::Pi => "Pi".to_string(),
-                        Symbol::E => "E".to_string(),
-                        Symbol::Phi => "GoldenRatio".to_string(),
-                        Symbol::Gamma => "EulerGamma".to_string(),
-                        _ => sym.display_name(),
+                        Symbol::Pi => "Pi",
+                        Symbol::E => "E",
+                        Symbol::Phi => "GoldenRatio",
+                        Symbol::Gamma => "EulerGamma",
+                        Symbol::Apery => "Zeta[3]",
+                        Symbol::Catalan => "Catalan",
+                        _ => "",
                     };
-                    stack.push(s);
+                    let name = if s.is_empty() {
+                        sym.display_name()
+                    } else {
+                        s.to_string()
+                    };
+                    stack.push((name, PREC_ATOM));
                 }
                 Seft::B => {
-                    let arg = stack
+                    let (arg, arg_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let s = match sym {
-                        Symbol::Neg => format!("-({})", arg),
-                        Symbol::Recip => format!("1/({})", arg),
+                    let result = match sym {
+                        Symbol::Neg => {
+                            let s = maybe_paren(&arg, arg_prec, PREC_UNARY, false, false);
+                            format!("-{}", s)
+                        }
+                        Symbol::Recip => {
+                            let s = maybe_paren(&arg, arg_prec, PREC_MUL, false, false);
+                            format!("1/{}", s)
+                        }
                         Symbol::Sqrt => format!("Sqrt[{}]", arg),
-                        Symbol::Square => format!("({})^2", arg),
+                        Symbol::Square => {
+                            let s = maybe_paren(&arg, arg_prec, PREC_POWER, false, false);
+                            format!("{}^2", s)
+                        }
                         Symbol::Ln => format!("Log[{}]", arg),
                         Symbol::Exp => format!("Exp[{}]", arg),
-                        Symbol::SinPi => format!("Sin[Pi*({})]", arg),
-                        Symbol::CosPi => format!("Cos[Pi*({})]", arg),
-                        Symbol::TanPi => format!("Tan[Pi*({})]", arg),
+                        Symbol::SinPi => format!("Sin[Pi*{}]", arg),
+                        Symbol::CosPi => format!("Cos[Pi*{}]", arg),
+                        Symbol::TanPi => format!("Tan[Pi*{}]", arg),
                         Symbol::LambertW => format!("ProductLog[{}]", arg),
                         Symbol::UserFunction0
                         | Symbol::UserFunction1
@@ -665,63 +659,138 @@ impl Expression {
                         | Symbol::UserFunction15 => format!("{}[{}]", sym.display_name(), arg),
                         _ => "?".to_string(),
                     };
-                    stack.push(s);
+                    stack.push((result, PREC_ATOM));
                 }
                 Seft::C => {
-                    let b = stack
+                    let (b, b_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let a = stack
+                    let (a, a_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let s = match sym {
-                        Symbol::Add => format!("({})+({})", a, b),
-                        Symbol::Sub => format!("({})-({})", a, b),
-                        Symbol::Mul => format!("({})*({})", a, b),
-                        Symbol::Div => format!("({})/({})", a, b),
-                        Symbol::Pow => format!("({})^({})", a, b),
-                        Symbol::Root => format!("({})^(1/({}))", b, a),
-                        Symbol::Log => format!("Log[{}, {}]", a, b),
-                        Symbol::Atan2 => format!("ArcTan[{}, {}]", b, a),
-                        _ => "?".to_string(),
+                    let (result, prec) = match sym {
+                        Symbol::Add => {
+                            let b_s = maybe_paren(&b, b_prec, PREC_ADD, false, true);
+                            (format!("{}+{}", a, b_s), PREC_ADD)
+                        }
+                        Symbol::Sub => {
+                            let b_s = maybe_paren(&b, b_prec, PREC_ADD, false, true);
+                            (format!("{}-{}", a, b_s), PREC_ADD)
+                        }
+                        Symbol::Mul => {
+                            let a_s = maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = maybe_paren(&b, b_prec, PREC_MUL, false, true);
+                            (format!("{}*{}", a_s, b_s), PREC_MUL)
+                        }
+                        Symbol::Div => {
+                            let a_s = maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = maybe_paren(&b, b_prec, PREC_MUL + 1, false, true);
+                            (format!("{}/{}", a_s, b_s), PREC_MUL)
+                        }
+                        Symbol::Pow => {
+                            let a_s = maybe_paren(&a, a_prec, PREC_POWER, true, false);
+                            let b_s = maybe_paren(&b, b_prec, PREC_POWER, true, true);
+                            (format!("{}^{}", a_s, b_s), PREC_POWER)
+                        }
+                        Symbol::Root => {
+                            let b_s = maybe_paren(&b, b_prec, PREC_POWER, true, false);
+                            (format!("{}^(1/{})", b_s, a), PREC_POWER)
+                        }
+                        Symbol::Log => (format!("Log[{}, {}]", a, b), PREC_ATOM),
+                        Symbol::Atan2 => (format!("ArcTan[{}, {}]", b, a), PREC_ATOM),
+                        _ => unreachable!(),
                     };
-                    stack.push(s);
+                    stack.push((result, prec));
                 }
             }
         }
 
-        stack.pop().unwrap_or_else(|| "?".to_string())
+        stack
+            .pop()
+            .map(|(s, _)| s)
+            .unwrap_or_else(|| "?".to_string())
     }
 
-    fn to_infix_sympy(&self) -> String {
-        let mut stack: Vec<String> = Vec::new();
+    pub fn to_infix_sympy(&self) -> String {
+        const PREC_ATOM: u8 = 100;
+        const PREC_POWER: u8 = 9;
+        const PREC_UNARY: u8 = 8;
+        const PREC_MUL: u8 = 6;
+        const PREC_ADD: u8 = 4;
+
+        fn needs_paren(
+            parent_prec: u8,
+            child_prec: u8,
+            is_right_assoc: bool,
+            is_right_operand: bool,
+        ) -> bool {
+            if child_prec < parent_prec {
+                return true;
+            }
+            if is_right_assoc && is_right_operand && child_prec == parent_prec {
+                return true;
+            }
+            false
+        }
+
+        fn maybe_paren(
+            s: &str,
+            prec: u8,
+            parent_prec: u8,
+            is_right_assoc: bool,
+            is_right: bool,
+        ) -> String {
+            if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
+                format!("({})", s)
+            } else {
+                s.to_string()
+            }
+        }
+
+        let mut stack: Vec<(String, u8)> = Vec::new();
 
         for &sym in &self.symbols {
             match sym.seft() {
                 Seft::A => {
                     let s = match sym {
-                        Symbol::Pi => "pi".to_string(),
-                        Symbol::E => "E".to_string(),
-                        Symbol::Phi => "GoldenRatio".to_string(),
-                        Symbol::Gamma => "EulerGamma".to_string(),
-                        _ => sym.display_name(),
+                        Symbol::Pi => "pi",
+                        Symbol::E => "E",
+                        Symbol::Phi => "GoldenRatio",
+                        Symbol::Gamma => "EulerGamma",
+                        Symbol::Apery => "zeta(3)",
+                        Symbol::Catalan => "Catalan",
+                        _ => "",
                     };
-                    stack.push(s);
+                    let name = if s.is_empty() {
+                        sym.display_name()
+                    } else {
+                        s.to_string()
+                    };
+                    stack.push((name, PREC_ATOM));
                 }
                 Seft::B => {
-                    let arg = stack
+                    let (arg, arg_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let s = match sym {
-                        Symbol::Neg => format!("-({})", arg),
-                        Symbol::Recip => format!("1/({})", arg),
+                    let result = match sym {
+                        Symbol::Neg => {
+                            let s = maybe_paren(&arg, arg_prec, PREC_UNARY, false, false);
+                            format!("-{}", s)
+                        }
+                        Symbol::Recip => {
+                            let s = maybe_paren(&arg, arg_prec, PREC_MUL, false, false);
+                            format!("1/{}", s)
+                        }
                         Symbol::Sqrt => format!("sqrt({})", arg),
-                        Symbol::Square => format!("({})**2", arg),
+                        Symbol::Square => {
+                            let s = maybe_paren(&arg, arg_prec, PREC_POWER, false, false);
+                            format!("{}**2", s)
+                        }
                         Symbol::Ln => format!("log({})", arg),
                         Symbol::Exp => format!("exp({})", arg),
-                        Symbol::SinPi => format!("sin(pi*({}))", arg),
-                        Symbol::CosPi => format!("cos(pi*({}))", arg),
-                        Symbol::TanPi => format!("tan(pi*({}))", arg),
+                        Symbol::SinPi => format!("sin(pi*{})", arg),
+                        Symbol::CosPi => format!("cos(pi*{})", arg),
+                        Symbol::TanPi => format!("tan(pi*{})", arg),
                         Symbol::LambertW => format!("lambertw({})", arg),
                         Symbol::UserFunction0
                         | Symbol::UserFunction1
@@ -741,32 +810,56 @@ impl Expression {
                         | Symbol::UserFunction15 => format!("{}({})", sym.display_name(), arg),
                         _ => "?".to_string(),
                     };
-                    stack.push(s);
+                    stack.push((result, PREC_ATOM));
                 }
                 Seft::C => {
-                    let b = stack
+                    let (b, b_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let a = stack
+                    let (a, a_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let s = match sym {
-                        Symbol::Add => format!("({})+({})", a, b),
-                        Symbol::Sub => format!("({})-({})", a, b),
-                        Symbol::Mul => format!("({})*({})", a, b),
-                        Symbol::Div => format!("({})/({})", a, b),
-                        Symbol::Pow => format!("({})**({})", a, b),
-                        Symbol::Root => format!("({})**(1/({}))", b, a),
-                        Symbol::Log => format!("log({}, {})", b, a),
-                        Symbol::Atan2 => format!("atan2({}, {})", a, b),
-                        _ => "?".to_string(),
+                    let (result, prec) = match sym {
+                        Symbol::Add => {
+                            let b_s = maybe_paren(&b, b_prec, PREC_ADD, false, true);
+                            (format!("{}+{}", a, b_s), PREC_ADD)
+                        }
+                        Symbol::Sub => {
+                            let b_s = maybe_paren(&b, b_prec, PREC_ADD, false, true);
+                            (format!("{}-{}", a, b_s), PREC_ADD)
+                        }
+                        Symbol::Mul => {
+                            let a_s = maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = maybe_paren(&b, b_prec, PREC_MUL, false, true);
+                            (format!("{}*{}", a_s, b_s), PREC_MUL)
+                        }
+                        Symbol::Div => {
+                            let a_s = maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = maybe_paren(&b, b_prec, PREC_MUL + 1, false, true);
+                            (format!("{}/{}", a_s, b_s), PREC_MUL)
+                        }
+                        Symbol::Pow => {
+                            let a_s = maybe_paren(&a, a_prec, PREC_POWER, true, false);
+                            let b_s = maybe_paren(&b, b_prec, PREC_POWER, true, true);
+                            (format!("{}**{}", a_s, b_s), PREC_POWER)
+                        }
+                        Symbol::Root => {
+                            let b_s = maybe_paren(&b, b_prec, PREC_POWER, true, false);
+                            (format!("{}**(1/{})", b_s, a), PREC_POWER)
+                        }
+                        Symbol::Log => (format!("log({}, {})", b, a), PREC_ATOM),
+                        Symbol::Atan2 => (format!("atan2({}, {})", a, b), PREC_ATOM),
+                        _ => unreachable!(),
                     };
-                    stack.push(s);
+                    stack.push((result, prec));
                 }
             }
         }
 
-        stack.pop().unwrap_or_else(|| "?".to_string())
+        stack
+            .pop()
+            .map(|(s, _)| s)
+            .unwrap_or_else(|| "?".to_string())
     }
 }
 

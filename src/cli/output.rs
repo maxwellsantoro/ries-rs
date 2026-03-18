@@ -98,13 +98,26 @@ pub fn format_expression_for_display(
 ) -> String {
     match format {
         DisplayFormat::Infix(inner) => {
-            // Use table-driven formatting if a table is provided
-            // Note: Table-driven formatting currently uses default infix style.
-            // Future enhancement: could support both table symbols AND specific formatting.
-            let infix = if let Some(t) = table {
-                expression.to_infix_with_table(t)
-            } else {
-                expression.to_infix_with_format(inner)
+            let infix = match inner {
+                // Default and Pretty use table-driven names (respects --symbol-names)
+                expr::OutputFormat::Default => {
+                    if let Some(t) = table {
+                        expression.to_infix_with_table(t)
+                    } else {
+                        expression.to_infix()
+                    }
+                }
+                expr::OutputFormat::Pretty => {
+                    let base = if let Some(t) = table {
+                        expression.to_infix_with_table(t)
+                    } else {
+                        expression.to_infix()
+                    };
+                    apply_pretty_unicode(&base)
+                }
+                // Mathematica/SymPy use their own standard symbol names
+                expr::OutputFormat::Mathematica => expression.to_infix_mathematica(),
+                expr::OutputFormat::SymPy => expression.to_infix_sympy(),
             };
             if explicit_multiply {
                 apply_explicit_multiply(&infix)
@@ -120,6 +133,15 @@ pub fn format_expression_for_display(
             .collect::<Vec<_>>()
             .join(" "),
     }
+}
+
+/// Apply Unicode substitutions for Pretty output format.
+fn apply_pretty_unicode(s: &str) -> String {
+    let mut result = s.to_string();
+    result = result.replace("pi", "π");
+    result = result.replace("sqrt(", "√(");
+    result = result.replace("^2", "²");
+    result
 }
 
 /// Print a match in relative format (showing error from target).

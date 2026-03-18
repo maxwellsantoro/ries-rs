@@ -361,6 +361,7 @@ pub fn evaluate_with_workspace_and_context(
         return Err(EvalError::Invalid);
     }
 
+    // SAFETY: len == 1 check above guarantees pop succeeds
     let result = stack.pop().unwrap();
 
     // Check for invalid results
@@ -648,6 +649,7 @@ fn eval_user_function(
             return Err(EvalError::Invalid);
         }
 
+        // SAFETY: len == 1 check above guarantees pop succeeds
         let result = stack.pop().unwrap();
 
         // Check for invalid results
