@@ -1,9 +1,9 @@
 cff-version: 1.2.0
 message: "If you use ries-rs in your research, please cite it as below."
 title: "ries-rs"
-version: 1.0.1
-date-released: 2026-03-16
-url: "https://github.com/maxwellsantoro/ries-rs"
+version: 1.1.0
+date-released: 2026-03-18
+url: "https://maxwellsantoro.com/projects/ries-rs"
 authors:
   - given-names: Maxwell
     family-names: Santoro

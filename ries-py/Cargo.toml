@@ -1,11 +1,11 @@
 [package]
 name = "ries-py"
-version = "1.0.1"
+version = "1.1.0"
 edition = "2021"
 authors = ["Maxwell Santoro"]
 description = "Find algebraic equations given their solution - Python bindings"
 license = "MIT"
-homepage = "https://github.com/maxwellsantoro/ries-rs"
+homepage = "https://maxwellsantoro.com/projects/ries-rs"
 repository = "https://github.com/maxwellsantoro/ries-rs.git"
 documentation = "https://github.com/maxwellsantoro/ries-rs/blob/main/docs/PYTHON_BINDINGS.md"
 readme = "PYPI.md"
@@ -21,5 +21,5 @@ parallel = ["ries_core/parallel"]
 highprec = ["ries_core/highprec"]
 
 [dependencies]
-ries_core = { package = "ries", path = "..", version = "1.0.1" }
+ries_core = { package = "ries", path = "..", version = "1.1.0" }
 pyo3 = { version = "0.22", features = ["extension-module"] }

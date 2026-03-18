@@ -1,6 +1,6 @@
 {
   "name": "ries-rs",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Find algebraic equations given their solution - WASM build",
   "main": "pkg-node/ries_rs.js",
   "module": "pkg-bundler/ries_rs.js",
@@ -48,7 +48,7 @@
   "bugs": {
     "url": "https://github.com/maxwellsantoro/ries-rs/issues"
   },
-  "homepage": "https://github.com/maxwellsantoro/ries-rs#readme",
+  "homepage": "https://maxwellsantoro.com/projects/ries-rs",
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "wasm-pack": "^0.14.0"

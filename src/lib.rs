@@ -1,3 +1,6 @@
+// Allow field reassignment with default in test code - common pattern for config building
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+
 //! # RIES-RS: Find algebraic equations given their solution
 //!
 //! A Rust implementation of Robert Munafo's RIES (RILYBOT Inverse Equation Solver).
@@ -27,9 +30,6 @@
 //! ```
 //!
 //! ## Command-Line Usage
-
-// Allow field reassignment with default in test code - common pattern for config building
-#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 //!
 //! ```bash
 //! # Find equations for π

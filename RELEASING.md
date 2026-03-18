@@ -8,7 +8,8 @@ Release-process notes and templates for `ries-rs`.
 
 Before tagging a release:
 
-1. Confirm docs and metadata are up to date (`README.md`, `CHANGELOG.md`, `CITATION.cff`, `Cargo.toml`, `package.json`, `ries-py/pyproject.toml`)
+1. Run the automated integrity preflight:
+   - `python3 scripts/check_release_integrity.py`
 2. Run formatting and lint checks:
    - `cargo fmt --all -- --check`
    - `cargo clippy --all-targets --locked -- -D warnings`
@@ -24,10 +25,22 @@ Before tagging a release:
 5. Review pending changes:
    - `git status --short`
 
+The integrity check covers the versioned release metadata surfaces that have to
+move together:
+
+- `README.md`
+- `CHANGELOG.md`
+- `CITATION.cff`
+- `Cargo.toml`
+- `package.json`
+- `ries-py/Cargo.toml`
+- `ries-py/pyproject.toml`
+- `docs/releases/vX.Y.Z.md`
+
 ### CI/Workflow Preconditions
 
 - Release automation is tag-driven via `push` tags matching `v*` in `.github/workflows/release.yml`.
-- CI coverage for release-related surfaces is defined in `.github/workflows/ci.yml` (Rust checks/tests, WASM tests, Python bindings crate check).
+- CI coverage for release-related surfaces is defined in `.github/workflows/ci.yml` (release integrity, Rust checks/tests, WASM tests, Python bindings crate check).
 - The parity check job is optional when `ries-original/ries.c` is not vendored (it skips automatically).
 - GitHub release publishing now assumes both registry publishing paths are configured:
   - crates.io via repository secret `CARGO_REGISTRY_TOKEN`
@@ -109,9 +122,25 @@ Suggested smoke checks (one per artifact surface):
   - `pip install <wheel-file.whl>`
   - `python -c "import ries_rs; print(len(ries_rs.search(3.14159)))"`
 
+### Website Handoff
+
+This repository owns release-artifact correctness. It does not own the final
+deployment validation for `https://maxwellsantoro.com/projects/ries-rs/app/`.
+
+After a WASM release or release-candidate build is ready:
+
+1. Import the updated static bundle into the website repository
+2. Run the website repository's demo-asset normalization step
+3. Run the website repository's landing-page and live-demo smoke checks
+4. Only then treat the public web demo as release-ready
+
+Keep the artifact gate here focused on CLI archives, WASM packages, and Python
+distributions. Keep landing-page metadata, app-shell metadata, and deployed
+demo correctness in the website repository.
+
 ### Post-Release
 
-1. Add the released version + DOI status to this file (or move DOI tracking to a dedicated release log if preferred)
+1. Record any verified Zenodo DOI status for the released version
 2. Confirm `CHANGELOG.md` has a new `Unreleased` section for follow-up work
 3. Verify docs/release notes links still point to current files (`docs/PARITY_STATUS.md`, `RELEASING.md`)
 
@@ -128,8 +157,10 @@ When creating a release, include:
 
 ## DOI / Zenodo
 
-After each release, Zenodo will assign a DOI. Record it here (or in project release notes/docs):
+Record a DOI here only after Zenodo archival has actually completed and the DOI
+has been verified in project metadata.
 
-- `v0.1.0`: DOI pending assignment
-- `v1.0.0`: DOI pending assignment
-- `v1.0.1`: DOI pending assignment
+- `v0.1.0`: no Zenodo DOI recorded in this repository
+- `v1.0.0`: no Zenodo DOI recorded in this repository
+- `v1.0.1`: no Zenodo DOI recorded in this repository
+- `v1.1.0`: pending release

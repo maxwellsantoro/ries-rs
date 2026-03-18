@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-03-18
+
+### Added
+- Automated release-integrity checks for cross-package version sync, canonical
+  homepage metadata, release notes presence, and README image assets
+- Public-facing v1.1.0 release notes centered on the canonical landing page and
+  live demo handoff
+
+### Changed
+- Pointed package and citation homepage metadata at the canonical project page
+  on `maxwellsantoro.com`
+- Clarified release ownership in `RELEASING.md`: this repo verifies release
+  artifacts, while the website repo verifies the deployed demo experience
+- Kept the crate-level rustdoc command-line example contiguous by moving the
+  test-only crate attribute out of the middle of the docs
+
+### Fixed
+- Aligned Zenodo/DOI wording across the README, release notes, and release
+  process docs so the repo no longer overclaims archival status
+- Added an automated guard for the README screenshot asset referenced at the top
+  of the project page
+
 ## [1.0.1] - 2026-03-16
 
 ### Changed

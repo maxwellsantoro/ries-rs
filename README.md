@@ -221,16 +221,16 @@ If you use `ries-rs` in academic work, cite the project version you used.
   author       = {Santoro, Maxwell},
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
-  version      = {1.0.1},
-  url          = {https://github.com/maxwellsantoro/ries-rs},
+  version      = {1.1.0},
+  url          = {https://maxwellsantoro.com/projects/ries-rs},
   license      = {MIT},
   note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}
 }
 ```
 
-Each GitHub release is archived on [Zenodo](https://zenodo.org) after
-publication. Once a release DOI exists, copy it into `CITATION.cff`, this
-README, and the release notes.
+GitHub releases may also be archived on [Zenodo](https://zenodo.org). Record a
+release DOI in `CITATION.cff`, this README, and the release notes only after it
+has actually been minted and verified.
 
 For reproducible research runs, prefer `--deterministic` together with
 `--emit-manifest`.
