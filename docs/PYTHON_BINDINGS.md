@@ -50,7 +50,7 @@ import ries_rs
 print(ries_rs.version())
 print(ries_rs.list_presets())
 
-results = ries_rs.search(3.141592653589793, level=2, max_matches=8)
+results = ries_rs.search(1.6487212707, level=5, max_matches=3)
 for match in results[:3]:
     print(match)
 ```
@@ -105,7 +105,7 @@ Use a preset:
 ```python
 import ries_rs
 
-results = ries_rs.search(137.035999, preset="physics", level=2)
+results = ries_rs.search(1.64493406685, preset="analytic-nt", level=2)
 for match in results[:5]:
     print(match.solve_for_x or f"{match.lhs} = {match.rhs}")
 ```

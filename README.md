@@ -1,11 +1,13 @@
 # ries-rs
 
+Rust inverse equation solver for turning a target number into compact algebraic equations.
+
 [![CI](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml)
 [![Coverage](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml)
+[![Live Demo](https://img.shields.io/badge/live-demo-0f766e)](https://maxwellsantoro.com/projects/ries-rs/app/)
 [![Crates.io](https://img.shields.io/crates/v/ries.svg)](https://crates.io/crates/ries)
 [![PyPI](https://img.shields.io/pypi/v/ries-rs.svg?cacheSeconds=300)](https://pypi.org/project/ries-rs/)
 [![DOI](https://zenodo.org/badge/1123876688.svg)](https://doi.org/10.5281/zenodo.19101924)
-[![Live Demo](https://img.shields.io/badge/live-demo-0f766e)](https://maxwellsantoro.com/projects/ries-rs/app/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `ries-rs` is a Rust implementation of Robert P. Munafo's RIES inverse equation
@@ -16,6 +18,9 @@ The historical acronym is RIES, for "RILYBOT Inverse Equation Solver". This
 repository aims to be a modern, documented, reproducible reference
 implementation rather than a historical clone.
 
+> **Name map:** crates.io crate `ries`; installed CLI `ries-rs`; PyPI package
+> `ries-rs`; Python import `ries_rs`.
+
 Project page: [maxwellsantoro.com/projects/ries-rs](https://maxwellsantoro.com/projects/ries-rs)  
 Live demo: [maxwellsantoro.com/projects/ries-rs/app/](https://maxwellsantoro.com/projects/ries-rs/app/)
 
@@ -23,10 +28,10 @@ Live demo: [maxwellsantoro.com/projects/ries-rs/app/](https://maxwellsantoro.com
 
 ## Who It's For
 
-- Researchers who want reproducible constant-recognition runs with structured output
-- Programmers who want a library or CLI for equation search instead of an interactive calculator
-- Math enthusiasts exploring compact identities for familiar constants or strange decimals
-- Educators and demo authors who want Python and browser-facing interfaces in addition to the CLI
+- Researchers who want reproducible constant-recognition runs with structured output and run manifests
+- Programmers who want equation search embedded in Rust, Python, or browser workflows
+- People comparing modern behavior against historical RIES baselines with explicit parity notes
+- Educators and demo authors who want the same engine behind a CLI, Python module, and live browser demo
 
 ## Why Use `ries-rs`
 
@@ -40,7 +45,7 @@ Live demo: [maxwellsantoro.com/projects/ries-rs/app/](https://maxwellsantoro.com
 
 ### CLI
 
-The crates.io package is named `ries`; the installed binary is `ries-rs`.
+Use `cargo install ries --locked` to install the `ries-rs` executable.
 
 ```bash
 cargo install ries --locked
@@ -105,10 +110,14 @@ Basic search:
 
 ```bash
 ries-rs 3.141592653589793
+```
 
-# Example output:
-#                    x = pi                       ('exact' match) {14}
-#                  x-3 = 1/7                      for x = T + 1.26e-3 {24}
+Example output:
+
+```text
+                       x = pi                       ('exact' match) {29}
+                      -x = -pi                      ('exact' match) {43}
+                     1/x = 1/pi                     ('exact' match) {43}
 ```
 
 Classic-style output:
@@ -143,7 +152,7 @@ ries-rs --help
 Not primary goals of this repository:
 
 - Symbolic AI or conjecture systems
-- PSLQ research-platform ambitions beyond the shipped CLI mode
+- Turning the bundled PSLQ integer-relation mode into a separate research platform
 - Experimental search branches outside the core RIES model
 
 ## Performance
@@ -163,7 +172,8 @@ Raw benchmark artifacts live under `docs/benchmarks/artifacts/`.
 
 ## Compatibility
 
-`ries-rs` tracks behavior against two historical baselines:
+`ries-rs` tracks behavior against two historical baselines while keeping a
+Rust-native engine and build surface:
 
 1. The original RIES by Robert Munafo
 2. The `clsn/ries` fork with additional compatibility-oriented CLI behavior
@@ -173,8 +183,9 @@ Current status in brief:
 - Core equation search and classic-style output flow are implemented
 - Legacy CLI semantics and diagnostic channels are supported substantially more
   completely than in early versions
-- Internal generation and ranking are Rust-native, so exact ordering and
-  complexity numbers can still differ on some targets
+- The Rust-native engine keeps modern build and integration advantages, while
+  edge-case ordering or complexity scores can still differ from historical
+  binaries on some targets
 
 See [`docs/PARITY_STATUS.md`](docs/PARITY_STATUS.md) for the detailed status and
 historical notes.
@@ -199,6 +210,11 @@ historical notes.
 - [Python bindings](docs/PYTHON_BINDINGS.md)
 - [WASM bindings](docs/WASM_BINDINGS.md)
 - [Web UI build and hosting](web/README.md)
+
+## Contributing
+
+If you want to improve the engine, docs, packaging, or release surfaces, start
+with [CONTRIBUTING.md](CONTRIBUTING.md) for setup and verification expectations.
 
 ## Additional Interfaces
 

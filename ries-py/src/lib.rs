@@ -15,16 +15,16 @@
 //! import ries_rs
 //!
 //! # Simple search
-//! results = ries_rs.search(3.1415926535)
+//! results = ries_rs.search(1.6487212707, level=5, max_matches=3)
 //! for r in results:
 //!     print(f"{r.lhs} = {r.rhs}  (error: {r.error:.2e})")
 //!
-//! # With options
+//! # Use a preset to expose domain-specific constants
 //! results = ries_rs.search(
-//!     1.618033988,
-//!     level=3,
-//!     max_matches=20,
-//!     preset="physics"
+//!     1.64493406685,
+//!     level=2,
+//!     max_matches=5,
+//!     preset="analytic-nt"
 //! )
 //! ```
 
@@ -61,11 +61,12 @@ const MAX_API_MATCHES: usize = 10_000;
 ///
 /// Examples
 /// --------
-/// >>> m = PyMatch(lhs='x', rhs='pi', x_value=3.14159..., error=8.98e-11, complexity=14)
+/// >>> import ries_rs
+/// >>> m = ries_rs.search(1.6487212707, level=5, max_matches=1)[0]
 /// >>> print(m)
-/// x = pi  [error: 8.98e-11] {14}
+/// x^2 = e  [error: 1.28e-13] {36}
 /// >>> m.to_dict()
-/// {'lhs': 'x', 'rhs': 'pi', 'x_value': 3.14159..., ...}
+/// {'lhs': 'x^2', 'rhs': 'e', 'x_value': 1.64872..., ...}
 #[pyclass]
 #[derive(Clone)]
 pub struct PyMatch {
@@ -263,9 +264,9 @@ fn build_gen_config(
 /// Examples
 /// --------
 /// >>> import ries_rs
-/// >>> results = ries_rs.search(3.1415926535)
+/// >>> results = ries_rs.search(1.6487212707, level=5)
 /// >>> print(results[0])
-/// x = pi  [error: 8.98e-11] {14}
+/// x^2 = e  [error: 1.28e-13] {36}
 #[pyfunction]
 #[pyo3(signature = (target, level=2, max_matches=16, preset=None, parallel=true))]
 fn search(
@@ -396,14 +397,12 @@ fn version() -> &'static str {
 /// Examples
 /// --------
 /// >>> import ries_rs
-/// >>> results = ries_rs.search(3.14159)
-/// >>> for r in results[:5]:
+/// >>> results = ries_rs.search(1.6487212707, level=5)
+/// >>> for r in results[:3]:
 /// ...     print(f"{r.lhs} = {r.rhs}")
-/// x = pi
-/// x-3 = 1/7
-/// 6-x = 2*phi
-/// x*7 = 22
-/// x/phi = phi+1
+/// x^2 = e
+/// x = sqrt(e)
+/// ln(x) = 1/2
 #[pymodule]
 fn ries_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMatch>()?;

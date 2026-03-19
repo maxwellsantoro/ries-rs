@@ -119,7 +119,7 @@ varies strongly with search mode, see `docs/ARCHITECTURE.md`.
 # Use higher complexity levels
 ./target/release/ries-rs 2.5 -l4
 
-# Future: use high-precision feature
+# Rebuild with the optional high-precision engine
 cargo run --release --features highprec -- 2.5 --precision 256
 ```
 
