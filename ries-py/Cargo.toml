@@ -16,10 +16,22 @@ name = "ries_rs"
 crate-type = ["cdylib"]
 
 [features]
-default = ["parallel"]
+# extension-module tells PyO3 to resolve Python symbols at runtime (required for
+# the .so build).  It is included in the default feature set so that `maturin
+# develop` / `maturin build` work without extra flags.
+#
+# `cargo test` for this crate requires a Python interpreter to be installed at
+# link time.  Without one, use the root crate test suite instead — it covers the
+# same Rust search logic without the PyO3 binding layer.
+#
+# Full fix: extract pure-Rust helpers from the PyO3 wrappers into a separate
+# internal module and test those; the binding code itself can only be tested
+# through Python (pytest / maturin develop).
+default = ["extension-module", "parallel"]
+extension-module = ["pyo3/extension-module"]
 parallel = ["ries_core/parallel"]
 highprec = ["ries_core/highprec"]
 
 [dependencies]
 ries_core = { package = "ries", path = "..", version = "1.1.1" }
-pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3 = { version = "0.22" }

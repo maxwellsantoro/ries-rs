@@ -297,6 +297,22 @@ fn test_classic_prefers_exact_match() {
 }
 
 #[test]
+fn test_streaming_classic_matches_classic_top_result() {
+    let (classic_stdout, _stderr) = run_ries(&["2.5", "--classic", "-n", "1"]);
+    let (streaming_stdout, _stderr) = run_ries(&["2.5", "--streaming", "--classic", "-n", "1"]);
+
+    let classic_first = parse_first_match_line(&classic_stdout).expect("missing classic first match");
+    let streaming_first =
+        parse_first_match_line(&streaming_stdout).expect("missing streaming classic first match");
+
+    assert_eq!(
+        streaming_first, classic_first,
+        "expected --streaming --classic to keep the same top match as classic\nclassic:\n{}\nstreaming:\n{}",
+        classic_stdout, streaming_stdout
+    );
+}
+
+#[test]
 fn test_op_limits_is_count_limit_not_allow_list() {
     let (stdout, _stderr) = run_ries(&["6", "--report", "false", "-n", "1", "-l", "2", "-O", "1+"]);
     let (lhs, rhs) =

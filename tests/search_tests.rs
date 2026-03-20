@@ -7,7 +7,7 @@ use ries_rs::eval;
 use ries_rs::expr::Expression;
 use ries_rs::gen::{generate_all, GenConfig};
 use ries_rs::profile::UserConstant;
-use ries_rs::search::{search_with_stats_and_options, ExprDatabase};
+use ries_rs::search::{search_adaptive, search_with_stats_and_options, ExprDatabase};
 use ries_rs::symbol::{NumType, Symbol};
 use ries_rs::udf::UserFunction;
 use ries_rs::SymbolTable;
@@ -564,5 +564,61 @@ fn test_adaptive_search_produces_valid_matches() {
     assert!(
         min_complexity <= 28,
         "simplest match complexity should be low for target 2.0, got {min_complexity}"
+    );
+}
+
+/// Regression: search_adaptive must start from complexity (1, 1) and grow
+/// iteratively toward the target expression count regardless of what bounds
+/// the caller's GenConfig carries.
+///
+/// The bug this test guards against: the loop previously clamped each iteration
+/// with `lhs_c.max(base_config.max_lhs_complexity)`, so a caller with high
+/// pre-computed bounds (e.g. fast_config with max_lhs = 40) would skip the
+/// iterative growth entirely and behave identically to the batch path.
+///
+/// Observable signal: at level 0 the target count is 2000 × 4^2 = 32 000.
+/// If the clamp bug is present and fast_config's 40/40 bounds are used, the
+/// first iteration generates far more than 32 K expressions and the loop exits
+/// after one step.  Without the bug the loop grows from (1,1) and the total
+/// expression count stays near 32 K rather than ballooning to 100 K+.
+#[test]
+fn test_search_adaptive_calls_iterative_algorithm() {
+    use ries_rs::search::SearchConfig;
+
+    // Deliberately use the high-bound config (40 / 40).  If the clamp bug were
+    // still present the adaptive loop would start at (40, 40), generate far more
+    // expressions than the level-0 target, and the assertion below would fail.
+    let gen_config = fast_config();
+    let search_config = SearchConfig {
+        target: 2.0,
+        max_matches: 10,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (adaptive_matches, adaptive_stats) = search_adaptive(&gen_config, &search_config, 0);
+
+    assert!(
+        !adaptive_matches.is_empty(),
+        "search_adaptive should find matches for target 2.0"
+    );
+    assert!(adaptive_stats.lhs_count > 0, "must report generated LHS expressions");
+    assert!(adaptive_stats.rhs_count > 0, "must report generated RHS expressions");
+
+    // Level-0 target = 2000 × 4^2 = 32 000.  Without the clamp bug, total
+    // expression count should be bounded near that target.  With the bug the
+    // 40/40 bounds produce 100 K+ expressions, blowing through this ceiling.
+    let target_level0: usize = 2000 * 4usize.pow(2);
+    let total = adaptive_stats.lhs_count + adaptive_stats.rhs_count;
+    assert!(
+        total <= target_level0 * 8,
+        "adaptive at level 0 generated {total} expressions but the target is ~{target_level0}; \
+         a large overshoot indicates the bounds-clamp bug is still present"
+    );
+    assert!(
+        total >= target_level0 / 8,
+        "adaptive at level 0 generated only {total} expressions (target ~{target_level0}); \
+         the iterative growth may not be running at all"
     );
 }

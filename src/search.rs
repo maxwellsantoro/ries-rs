@@ -654,55 +654,80 @@ pub fn search_adaptive(
     let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
     let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
 
-    // For adaptive mode, use the standard complexity formula
-    // See level_to_complexity() for the standard mapping
-    let (std_lhs, std_rhs) = level_to_complexity(level);
+    // Target expression count: 2000 × 4^(2 + level)
+    // Level 0 ≈ 32 K, level 1 ≈ 128 K, level 2 ≈ 512 K, level 3 ≈ 2 M
+    let target_count = 2000_usize.saturating_mul(4_usize.saturating_pow(2 + level));
 
-    let mut config = base_config.clone();
-    config.max_lhs_complexity = std_lhs.max(base_config.max_lhs_complexity);
-    config.max_rhs_complexity = std_rhs.max(base_config.max_rhs_complexity);
+    // Iterative adaptive growth: start at complexity (1, 1) and expand the side
+    // with fewer expressions until the target count is reached.  Each iteration
+    // re-generates all expressions up to the current bounds; the HashMap dedup
+    // ensures only the simplest equivalent expression per key is retained.
+    // Re-generation cost follows a geometric series so the overhead is ≤ 33 %
+    // of the final-iteration cost (sum 1 + 1/4 + 1/16 + … = 4/3).
+    let mut lhs_c: u32 = 1;
+    let mut rhs_c: u32 = 1;
+    const MAX_ADAPTIVE_COMPLEXITY: u32 = 60;
 
-    // Generate all expressions at the calculated complexity
-    // Use parallel generation when available for significantly better performance
-    let generated = {
-        #[cfg(feature = "parallel")]
-        {
-            crate::gen::generate_all_parallel_with_context(
-                &config,
-                search_config.target,
-                &context.eval,
-            )
+    loop {
+        let mut config = base_config.clone();
+        // Use lhs_c/rhs_c directly — do NOT clamp against base_config bounds.
+        // Clamping would pin the loop to the caller's pre-computed level bounds and
+        // prevent growth from (1, 1), defeating the adaptive algorithm entirely.
+        config.max_lhs_complexity = lhs_c;
+        config.max_rhs_complexity = rhs_c;
+
+        let generated = {
+            #[cfg(feature = "parallel")]
+            {
+                crate::gen::generate_all_parallel_with_context(
+                    &config,
+                    search_config.target,
+                    &context.eval,
+                )
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                crate::gen::generate_all_with_context(&config, search_config.target, &context.eval)
+            }
+        };
+
+        for expr in generated.lhs {
+            let key = (quantize_value(expr.value), quantize_value(expr.derivative));
+            lhs_map
+                .entry(key)
+                .and_modify(|existing| {
+                    if expr.expr.complexity() < existing.expr.complexity() {
+                        *existing = expr.clone();
+                    }
+                })
+                .or_insert(expr);
         }
-        #[cfg(not(feature = "parallel"))]
-        {
-            crate::gen::generate_all_with_context(&config, search_config.target, &context.eval)
+        for expr in generated.rhs {
+            let key = quantize_value(expr.value);
+            rhs_map
+                .entry(key)
+                .and_modify(|existing| {
+                    if expr.expr.complexity() < existing.expr.complexity() {
+                        *existing = expr.clone();
+                    }
+                })
+                .or_insert(expr);
         }
-    };
 
-    // Deduplicate LHS expressions, keeping the simplest equivalent
-    for expr in generated.lhs {
-        let key = (quantize_value(expr.value), quantize_value(expr.derivative));
-        lhs_map
-            .entry(key)
-            .and_modify(|existing| {
-                if expr.expr.complexity() < existing.expr.complexity() {
-                    *existing = expr.clone();
-                }
-            })
-            .or_insert(expr);
-    }
-
-    // Deduplicate RHS expressions, keeping the simplest equivalent
-    for expr in generated.rhs {
-        let key = quantize_value(expr.value);
-        rhs_map
-            .entry(key)
-            .and_modify(|existing| {
-                if expr.expr.complexity() < existing.expr.complexity() {
-                    *existing = expr.clone();
-                }
-            })
-            .or_insert(expr);
+        if lhs_map.len() + rhs_map.len() >= target_count {
+            break;
+        }
+        if lhs_c >= MAX_ADAPTIVE_COMPLEXITY && rhs_c >= MAX_ADAPTIVE_COMPLEXITY {
+            break;
+        }
+        // Expand the side with fewer expressions (original RIES algorithm)
+        if lhs_map.len() <= rhs_map.len() && lhs_c < MAX_ADAPTIVE_COMPLEXITY {
+            lhs_c += 1;
+        } else if rhs_c < MAX_ADAPTIVE_COMPLEXITY {
+            rhs_c += 1;
+        } else {
+            break;
+        }
     }
 
     let all_lhs: Vec<EvaluatedExpr> = lhs_map.into_values().collect();
@@ -791,7 +816,51 @@ pub fn search_streaming(
     search_streaming_with_config(gen_config, &config)
 }
 
+fn stop_condition_met(m: &Match, search_config: &SearchConfig) -> bool {
+    (search_config.stop_at_exact && m.error.abs() < EXACT_MATCH_TOLERANCE)
+        || search_config
+            .stop_below
+            .is_some_and(|threshold| m.error.abs() < threshold)
+}
+
+fn prefer_streaming_stop_match(candidate: &Match, current: &Match) -> bool {
+    use std::cmp::Ordering;
+
+    candidate
+        .lhs
+        .expr
+        .complexity()
+        .cmp(&current.lhs.expr.complexity())
+        .then_with(|| candidate.rhs.expr.complexity().cmp(&current.rhs.expr.complexity()))
+        .then_with(|| {
+            candidate
+                .error
+                .abs()
+                .partial_cmp(&current.error.abs())
+                .unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| candidate.lhs.expr.to_postfix().cmp(&current.lhs.expr.to_postfix()))
+        .then_with(|| candidate.rhs.expr.to_postfix().cmp(&current.rhs.expr.to_postfix()))
+        .is_lt()
+}
+
+fn merge_priority_match(mut matches: Vec<Match>, priority: Match, max_matches: usize) -> Vec<Match> {
+    if let Some(idx) = matches
+        .iter()
+        .position(|m| m.lhs.expr == priority.lhs.expr && m.rhs.expr == priority.rhs.expr)
+    {
+        matches.remove(idx);
+    }
+    matches.insert(0, priority);
+    matches.truncate(max_matches);
+    matches
+}
+
 /// Perform a streaming search with a fully specified search configuration.
+///
+/// Memory model: O(rhs_database) — LHS expressions are matched on-the-fly in a
+/// second generator pass and never buffered. The only persistent allocation is the
+/// deduplicated RHS database.
 pub fn search_streaming_with_config(
     gen_config: &crate::gen::GenConfig,
     search_config: &SearchConfig,
@@ -803,10 +872,7 @@ pub fn search_streaming_with_config(
     let mut stats = SearchStats::new();
     let context = SearchContext::new(search_config);
 
-    // Respect configured max error (with a tiny floor for numerical stability)
     let initial_max_error = search_config.max_error.max(1e-12);
-
-    // Create bounded pool with configured capacity
     let mut pool = TopKPool::new_with_diagnostics(
         search_config.max_matches,
         initial_max_error,
@@ -814,19 +880,17 @@ pub fn search_streaming_with_config(
         search_config.ranking_mode,
     );
 
-    // Build RHS database first using streaming
+    // === Pass 1: Build RHS database ===
+    // Pass the original gen_config unchanged so the generator's internal
+    // `has_rhs_symbol_overrides` branch fires when needed (--S-RHS, --N-RHS, etc.),
+    // applying the rhs_only_config split.  The on_lhs no-op discards any LHS
+    // expressions that the generator produces as part of that split.
     let mut rhs_db = TieredExprDatabase::new();
     let mut rhs_map: HashMap<i64, crate::expr::EvaluatedExpr> = HashMap::new();
 
-    // Collect LHS expressions to process later
-    let mut lhs_exprs: Vec<crate::expr::EvaluatedExpr> = Vec::new();
-
-    // First pass: collect all RHS and LHS via streaming
     {
         let mut callbacks = StreamingCallbacks {
             on_rhs: &mut |expr| {
-                // Deduplicate by value, keeping simplest.
-                // Use quantize_value (not inline * 1e8) to avoid i64 overflow for large values.
                 let key = crate::gen::quantize_value(expr.value);
                 rhs_map
                     .entry(key)
@@ -838,13 +902,8 @@ pub fn search_streaming_with_config(
                     .or_insert_with(|| expr.clone());
                 true
             },
-            on_lhs: &mut |expr| {
-                lhs_exprs.push(expr.clone());
-                true
-            },
+            on_lhs: &mut |_| true,
         };
-
-        // Generate with streaming callbacks
         generate_streaming_with_context(
             gen_config,
             search_config.target,
@@ -853,202 +912,201 @@ pub fn search_streaming_with_config(
         );
     }
 
-    // Build the tiered database from deduplicated RHS
     for expr in rhs_map.into_values() {
         rhs_db.insert(expr);
     }
     rhs_db.finalize();
-
     stats.rhs_count = rhs_db.total_count();
-    stats.lhs_count = lhs_exprs.len();
     stats.gen_time = gen_start.elapsed();
 
-    // Now match LHS expressions against the RHS database
+    // === Pass 2: Stream LHS and match on-the-fly ===
+    //
+    // Streaming must keep O(rhs_db) memory even in classic/exact modes, so we never
+    // buffer the full LHS set. stop_at_exact / stop_below therefore cannot perform a
+    // literal early exit here because generator order is not complexity ordered.
+    //
+    // Instead, we remember the best qualifying match seen so far under a
+    // complexity-first ordering and splice it to the front of the final results.
+    // That preserves the "simplest acceptable match first" behavior without
+    // reintroducing O(all_lhs) memory usage.
+    let mut lhs_gen_config = gen_config.clone();
+    lhs_gen_config.generate_rhs = false;
+
     let search_start = SearchTimer::start();
+    let mut best_stop_match: Option<Match> = None;
 
-    // Sort LHS by complexity so simpler expressions are processed first
-    lhs_exprs.sort_by_key(|e| e.expr.complexity());
+    {
+        let mut callbacks = StreamingCallbacks {
+            on_rhs: &mut |_| true,
+            on_lhs: &mut |lhs| {
+                stats.lhs_count += 1;
 
-    // Early exit tracking
-    let mut early_exit = false;
+                // Skip LHS with value too close to 0
+                if lhs.value.abs() < search_config.zero_value_threshold {
+                    if search_config.show_pruned_range {
+                        eprintln!(
+                            "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",
+                            lhs.value,
+                            lhs.expr.to_infix()
+                        );
+                    }
+                    return true;
+                }
 
-    'outer: for lhs in &lhs_exprs {
-        if early_exit {
-            break;
-        }
+                // Skip degenerate expressions
+                if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
+                    let test_x = search_config.target + std::f64::consts::E;
+                    if let Ok(test_result) =
+                        crate::eval::evaluate_fast_with_context(&lhs.expr, test_x, &context.eval)
+                    {
+                        let value_unchanged =
+                            (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+                        let deriv_still_zero =
+                            test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
+                        if deriv_still_zero || value_unchanged {
+                            return true;
+                        }
+                    }
 
-        // Skip LHS with value too close to 0
-        if lhs.value.abs() < search_config.zero_value_threshold {
-            if search_config.show_pruned_range {
-                eprintln!(
-                    "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",
-                    lhs.value,
-                    lhs.expr.to_infix()
+                    stats.lhs_tested += 1;
+                    for rhs in rhs_db.iter_tiers_in_range(
+                        lhs.value - DEGENERATE_RANGE_TOLERANCE,
+                        lhs.value + DEGENERATE_RANGE_TOLERANCE,
+                    ) {
+                        if !search_config.rhs_symbol_allowed(&rhs.expr) {
+                            continue;
+                        }
+                        stats.candidates_tested += 1;
+                        if search_config.show_match_checks {
+                            eprintln!(
+                                "  [match] checking lhs={:.6} rhs={:.6}",
+                                lhs.value, rhs.value
+                            );
+                        }
+                        let val_diff = (lhs.value - rhs.value).abs();
+                        if val_diff < DEGENERATE_RANGE_TOLERANCE && pool.would_accept(0.0, true) {
+                            let m = Match {
+                                lhs: lhs.clone(),
+                                rhs: rhs.clone(),
+                                x_value: search_config.target,
+                                error: 0.0,
+                                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                            };
+                            if stop_condition_met(&m, search_config)
+                                && best_stop_match
+                                    .as_ref()
+                                    .is_none_or(|current| prefer_streaming_stop_match(&m, current))
+                            {
+                                best_stop_match = Some(m.clone());
+                            }
+                            pool.try_insert(m);
+                        }
+                    }
+                    return true;
+                }
+
+                stats.lhs_tested += 1;
+
+                let search_radius = calculate_adaptive_search_radius(
+                    lhs.derivative,
+                    lhs.expr.complexity(),
+                    pool.len(),
+                    search_config.max_matches,
+                    pool.best_error,
                 );
-            }
-            continue;
-        }
+                let low = lhs.value - search_radius;
+                let high = lhs.value + search_radius;
 
-        // Skip degenerate expressions
-        if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-            let test_x = search_config.target + std::f64::consts::E;
-            // Use the full evaluator (including user_functions) so that UDF-containing
-            // expressions are not silently skipped due to evaluate_with_constants
-            // returning Err for user-function symbols.
-            if let Ok(test_result) =
-                crate::eval::evaluate_fast_with_context(&lhs.expr, test_x, &context.eval)
-            {
-                let value_unchanged =
-                    (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
-                let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
-                if deriv_still_zero || value_unchanged {
-                    continue;
-                }
-            }
+                for rhs in rhs_db.iter_tiers_in_range(low, high) {
+                    if !search_config.rhs_symbol_allowed(&rhs.expr) {
+                        continue;
+                    }
+                    stats.candidates_tested += 1;
+                    if search_config.show_match_checks {
+                        eprintln!(
+                            "  [match] checking lhs={:.6} rhs={:.6}",
+                            lhs.value, rhs.value
+                        );
+                    }
 
-            // Check for value match
-            stats.lhs_tested += 1;
-            for rhs in rhs_db.iter_tiers_in_range(
-                lhs.value - DEGENERATE_RANGE_TOLERANCE,
-                lhs.value + DEGENERATE_RANGE_TOLERANCE,
-            ) {
-                if !search_config.rhs_symbol_allowed(&rhs.expr) {
-                    continue;
-                }
-                stats.candidates_tested += 1;
-                if search_config.show_match_checks {
-                    eprintln!(
-                        "  [match] checking lhs={:.6} rhs={:.6}",
-                        lhs.value, rhs.value
-                    );
-                }
-                let val_diff = (lhs.value - rhs.value).abs();
-                if val_diff < DEGENERATE_RANGE_TOLERANCE && pool.would_accept(0.0, true) {
-                    let m = Match {
-                        lhs: lhs.clone(),
-                        rhs: rhs.clone(),
-                        x_value: search_config.target,
-                        error: 0.0,
-                        complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                    };
-                    pool.try_insert(m);
-                }
-            }
-            continue;
-        }
+                    let val_diff = lhs.value - rhs.value;
+                    let x_delta = -val_diff / lhs.derivative;
+                    let coarse_error = x_delta.abs();
 
-        stats.lhs_tested += 1;
+                    let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
+                    if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
+                        continue;
+                    }
 
-        // Use adaptive search radius
-        let search_radius = calculate_adaptive_search_radius(
-            lhs.derivative,
-            lhs.expr.complexity(),
-            pool.len(),
-            search_config.max_matches,
-            pool.best_error,
+                    if !search_config.refine_with_newton {
+                        let refined_x = search_config.target + x_delta;
+                        let refined_error = x_delta;
+                        let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+
+                        if pool.would_accept(refined_error.abs(), is_exact) {
+                            let m = Match {
+                                lhs: lhs.clone(),
+                                rhs: rhs.clone(),
+                                x_value: refined_x,
+                                error: refined_error,
+                                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                            };
+                            if stop_condition_met(&m, search_config)
+                                && best_stop_match
+                                    .as_ref()
+                                    .is_none_or(|current| prefer_streaming_stop_match(&m, current))
+                            {
+                                best_stop_match = Some(m.clone());
+                            }
+                            pool.try_insert(m);
+                        }
+                        continue;
+                    }
+
+                    stats.newton_calls += 1;
+                    if let Some(refined_x) = newton_raphson_with_constants(
+                        &lhs.expr,
+                        rhs.value,
+                        search_config.target,
+                        search_config.newton_iterations,
+                        &context.eval,
+                        search_config.show_newton,
+                        search_config.derivative_margin,
+                    ) {
+                        stats.newton_success += 1;
+                        let refined_error = refined_x - search_config.target;
+                        let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+
+                        if pool.would_accept(refined_error.abs(), is_exact) {
+                            let m = Match {
+                                lhs: lhs.clone(),
+                                rhs: rhs.clone(),
+                                x_value: refined_x,
+                                error: refined_error,
+                                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                            };
+                            if stop_condition_met(&m, search_config)
+                                && best_stop_match
+                                    .as_ref()
+                                    .is_none_or(|current| prefer_streaming_stop_match(&m, current))
+                            {
+                                best_stop_match = Some(m.clone());
+                            }
+                            pool.try_insert(m);
+                        }
+                    }
+                }
+                true
+            },
+        };
+        generate_streaming_with_context(
+            &lhs_gen_config,
+            search_config.target,
+            &context.eval,
+            &mut callbacks,
         );
-        let low = lhs.value - search_radius;
-        let high = lhs.value + search_radius;
-
-        // Search using tiered iterator (lower tiers first)
-        for rhs in rhs_db.iter_tiers_in_range(low, high) {
-            if !search_config.rhs_symbol_allowed(&rhs.expr) {
-                continue;
-            }
-            stats.candidates_tested += 1;
-            if search_config.show_match_checks {
-                eprintln!(
-                    "  [match] checking lhs={:.6} rhs={:.6}",
-                    lhs.value, rhs.value
-                );
-            }
-
-            // Compute initial error estimate (coarse filter)
-            let val_diff = lhs.value - rhs.value;
-            let x_delta = -val_diff / lhs.derivative;
-            let coarse_error = x_delta.abs();
-
-            // Skip if coarse estimate won't pass threshold
-            let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
-            if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
-                continue;
-            }
-
-            if !search_config.refine_with_newton {
-                let refined_x = search_config.target + x_delta;
-                let refined_error = x_delta;
-                let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
-
-                if pool.would_accept(refined_error.abs(), is_exact) {
-                    let m = Match {
-                        lhs: lhs.clone(),
-                        rhs: rhs.clone(),
-                        x_value: refined_x,
-                        error: refined_error,
-                        complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                    };
-
-                    pool.try_insert(m);
-
-                    if search_config.stop_at_exact && is_exact {
-                        early_exit = true;
-                        break 'outer;
-                    }
-                    if let Some(threshold) = search_config.stop_below {
-                        if refined_error.abs() < threshold {
-                            early_exit = true;
-                            break 'outer;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // Refine with Newton-Raphson
-            stats.newton_calls += 1;
-            if let Some(refined_x) = newton_raphson_with_constants(
-                &lhs.expr,
-                rhs.value,
-                search_config.target,
-                search_config.newton_iterations,
-                &context.eval,
-                search_config.show_newton,
-                search_config.derivative_margin,
-            ) {
-                stats.newton_success += 1;
-                let refined_error = refined_x - search_config.target;
-                let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
-
-                // Check if this is acceptable
-                if pool.would_accept(refined_error.abs(), is_exact) {
-                    let m = Match {
-                        lhs: lhs.clone(),
-                        rhs: rhs.clone(),
-                        x_value: refined_x,
-                        error: refined_error,
-                        complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                    };
-
-                    // Insert into pool
-                    pool.try_insert(m);
-
-                    // Check early exit conditions
-                    if search_config.stop_at_exact && is_exact {
-                        early_exit = true;
-                        break 'outer;
-                    }
-                    if let Some(threshold) = search_config.stop_below {
-                        if refined_error.abs() < threshold {
-                            early_exit = true;
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-        }
     }
 
-    // Collect pool stats
     stats.pool_insertions = pool.stats.insertions;
     stats.pool_rejections_error = pool.stats.rejections_error;
     stats.pool_rejections_dedupe = pool.stats.rejections_dedupe;
@@ -1056,9 +1114,16 @@ pub fn search_streaming_with_config(
     stats.pool_final_size = pool.len();
     stats.pool_best_error = pool.best_error;
     stats.search_time = search_start.elapsed();
-    stats.early_exit = early_exit;
+    stats.early_exit = false;
 
-    (pool.into_sorted(), stats)
+    let matches = pool.into_sorted();
+    let matches = if let Some(priority_match) = best_stop_match {
+        merge_priority_match(matches, priority_match, search_config.max_matches)
+    } else {
+        matches
+    };
+
+    (matches, stats)
 }
 
 /// Perform one-sided search: generate RHS expressions only and match `x = RHS`.
@@ -1220,45 +1285,44 @@ pub fn search_parallel_with_stats_and_options(
 
 /// Perform a parallel search with a fully specified search configuration.
 ///
-/// This function includes a safety fallback: if expression generation would
-/// exceed ~2M expressions (which would risk OOM), it automatically switches
-/// to streaming mode to avoid memory exhaustion.
+/// Generation uses Rayon for parallelism. A sequential OOM-safety check runs
+/// first: if it estimates the expression space would exceed ~2M entries the
+/// function falls back to streaming mode automatically.
 #[cfg(feature = "parallel")]
 pub fn search_parallel_with_stats_and_config(
     gen_config: &crate::gen::GenConfig,
     config: &SearchConfig,
 ) -> (Vec<Match>, SearchStats) {
-    use crate::gen::generate_all_with_limit_and_context;
+    use crate::gen::{generate_all_parallel_with_context, generate_all_with_limit_and_context};
 
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
     let context = SearchContext::new(config);
 
-    let gen_start = SearchTimer::start();
-
-    // Try bounded generation first — if limit exceeded, fall back to streaming
-    if let Some(generated) = generate_all_with_limit_and_context(
+    // OOM-safety gate: run a sequential bounded generation to check whether the
+    // search space fits in memory before committing to the parallel run.
+    if generate_all_with_limit_and_context(
         gen_config,
         config.target,
         &context.eval,
         MAX_EXPRESSIONS_BEFORE_STREAMING,
-    ) {
-        let gen_time = gen_start.elapsed();
-
-        // Build database
-        let mut db = ExprDatabase::new();
-        db.insert_rhs(generated.rhs);
-
-        // Find matches with stats
-        let (matches, mut stats) = db.find_matches_with_stats_and_context(&generated.lhs, &context);
-
-        // Add generation stats
-        stats.gen_time = gen_time;
-        stats.lhs_count = generated.lhs.len();
-        stats.rhs_count = db.rhs_count();
-
-        (matches, stats)
-    } else {
-        // Limit exceeded — fall back to streaming mode which avoids OOM
-        search_streaming_with_config(gen_config, config)
+    )
+    .is_none()
+    {
+        return search_streaming_with_config(gen_config, config);
     }
+
+    // Within the limit — generate in parallel using Rayon.
+    let gen_start = SearchTimer::start();
+    let generated = generate_all_parallel_with_context(gen_config, config.target, &context.eval);
+    let gen_time = gen_start.elapsed();
+
+    let mut db = ExprDatabase::new();
+    db.insert_rhs(generated.rhs);
+
+    let (matches, mut stats) = db.find_matches_with_stats_and_context(&generated.lhs, &context);
+    stats.gen_time = gen_time;
+    stats.lhs_count = generated.lhs.len();
+    stats.rhs_count = db.rhs_count();
+
+    (matches, stats)
 }

@@ -434,5 +434,7 @@ pub fn init() {
 }
 
 // Re-export for threaded WASM build. JS must call initThreadPool(n) after init().
+// The symbol is consumed by JavaScript, not by Rust code, so suppress the lint.
 #[cfg(feature = "wasm-threads")]
+#[allow(unused_imports)]
 pub use wasm_bindgen_rayon::init_thread_pool;
