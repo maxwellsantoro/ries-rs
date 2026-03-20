@@ -64,17 +64,6 @@ fn get_num_type(symbols: &[Symbol]) -> NumType {
         {
             return NumType::Rational;
         }
-        // Division: integer / integer = rational
-        if matches!(symbols[1], Div)
-            && matches!(
-                symbols[0],
-                One | Two | Three | Four | Five | Six | Seven | Eight | Nine
-            )
-            && symbols.len() >= 3
-        {
-            // This is more complex, but for simple cases it's rational
-            return NumType::Rational;
-        }
     }
 
     // Check for division pattern (3 symbols: num, denom, /)
@@ -474,7 +463,7 @@ fn make_match(
             expr: lhs_expr,
             value: lhs_eval.value,
             derivative: lhs_eval.derivative,
-            num_type: NumType::Transcendental,
+            num_type: lhs_eval.num_type,
         },
         rhs: EvaluatedExpr {
             expr: rhs_expr,
@@ -601,6 +590,21 @@ mod tests {
         let m = m.unwrap();
         assert!(m.error.abs() < 1e-14);
         assert_eq!(m.rhs.expr.to_postfix(), "5");
+        assert_eq!(m.lhs.num_type, NumType::Integer);
+    }
+
+    #[test]
+    fn test_division_candidate_is_rational() {
+        assert_eq!(
+            get_num_type(&[Symbol::Two, Symbol::Three, Symbol::Div]),
+            NumType::Rational
+        );
+
+        let m = find_fast_match(2.0 / 3.0, &[], &default_config(), &default_table());
+        assert!(m.is_some());
+        let m = m.unwrap();
+        assert_eq!(m.rhs.expr.to_postfix(), "23/");
+        assert_eq!(m.rhs.num_type, NumType::Rational);
     }
 
     #[test]

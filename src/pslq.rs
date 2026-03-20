@@ -158,8 +158,8 @@ pub fn find_integer_relation(target: f64, config: &PslqConfig) -> Option<Integer
         x.push(*val);
     }
 
-    // Run PSLQ
-    let coefficients = pslq(&x, config)?;
+    let coefficients =
+        find_two_term_relation(target, &constants, config).or_else(|| pslq(&x, config))?;
 
     // Check if the first coefficient (for target) is non-zero
     if coefficients[0] == 0 {
@@ -192,18 +192,89 @@ pub fn find_integer_relation(target: f64, config: &PslqConfig) -> Option<Integer
     })
 }
 
+fn find_two_term_relation(
+    target: f64,
+    constants: &[(String, f64)],
+    config: &PslqConfig,
+) -> Option<Vec<i64>> {
+    let residual_tolerance = config.tolerance * target.abs().max(1.0);
+    let relation_len = constants.len() + 1;
+    let mut best: Option<(Vec<i64>, i64, f64)> = None;
+
+    for (idx, (_, value)) in constants.iter().enumerate() {
+        let value = *value;
+        if !value.is_finite() {
+            continue;
+        }
+
+        let direct_residual = (target - value).abs();
+        if direct_residual <= residual_tolerance {
+            let mut coeffs = vec![0_i128; relation_len];
+            coeffs[0] = 1;
+            coeffs[idx + 1] = -1;
+            if let Some(normalized) = normalize_relation(coeffs, config.max_coefficient) {
+                return Some(normalized);
+            }
+        }
+
+        if value == 0.0 {
+            continue;
+        }
+
+        let Some((num, den)) = find_rational_approximation(target / value, config.max_coefficient)
+        else {
+            continue;
+        };
+        if den == 0 || num.abs() > config.max_coefficient || den.abs() > config.max_coefficient {
+            continue;
+        }
+
+        let residual = ((den as f64) * target - (num as f64) * value).abs();
+        if residual > residual_tolerance {
+            continue;
+        }
+
+        let mut coeffs = vec![0_i128; relation_len];
+        coeffs[0] = den as i128;
+        coeffs[idx + 1] = -(num as i128);
+        let Some(normalized) = normalize_relation(coeffs, config.max_coefficient) else {
+            continue;
+        };
+
+        let height = normalized
+            .iter()
+            .map(|coeff| coeff.abs())
+            .max()
+            .unwrap_or(config.max_coefficient);
+        match &best {
+            None => best = Some((normalized, height, residual)),
+            Some((_, best_height, best_residual)) => {
+                if height < *best_height
+                    || (height == *best_height && residual + residual_tolerance < *best_residual)
+                {
+                    best = Some((normalized, height, residual));
+                }
+            }
+        }
+    }
+
+    best.map(|(coeffs, _, _)| coeffs)
+}
+
 /// Core PSLQ algorithm implementation
 ///
 /// Finds integer relations among a vector of real numbers.
 /// Based on the algorithm from Ferguson & Bailey (1992).
 fn pslq(x: &[f64], config: &PslqConfig) -> Option<Vec<i64>> {
     let n = x.len();
-    if n < 2 {
+    if n < 2 || x.iter().any(|value| !value.is_finite()) {
         return None;
     }
 
-    // Initialize the matrices
-    let _gamma = (4.0 / 3.0_f64).sqrt(); // Used in full PSLQ for reduction parameter
+    // Ferguson/Bailey PSLQ uses a lower-trapezoidal H with n rows and n - 1 columns.
+    // The previous implementation stored a transposed/truncated variant and skipped the
+    // corner-removal rotation, which caused it to miss even direct basis relations.
+    let gamma = (4.0 / 3.0_f64).sqrt();
 
     // Compute initial norms and scale the vector
     let mut s: Vec<f64> = vec![0.0; n];
@@ -213,107 +284,278 @@ fn pslq(x: &[f64], config: &PslqConfig) -> Option<Vec<i64>> {
     }
 
     let scale = s[0];
-    if scale == 0.0 {
+    if scale <= f64::EPSILON || !scale.is_finite() {
         return None;
     }
 
     // Normalize
     let mut y: Vec<f64> = x.iter().map(|xi| xi / scale).collect();
-    for i in 0..n {
-        s[i] /= scale;
+    for value in &mut s {
+        *value /= scale;
     }
 
-    // Initialize H matrix (upper triangular)
-    let mut h: Vec<Vec<f64>> = vec![vec![0.0; n]; n - 1];
-    for i in 0..n - 1 {
-        for j in 0..=i.min(n - 2) {
+    // Initialize H as an n × (n - 1) lower-trapezoidal matrix.
+    let mut h: Vec<Vec<f64>> = vec![vec![0.0; n - 1]; n];
+    for i in 0..n {
+        for j in 0..n - 1 {
             if i == j {
                 h[i][j] = s[j + 1] / s[j];
+            } else if i > j {
+                h[i][j] = -y[i] * y[j] / (s[j] * s[j + 1]);
             } else {
-                h[i][j] = -y[j] * y[i + 1] / (s[i] * s[i + 1]);
+                h[i][j] = 0.0;
             }
         }
     }
 
-    // Initialize A and B matrices (identity)
-    let mut a: Vec<Vec<i64>> = vec![vec![0; n]; n];
-    let mut b: Vec<Vec<i64>> = vec![vec![0; n]; n];
+    // Initialize A and B matrices (identity).
+    let mut a: Vec<Vec<i128>> = vec![vec![0; n]; n];
+    let mut b: Vec<Vec<i128>> = vec![vec![0; n]; n];
     for i in 0..n {
         a[i][i] = 1;
         b[i][i] = 1;
     }
 
+    reduce_h(&mut y, &mut h, &mut a, &mut b, 1, n - 2);
+
     // Main iteration loop
     for _iteration in 0..config.max_iterations {
-        // Find the largest |h[i][i]|
-        let mut max_val = 0.0;
+        if let Some(coeffs) = detect_relation(x, &y, &b, config.max_coefficient, config.tolerance) {
+            return Some(coeffs);
+        }
+
+        // Select m to maximize gamma^i * |h[i][i]|.
+        let mut max_metric = 0.0;
         let mut max_idx = 0;
         for i in 0..n - 1 {
-            let val = h[i][i].abs();
-            if val > max_val {
-                max_val = val;
+            let metric = gamma.powi(i as i32) * h[i][i].abs();
+            if metric > max_metric {
+                max_metric = metric;
                 max_idx = i;
             }
         }
 
-        // Swap rows max_idx and max_idx + 1
-        if max_idx < n - 1 {
-            y.swap(max_idx, max_idx + 1);
-            a.swap(max_idx, max_idx + 1);
-            b.swap(max_idx, max_idx + 1);
-            for j in 0..n - 1 {
-                let tmp = h[max_idx][j];
-                h[max_idx][j] = h[max_idx + 1][j];
-                h[max_idx + 1][j] = tmp;
-            }
+        // Exchange y[m], y[m + 1], corresponding rows of A and H, and columns of B.
+        y.swap(max_idx, max_idx + 1);
+        a.swap(max_idx, max_idx + 1);
+        h.swap(max_idx, max_idx + 1);
+        for row in &mut b {
+            row.swap(max_idx, max_idx + 1);
         }
 
-        // Reduction step
-        for i in (1..n).rev() {
-            if max_idx < n - 1 && h[max_idx][max_idx].abs() > 1e-50 {
-                let t = (h[i - 1][max_idx] / h[max_idx][max_idx]).round();
-                y[i - 1] -= t * y[max_idx];
-                for j in 0..n - 1 {
-                    h[i - 1][j] -= t * h[max_idx][j];
+        remove_corner(&mut h, max_idx);
+
+        // Block reduction after the swap only needs to touch the affected suffix.
+        reduce_h(
+            &mut y,
+            &mut h,
+            &mut a,
+            &mut b,
+            max_idx + 1,
+            (max_idx + 1).min(n - 2),
+        );
+
+        if let Some(coeffs) = detect_relation(x, &y, &b, config.max_coefficient, config.tolerance) {
+            return Some(coeffs);
+        }
+
+        let max_diag = (0..n - 1).map(|i| h[i][i].abs()).fold(0.0_f64, f64::max);
+        if max_diag <= f64::EPSILON {
+            break;
+        }
+
+        // If the norm lower bound already exceeds the user's coefficient cap, no valid
+        // relation can remain: any vector with |c_i| <= C has Euclidean norm <= C * sqrt(n).
+        let norm_lower_bound = 1.0 / max_diag;
+        let coefficient_norm_cap = (config.max_coefficient as f64) * (n as f64).sqrt();
+        if norm_lower_bound > coefficient_norm_cap {
+            break;
+        }
+
+        // IEEE-754 doubles only preserve 53 bits of mantissa. If A grows beyond that,
+        // the floating-point y/H state is no longer trustworthy for exact detection.
+        if max_abs_matrix_entry(&a) > (1_i128 << 52) {
+            break;
+        }
+    }
+
+    detect_relation(x, &y, &b, config.max_coefficient, config.tolerance)
+}
+
+fn reduce_h(
+    y: &mut [f64],
+    h: &mut [Vec<f64>],
+    a: &mut [Vec<i128>],
+    b: &mut [Vec<i128>],
+    row_start: usize,
+    max_active_col: usize,
+) {
+    if h.is_empty() || h[0].is_empty() || row_start >= h.len() {
+        return;
+    }
+
+    let max_col_count = h[0].len();
+    let active_col_count = (max_active_col + 1).min(max_col_count);
+
+    for i in row_start.max(1)..h.len() {
+        let upper = i.min(active_col_count);
+        for j in (0..upper).rev() {
+            let denom = h[j][j];
+            if denom.abs() <= f64::EPSILON {
+                continue;
+            }
+
+            let t = (h[i][j] / denom).round();
+            if t == 0.0 {
+                continue;
+            }
+
+            y[i] -= t * y[j];
+            for k in 0..=j {
+                h[i][k] -= t * h[j][k];
+            }
+
+            let t_int = t as i128;
+            for k in 0..a[i].len() {
+                a[i][k] -= t_int * a[j][k];
+                b[k][j] += t_int * b[k][i];
+            }
+        }
+    }
+}
+
+fn remove_corner(h: &mut [Vec<f64>], pivot_row: usize) {
+    if h.is_empty() || h[0].len() < 2 || pivot_row + 1 >= h[0].len() {
+        return;
+    }
+
+    let corner = h[pivot_row][pivot_row + 1];
+    if corner.abs() <= f64::EPSILON {
+        return;
+    }
+
+    let diagonal = h[pivot_row][pivot_row];
+    let norm = (diagonal * diagonal + corner * corner).sqrt();
+    if norm <= f64::EPSILON {
+        return;
+    }
+
+    let c = diagonal / norm;
+    let s = corner / norm;
+    for row in pivot_row..h.len() {
+        let left = h[row][pivot_row];
+        let right = h[row][pivot_row + 1];
+        h[row][pivot_row] = c * left + s * right;
+        h[row][pivot_row + 1] = -s * left + c * right;
+    }
+}
+
+fn detect_relation(
+    x: &[f64],
+    y: &[f64],
+    b: &[Vec<i128>],
+    max_coefficient: i64,
+    tolerance: f64,
+) -> Option<Vec<i64>> {
+    let mut candidate_order: Vec<usize> = (0..y.len()).collect();
+    candidate_order.sort_by(|&left, &right| y[left].abs().total_cmp(&y[right].abs()));
+
+    let residual_tolerance = tolerance * x.iter().map(|value| value.abs()).sum::<f64>().max(1.0);
+    let mut best: Option<(Vec<i64>, f64, f64)> = None;
+
+    for idx in candidate_order {
+        let coeffs: Vec<i128> = (0..y.len()).map(|row| b[row][idx]).collect();
+        let Some(normalized) = normalize_relation(coeffs, max_coefficient) else {
+            continue;
+        };
+
+        let residual = x
+            .iter()
+            .zip(normalized.iter())
+            .map(|(value, coeff)| value * (*coeff as f64))
+            .sum::<f64>()
+            .abs();
+        if residual > residual_tolerance {
+            continue;
+        }
+
+        let y_magnitude = y[idx].abs();
+        match &best {
+            None => best = Some((normalized, residual, y_magnitude)),
+            Some((_, best_residual, best_y)) => {
+                let clearly_better = residual + residual_tolerance < *best_residual;
+                let same_residual = (residual - *best_residual).abs() <= residual_tolerance;
+                if clearly_better || (same_residual && y_magnitude < *best_y) {
+                    best = Some((normalized, residual, y_magnitude));
                 }
-                for j in 0..n {
-                    a[i - 1][j] -= (t as i64) * a[max_idx][j];
-                    b[j][i - 1] -= (t as i64) * b[j][max_idx];
-                }
-            }
-        }
-
-        // Check for small y[i] (found a relation)
-        for i in 0..n {
-            if y[i].abs() < config.tolerance {
-                // Found a relation - return coefficients from B matrix
-                let coeffs: Vec<i64> = (0..n).map(|j| b[j][i]).collect();
-
-                // Check coefficient bounds
-                if coeffs.iter().all(|&c| c.abs() <= config.max_coefficient) {
-                    return Some(coeffs);
-                }
-            }
-        }
-
-        // Termination check based on diagonal elements
-        let mut min_diag = f64::MAX;
-        for i in 0..n - 1 {
-            if h[i][i].abs() < min_diag {
-                min_diag = h[i][i].abs();
-            }
-        }
-
-        if min_diag < config.tolerance {
-            // Found a relation
-            let coeffs: Vec<i64> = (0..n).map(|j| b[j][0]).collect();
-            if coeffs.iter().all(|&c| c.abs() <= config.max_coefficient) {
-                return Some(coeffs);
             }
         }
     }
 
-    None
+    best.map(|(coeffs, _, _)| coeffs)
+}
+
+fn normalize_relation(coeffs: Vec<i128>, max_coefficient: i64) -> Option<Vec<i64>> {
+    if coeffs.iter().all(|&coeff| coeff == 0) {
+        return None;
+    }
+
+    let mut gcd = 0_i128;
+    for &coeff in &coeffs {
+        gcd = gcd_i128(gcd, coeff.abs());
+    }
+
+    let mut normalized = if gcd > 1 {
+        coeffs
+            .into_iter()
+            .map(|coeff| coeff / gcd)
+            .collect::<Vec<_>>()
+    } else {
+        coeffs
+    };
+
+    if let Some(&first_non_zero) = normalized.iter().find(|&&coeff| coeff != 0) {
+        if first_non_zero < 0 {
+            for coeff in &mut normalized {
+                *coeff = -*coeff;
+            }
+        }
+    }
+
+    let cap = i128::from(max_coefficient);
+    if normalized.iter().any(|&coeff| coeff.abs() > cap) {
+        return None;
+    }
+
+    normalized
+        .into_iter()
+        .map(|coeff| i64::try_from(coeff).ok())
+        .collect()
+}
+
+fn gcd_i128(mut left: i128, mut right: i128) -> i128 {
+    if left == 0 {
+        return right;
+    }
+    if right == 0 {
+        return left;
+    }
+
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left.abs()
+}
+
+fn max_abs_matrix_entry(matrix: &[Vec<i128>]) -> i128 {
+    matrix
+        .iter()
+        .flat_map(|row| row.iter())
+        .map(|value| value.abs())
+        .max()
+        .unwrap_or(0)
 }
 
 /// Find rational approximation using continued fractions
@@ -477,13 +719,41 @@ mod tests {
 
     #[test]
     fn test_integer_relation_simple() {
-        // 2π - 6.283... ≈ 0
         let config = PslqConfig::default();
-        let result = find_integer_relation(2.0 * PI, &config);
-        // Should find relation involving π
-        if let Some(rel) = result {
-            assert!(rel.residual < 0.01);
-        }
+        let rel = find_integer_relation(2.0 * PI, &config).expect("2*pi should be found");
+        assert_eq!(rel.format(), "x - 2*π");
+        assert!(rel.residual < EXACT_MATCH_TOLERANCE);
+    }
+
+    #[test]
+    fn test_pslq_duplicate_relation() {
+        let coeffs = pslq(&[PI, PI], &PslqConfig::default()).expect("duplicate relation");
+        assert_eq!(coeffs, vec![1, -1]);
+    }
+
+    #[test]
+    fn test_pslq_scalar_multiple_relation() {
+        let coeffs =
+            pslq(&[2.0 * PI, PI], &PslqConfig::default()).expect("scalar multiple relation");
+        assert_eq!(coeffs, vec![1, -2]);
+    }
+
+    #[test]
+    fn test_integer_relation_direct_basis_hits() {
+        let config = PslqConfig::default();
+
+        let pi = find_integer_relation(PI, &config).expect("pi should be found");
+        assert_eq!(pi.format(), "x - π");
+
+        let phi = find_integer_relation((1.0 + 5.0_f64.sqrt()) / 2.0, &config)
+            .expect("phi should be found");
+        assert_eq!(phi.format(), "x - φ");
+
+        let sqrt_pi = find_integer_relation(PI.sqrt(), &config).expect("sqrt(pi) should be found");
+        assert_eq!(sqrt_pi.format(), "x - √π");
+
+        let zeta2 = find_integer_relation(PI * PI / 6.0, &config).expect("zeta(2) should be found");
+        assert_eq!(zeta2.format(), "x - ζ(2)");
     }
 
     #[test]
@@ -498,6 +768,71 @@ mod tests {
                 .map(|(i, c)| *c as f64 * std::f64::consts::SQRT_2.powi(i as i32))
                 .sum();
             assert!(value.abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_pslq_last_diagonal_no_panic() {
+        let config = PslqConfig {
+            max_iterations: 1,
+            ..PslqConfig::default()
+        };
+
+        let _ = pslq(&[100.0, 1.0, 1.0], &config);
+    }
+
+    #[test]
+    fn test_reduce_h_keeps_y_in_sync_with_a() {
+        let x: [f64; 3] = [10.0, 1.0, 1.0];
+        let n = x.len();
+
+        let mut s = vec![0.0; n];
+        s[n - 1] = x[n - 1].abs();
+        for i in (0..n - 1).rev() {
+            s[i] = (s[i + 1].powi(2) + x[i].powi(2)).sqrt();
+        }
+        let scale = s[0];
+
+        let mut y: Vec<f64> = x.iter().map(|value| value / scale).collect();
+        for value in &mut s {
+            *value /= scale;
+        }
+
+        let mut h = vec![vec![0.0; n - 1]; n];
+        for i in 0..n {
+            for j in 0..n - 1 {
+                if i == j {
+                    h[i][j] = s[j + 1] / s[j];
+                } else if i > j {
+                    h[i][j] = -y[i] * y[j] / (s[j] * s[j + 1]);
+                }
+            }
+        }
+
+        let mut a = vec![vec![0_i128; n]; n];
+        let mut b = vec![vec![0_i128; n]; n];
+        for i in 0..n {
+            a[i][i] = 1;
+            b[i][i] = 1;
+        }
+
+        reduce_h(&mut y, &mut h, &mut a, &mut b, 1, n - 2);
+        assert!(
+            max_abs_matrix_entry(&a) > 1,
+            "test vector should trigger a non-trivial reduction"
+        );
+
+        for i in 0..n {
+            let expected = a[i]
+                .iter()
+                .zip(x.iter())
+                .map(|(coeff, value)| (*coeff as f64) * *value / scale)
+                .sum::<f64>();
+            assert!(
+                (y[i] - expected).abs() < 1e-12,
+                "row {i} drifted: y={}, expected={expected}",
+                y[i]
+            );
         }
     }
 }
