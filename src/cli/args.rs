@@ -20,8 +20,9 @@ pub struct Args {
     /// Target value to find equations for (optional if using --eval-expression)
     pub target: Option<f64>,
 
-    /// Search level (each increment ~10x more equations)
-    /// Level 0 ~ 89M equations, Level 2 ~ 11B, Level 5 ~ 15T
+    /// Search level (higher levels search more expressions)
+    /// The CLI and library helper use different complexity mappings; see
+    /// `docs/SEARCH_MODEL.md` for the authoritative formulas.
     /// Legacy: "-l 2.5" (with no explicit target) means Liouvillian mode + target 2.5
     #[arg(short = 'l', long, default_value = "2")]
     pub level: String,

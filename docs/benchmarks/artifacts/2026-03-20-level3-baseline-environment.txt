@@ -1,0 +1,30 @@
+Benchmark environment capture for `2026-03-20-level3-baseline`
+Captured at local time: 2026-03-20 00:38:07 EDT
+Repository commit (short): f9b1f46
+
+Commands and outputs
+====================
+
+$ rustc --version --verbose
+rustc 1.95.0-nightly (f60a0f1bc 2026-02-02)
+binary: rustc
+commit-hash: f60a0f1bcc5a2a6dd8eb2d2021da79b40f5fbae9
+commit-date: 2026-02-02
+host: aarch64-apple-darwin
+release: 1.95.0-nightly
+LLVM version: 22.1.0
+
+$ cargo --version
+cargo 1.95.0-nightly (fe2f314ae 2026-01-30)
+
+$ uname -a
+Darwin Maxwells-MacBook-Air.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:53:31 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T8103 arm64
+
+$ sysctl -n machdep.cpu.brand_string
+Apple M1
+
+$ sysctl -n hw.ncpu
+8
+
+$ sysctl -n hw.memsize
+17179869184

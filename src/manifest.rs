@@ -94,6 +94,11 @@ pub struct MatchInfo {
     /// X value that solves the equation
     pub x_value: f64,
     /// Stability score (0-1, higher is better)
+    ///
+    /// This is optional in the manifest type so callers can omit it when a
+    /// stability estimate is unavailable. The CLI manifest builder currently
+    /// populates it for all emitted results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stability: Option<f64>,
 }
 
@@ -239,6 +244,7 @@ fn is_leap_year(year: i32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::MatchInfo;
     use super::*;
 
     #[test]
@@ -284,5 +290,26 @@ mod tests {
         assert!(is_leap_year(2000));
         // 2400: same
         assert!(is_leap_year(2400));
+    }
+
+    #[test]
+    fn test_match_info_omits_optional_stability_when_absent() {
+        let info = MatchInfo {
+            lhs_postfix: "x".to_string(),
+            rhs_postfix: "1".to_string(),
+            lhs_infix: "x".to_string(),
+            rhs_infix: "1".to_string(),
+            error: 0.0,
+            is_exact: true,
+            complexity: 2,
+            x_value: 1.0,
+            stability: None,
+        };
+
+        let value = serde_json::to_value(info).expect("manifest match should serialize");
+        assert!(
+            value.get("stability").is_none(),
+            "stability should be omitted when unavailable"
+        );
     }
 }

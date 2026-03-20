@@ -137,8 +137,7 @@
                     "error",
                     "is_exact",
                     "complexity",
-                    "x_value",
-                    "stability"
+                    "x_value"
                 ],
                 "properties": {
                     "lhs_postfix": {
@@ -174,8 +173,11 @@
                         "description": "The evaluated exact value of X that yields equality"
                     },
                     "stability": {
-                        "type": "number",
-                        "description": "Measure of how stable the root is (1.0 = highly stable)"
+                        "type": [
+                            "number",
+                            "null"
+                        ],
+                        "description": "Optional measure of how stable the root is (1.0 = highly stable)"
                     }
                 }
             }

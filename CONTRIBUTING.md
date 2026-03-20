@@ -35,6 +35,7 @@ cargo build --all-features
 
 # Python bindings
 cargo check --manifest-path ries-py/Cargo.toml --locked
+./scripts/test_ries_py_rust.sh
 
 # WASM feature surface
 cargo build --features wasm --locked
@@ -45,6 +46,14 @@ If you are actively iterating on the Python package:
 ```bash
 cd ries-py
 maturin develop --release
+```
+
+For reliable Rust-side `ries-py` tests, use a supported interpreter version in
+CI and run the helper from the repo root:
+
+```bash
+./scripts/test_ries_py_rust.sh
+./scripts/test_ries_py_python.sh -q
 ```
 
 ## Verification
@@ -65,6 +74,8 @@ Feature and packaging checks:
 ```bash
 cargo clippy --all-targets --features highprec --locked -- -D warnings
 cargo check --manifest-path ries-py/Cargo.toml --locked
+./scripts/test_ries_py_rust.sh
+./scripts/test_ries_py_python.sh -q
 cargo build --features wasm --locked
 ```
 

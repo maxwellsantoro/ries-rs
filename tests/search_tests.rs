@@ -7,7 +7,10 @@ use ries_rs::eval;
 use ries_rs::expr::Expression;
 use ries_rs::gen::{generate_all, GenConfig};
 use ries_rs::profile::UserConstant;
-use ries_rs::search::{search_adaptive, search_with_stats_and_options, ExprDatabase};
+use ries_rs::search::{
+    search_adaptive, search_streaming_with_config, search_with_stats_and_config,
+    search_with_stats_and_options, ExprDatabase, SearchConfig,
+};
 use ries_rs::symbol::{NumType, Symbol};
 use ries_rs::udf::UserFunction;
 use ries_rs::SymbolTable;
@@ -262,6 +265,88 @@ fn test_find_reciprocal_relations() {
         has_near_exact,
         "Should find at least one near-exact match for target 2.5"
     );
+}
+
+#[test]
+fn test_batch_and_streaming_agree_on_top_match_for_pi() {
+    let config = fast_config();
+    let search_config = SearchConfig {
+        target: std::f64::consts::PI,
+        max_matches: 10,
+        user_constants: config.user_constants.clone(),
+        user_functions: config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (batch_matches, _batch_stats) = search_with_stats_and_config(&config, &search_config);
+    let (streaming_matches, _streaming_stats) =
+        search_streaming_with_config(&config, &search_config);
+
+    assert!(
+        !batch_matches.is_empty(),
+        "batch search should find matches"
+    );
+    assert!(
+        !streaming_matches.is_empty(),
+        "streaming search should find matches"
+    );
+
+    let batch_top = (
+        batch_matches[0].lhs.expr.to_postfix(),
+        batch_matches[0].rhs.expr.to_postfix(),
+    );
+    let streaming_top = (
+        streaming_matches[0].lhs.expr.to_postfix(),
+        streaming_matches[0].rhs.expr.to_postfix(),
+    );
+
+    assert_eq!(
+        batch_top, streaming_top,
+        "batch and streaming should agree on the top-ranked pi match"
+    );
+}
+
+#[test]
+fn test_search_stats_report_window_and_acceptance_metrics() {
+    let config = fast_config();
+    let search_config = SearchConfig {
+        target: std::f64::consts::PI,
+        max_matches: 10,
+        user_constants: config.user_constants.clone(),
+        user_functions: config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (_batch_matches, batch_stats) = search_with_stats_and_config(&config, &search_config);
+    let (_streaming_matches, streaming_stats) =
+        search_streaming_with_config(&config, &search_config);
+
+    for stats in [&batch_stats, &streaming_stats] {
+        assert!(
+            stats.lhs_tested > 0,
+            "expected LHS expressions to be tested"
+        );
+        assert!(
+            stats.candidate_window_total >= stats.candidates_tested,
+            "candidate windows should cover all tested pairs"
+        );
+        assert!(
+            stats.candidate_window_max > 0,
+            "expected at least one non-empty candidate window"
+        );
+        assert!(
+            stats.candidate_window_avg() > 0.0,
+            "expected a positive average candidate window width"
+        );
+        assert!(
+            (0.0..=1.0).contains(&stats.newton_success_rate()),
+            "newton success rate should be normalized"
+        );
+        assert!(
+            (0.0..=1.0).contains(&stats.pool_acceptance_rate()),
+            "pool acceptance rate should be normalized"
+        );
+    }
 }
 
 /// Test: For target phi (golden ratio), should find x = phi or related equations
@@ -603,8 +688,14 @@ fn test_search_adaptive_calls_iterative_algorithm() {
         !adaptive_matches.is_empty(),
         "search_adaptive should find matches for target 2.0"
     );
-    assert!(adaptive_stats.lhs_count > 0, "must report generated LHS expressions");
-    assert!(adaptive_stats.rhs_count > 0, "must report generated RHS expressions");
+    assert!(
+        adaptive_stats.lhs_count > 0,
+        "must report generated LHS expressions"
+    );
+    assert!(
+        adaptive_stats.rhs_count > 0,
+        "must report generated RHS expressions"
+    );
 
     // Level-0 target = 2000 × 4^2 = 32 000.  Without the clamp bug, total
     // expression count should be bounded near that target.  With the bug the

@@ -216,10 +216,6 @@ fn parse_search_options(options: Option<JsValue>) -> Result<SearchOptionsInput, 
     }
 }
 
-fn build_symbol_table(profile: &crate::profile::Profile) -> crate::symbol_table::SymbolTable {
-    crate::symbol_table::SymbolTable::from_profile(profile)
-}
-
 fn parse_ranking_mode(value: Option<&str>) -> Result<crate::pool::RankingMode, JsValue> {
     match value.unwrap_or("complexity") {
         "complexity" => Ok(crate::pool::RankingMode::Complexity),
@@ -251,48 +247,9 @@ fn build_gen_config(
     max_lhs_complexity: u32,
     max_rhs_complexity: u32,
     profile: &crate::profile::Profile,
-) -> crate::gen::GenConfig {
-    use crate::symbol::{NumType, Symbol};
-    use std::collections::HashMap;
-    use std::sync::Arc;
-
-    let mut constants: Vec<Symbol> = Symbol::constants().to_vec();
-    let mut unary_ops: Vec<Symbol> = Symbol::unary_ops().to_vec();
-    let binary_ops: Vec<Symbol> = Symbol::binary_ops().to_vec();
-
-    for idx in 0..profile.constants.len().min(16) {
-        if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
-            constants.push(sym);
-        }
-    }
-    for idx in 0..profile.functions.len().min(16) {
-        if let Some(sym) = Symbol::from_byte(144 + idx as u8) {
-            unary_ops.push(sym);
-        }
-    }
-
-    let symbol_table = build_symbol_table(profile);
-
-    crate::gen::GenConfig {
-        max_lhs_complexity,
-        max_rhs_complexity,
-        max_length: 21,
-        constants,
-        unary_ops,
-        binary_ops,
-        rhs_constants: None,
-        rhs_unary_ops: None,
-        rhs_binary_ops: None,
-        symbol_max_counts: HashMap::new(),
-        rhs_symbol_max_counts: None,
-        min_num_type: NumType::Transcendental,
-        generate_lhs: true,
-        generate_rhs: true,
-        user_constants: profile.constants.clone(),
-        user_functions: profile.functions.clone(),
-        show_pruned_arith: false,
-        symbol_table: Arc::new(symbol_table),
-    }
+) -> Result<crate::gen::GenConfig, JsValue> {
+    crate::gen::build_gen_config_from_profile(max_lhs_complexity, max_rhs_complexity, profile)
+        .map_err(|e| JsValue::from_str(&e))
 }
 
 /// Search for algebraic equations given a target value
@@ -344,11 +301,13 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
                 preset_name
             ))
         })?;
-        profile = profile.merge(parsed.to_profile());
+        profile = profile
+            .merge(parsed.to_profile())
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
     }
 
     // Build generation config
-    let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, &profile);
+    let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, &profile)?;
 
     // Build search config
     let max_error = if opts.match_all_digits {

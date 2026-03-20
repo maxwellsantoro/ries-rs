@@ -12,9 +12,8 @@
 //! - User-defined constants and functions
 
 use crate::gen::GenConfig;
-use crate::profile::UserConstant;
+use crate::profile::Profile;
 use crate::symbol::{NumType, Symbol};
-use crate::udf::UserFunction;
 
 use super::args::{parse_symbol_count_limits, parse_symbol_sets};
 
@@ -36,8 +35,7 @@ use super::args::{parse_symbol_count_limits, parse_symbol_sets};
 /// * `only_symbols_rhs` - RHS-specific only symbols
 /// * `op_limits` - Per-symbol count limits (from -O)
 /// * `op_limits_rhs` - RHS-specific per-symbol count limits
-/// * `user_constants` - User-defined constants
-/// * `user_functions` - User-defined functions
+/// * `profile` - Loaded runtime profile with user-defined symbols and overrides
 /// * `show_pruned_arith` - Whether to show pruned arithmetic diagnostics
 ///
 /// # Returns
@@ -57,26 +55,26 @@ pub fn build_gen_config(
     only_symbols_rhs: Option<&str>,
     op_limits: Option<&str>,
     op_limits_rhs: Option<&str>,
-    user_constants: Vec<UserConstant>,
-    user_functions: Vec<UserFunction>,
+    profile: &Profile,
     show_pruned_arith: bool,
 ) -> Result<GenConfig, String> {
-    let mut config = GenConfig::default();
-    config.max_lhs_complexity = max_lhs_complexity;
-    config.max_rhs_complexity = max_rhs_complexity;
+    let mut config =
+        crate::gen::build_gen_config_from_profile(max_lhs_complexity, max_rhs_complexity, profile)?;
     config.min_num_type = min_type;
-    config.user_constants = user_constants.clone();
-    config.user_functions = user_functions.clone();
     config.show_pruned_arith = show_pruned_arith;
 
     // Parse effective symbol sets (with -E/--enable support).
     let (allowed, excluded) = parse_symbol_sets(only_symbols, exclude, enable);
     let (allowed_rhs, excluded_rhs) = parse_symbol_sets(only_symbols_rhs, exclude_rhs, enable_rhs);
 
+    let all_constants = config.constants.clone();
+    let all_unary = config.unary_ops.clone();
+    let all_binary = config.binary_ops.clone();
+
     // Apply LHS symbol filtering
-    config.constants = filter_symbols(Symbol::constants(), allowed.as_ref(), excluded.as_ref());
-    config.unary_ops = filter_symbols(Symbol::unary_ops(), allowed.as_ref(), excluded.as_ref());
-    config.binary_ops = filter_symbols(Symbol::binary_ops(), allowed.as_ref(), excluded.as_ref());
+    config.constants = filter_symbols(&all_constants, allowed.as_ref(), excluded.as_ref());
+    config.unary_ops = filter_symbols(&all_unary, allowed.as_ref(), excluded.as_ref());
+    config.binary_ops = filter_symbols(&all_binary, allowed.as_ref(), excluded.as_ref());
 
     // Parse -O/--op-limits into per-expression max symbol counts.
     if let Some(spec) = op_limits {
@@ -86,66 +84,19 @@ pub fn build_gen_config(
         config.rhs_symbol_max_counts = Some(parse_symbol_count_limits(spec_rhs)?);
     }
 
-    // Add user constant symbols to the constants pool
-    // Map each user constant to its corresponding symbol (UserConstant0, UserConstant1, etc.)
-    for (idx, _uc) in user_constants.iter().enumerate() {
-        if idx < 16 {
-            if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
-                // Only add if not excluded
-                let is_excluded = excluded
-                    .as_ref()
-                    .is_some_and(|excl| excl.contains(&(128 + idx as u8)));
-                if !is_excluded {
-                    config.constants.push(sym);
-                }
-            }
-        }
-    }
-
-    // Add user function symbols to the unary_ops pool
-    // Map each user function to its corresponding symbol (UserFunction0, UserFunction1, etc.)
-    for (idx, _uf) in user_functions.iter().enumerate() {
-        if idx < 16 {
-            if let Some(sym) = Symbol::from_byte(144 + idx as u8) {
-                // Only add if not excluded
-                let is_excluded = excluded
-                    .as_ref()
-                    .is_some_and(|excl| excl.contains(&(144 + idx as u8)));
-                if !is_excluded {
-                    config.unary_ops.push(sym);
-                }
-            }
-        }
-    }
-
-    // Build full symbol sets including user symbols for RHS overrides.
-    let mut all_constants = Symbol::constants().to_vec();
-    let mut all_unary = Symbol::unary_ops().to_vec();
-    let all_binary = Symbol::binary_ops().to_vec();
-    for idx in 0..user_constants.len().min(16) {
-        if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
-            all_constants.push(sym);
-        }
-    }
-    for idx in 0..user_functions.len().min(16) {
-        if let Some(sym) = Symbol::from_byte(144 + idx as u8) {
-            all_unary.push(sym);
-        }
-    }
-
     if allowed_rhs.is_some() || excluded_rhs.is_some() || op_limits_rhs.is_some() {
         let constants_base = if allowed_rhs.is_some() {
-            all_constants
+            all_constants.clone()
         } else {
             config.constants.clone()
         };
         let unary_base = if allowed_rhs.is_some() {
-            all_unary
+            all_unary.clone()
         } else {
             config.unary_ops.clone()
         };
         let binary_base = if allowed_rhs.is_some() {
-            all_binary
+            all_binary.clone()
         } else {
             config.binary_ops.clone()
         };
@@ -217,8 +168,7 @@ mod tests {
             None,
             None,
             None,
-            vec![],
-            vec![],
+            &Profile::new(),
             false,
         )
         .expect("should build default config");
@@ -246,8 +196,7 @@ mod tests {
             None,
             None,
             None,
-            vec![],
-            vec![],
+            &Profile::new(),
             false,
         )
         .expect("should build config with exclude");
@@ -270,8 +219,7 @@ mod tests {
             None,
             None,
             None,
-            vec![],
-            vec![],
+            &Profile::new(),
             false,
         )
         .expect("should build config with only symbols");
@@ -304,5 +252,123 @@ mod tests {
         assert!(filtered.contains(&Symbol::One));
         assert!(!filtered.contains(&Symbol::Two)); // excluded
         assert!(filtered.contains(&Symbol::Three));
+    }
+
+    #[test]
+    fn test_build_gen_config_only_symbols_excludes_user_constant() {
+        let mut profile = Profile::new();
+        profile
+            .add_constant(4, "k".to_string(), "custom".to_string(), 2.0)
+            .unwrap();
+
+        let config = build_gen_config(
+            10,
+            12,
+            NumType::Transcendental,
+            None,
+            None,
+            Some("123"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            &profile,
+            false,
+        )
+        .expect("should build config with user constant");
+
+        assert!(!config.constants.contains(&Symbol::UserConstant0));
+    }
+
+    #[test]
+    fn test_build_gen_config_only_symbols_excludes_user_function() {
+        let mut profile = Profile::new();
+        let udf = crate::udf::UserFunction::parse("4:sinh:hyperbolic sine:E|r-2/").unwrap();
+        profile.add_function(udf).unwrap();
+
+        let config = build_gen_config(
+            10,
+            12,
+            NumType::Transcendental,
+            None,
+            None,
+            Some("123"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            &profile,
+            false,
+        )
+        .expect("should build config with user function");
+
+        assert!(!config.unary_ops.contains(&Symbol::UserFunction0));
+    }
+
+    #[test]
+    fn test_build_gen_config_rhs_only_symbols_excludes_user_constant() {
+        let mut profile = Profile::new();
+        profile
+            .add_constant(4, "k".to_string(), "custom".to_string(), 2.0)
+            .unwrap();
+
+        let config = build_gen_config(
+            10,
+            12,
+            NumType::Transcendental,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("123"),
+            None,
+            None,
+            &profile,
+            false,
+        )
+        .expect("should build config with RHS-only filter");
+
+        let rhs_constants = config
+            .rhs_constants
+            .as_ref()
+            .expect("RHS constants should be present");
+        assert!(!rhs_constants.contains(&Symbol::UserConstant0));
+    }
+
+    #[test]
+    fn test_build_gen_config_rejects_over_capacity() {
+        let mut profile = Profile::new();
+        for idx in 0..=16 {
+            profile.constants.push(crate::profile::UserConstant {
+                weight: 4,
+                name: format!("c{}", idx),
+                description: "custom".to_string(),
+                value: idx as f64,
+                num_type: NumType::Integer,
+            });
+        }
+
+        let err = build_gen_config(
+            10,
+            12,
+            NumType::Transcendental,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &profile,
+            false,
+        )
+        .err()
+        .expect("config builder should reject overflow profile");
+
+        assert!(err.contains("At most 16 user constants"));
     }
 }

@@ -13,6 +13,9 @@ use crate::symbol::{NumType, Symbol};
 // Re-export UserFunction for convenience
 pub use crate::udf::UserFunction;
 
+/// Maximum supported user-defined constants/functions per search run.
+pub const MAX_USER_SYMBOLS: usize = 16;
+
 /// A user-defined constant
 #[derive(Clone, Debug)]
 pub struct UserConstant {
@@ -62,7 +65,7 @@ impl Profile {
     }
 
     /// Load the default profile chain (~/.ries_profile, ./.ries)
-    pub fn load_default() -> Self {
+    pub fn load_default() -> Result<Self, ProfileError> {
         let mut profile = Profile::new();
 
         // Try to load from home directory
@@ -70,7 +73,7 @@ impl Profile {
             let home_profile = home.join(".ries_profile");
             if home_profile.exists() {
                 if let Ok(p) = Self::from_file(&home_profile) {
-                    profile = profile.merge(p);
+                    profile = profile.merge(p)?;
                 }
             }
         }
@@ -79,11 +82,11 @@ impl Profile {
         let local_profile = PathBuf::from(".ries");
         if local_profile.exists() {
             if let Ok(p) = Self::from_file(&local_profile) {
-                profile = profile.merge(p);
+                profile = profile.merge(p)?;
             }
         }
 
-        profile
+        Ok(profile)
     }
 
     /// Add a validated user constant to this profile.
@@ -110,6 +113,8 @@ impl Profile {
         description: String,
         value: f64,
     ) -> Result<(), ProfileError> {
+        self.ensure_user_symbol_capacity(self.constants.len() + 1, self.functions.len())?;
+
         // Validate name
         if name.is_empty() {
             return Err(ProfileError::ValidationError(
@@ -145,8 +150,40 @@ impl Profile {
         Ok(())
     }
 
+    /// Add a validated user function to this profile.
+    pub fn add_function(&mut self, udf: UserFunction) -> Result<(), ProfileError> {
+        self.ensure_user_symbol_capacity(self.constants.len(), self.functions.len() + 1)?;
+        self.functions.push(udf);
+        Ok(())
+    }
+
+    /// Validate that the profile does not exceed fixed user symbol capacity.
+    pub fn validate_user_symbol_capacity(&self) -> Result<(), ProfileError> {
+        self.ensure_user_symbol_capacity(self.constants.len(), self.functions.len())
+    }
+
+    fn ensure_user_symbol_capacity(
+        &self,
+        constant_count: usize,
+        function_count: usize,
+    ) -> Result<(), ProfileError> {
+        if constant_count > MAX_USER_SYMBOLS {
+            return Err(ProfileError::ValidationError(format!(
+                "At most {} user constants are supported (got {})",
+                MAX_USER_SYMBOLS, constant_count
+            )));
+        }
+        if function_count > MAX_USER_SYMBOLS {
+            return Err(ProfileError::ValidationError(format!(
+                "At most {} user functions are supported (got {})",
+                MAX_USER_SYMBOLS, function_count
+            )));
+        }
+        Ok(())
+    }
+
     /// Merge another profile into this one (other takes precedence)
-    pub fn merge(mut self, other: Profile) -> Self {
+    pub fn merge(mut self, other: Profile) -> Result<Self, ProfileError> {
         // Merge constants (append, later ones override by name)
         for c in other.constants {
             // Remove existing constant with same name
@@ -170,7 +207,8 @@ impl Profile {
         // Merge includes
         self.includes.extend(other.includes);
 
-        self
+        self.validate_user_symbol_capacity()?;
+        Ok(self)
     }
 }
 
@@ -228,7 +266,7 @@ fn load_profile_recursive(
 
             profile.includes.push(include_resolved.clone());
             let nested = load_profile_recursive(&include_resolved, include_stack, depth + 1)?;
-            profile = profile.merge(nested);
+            profile = profile.merge(nested)?;
             continue;
         }
 
@@ -242,6 +280,7 @@ fn load_profile_recursive(
     }
 
     include_stack.pop();
+    profile.validate_user_symbol_capacity()?;
     Ok(profile)
 }
 
@@ -373,7 +412,7 @@ fn parse_user_function(profile: &mut Profile, line: &str) -> Result<(), String> 
 
     // Parse the function using UserFunction::parse
     let udf = UserFunction::parse(content)?;
-    profile.functions.push(udf);
+    profile.add_function(udf).map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -549,9 +588,59 @@ mod tests {
         });
         p2.symbol_names.insert(Symbol::Pi, "π".to_string());
 
-        let merged = p1.merge(p2);
+        let merged = p1.merge(p2).unwrap();
 
         assert_eq!(merged.constants.len(), 2);
         assert_eq!(merged.symbol_names.len(), 1);
+    }
+
+    #[test]
+    fn test_merge_rejects_over_capacity() {
+        let mut p1 = Profile::new();
+        let mut p2 = Profile::new();
+
+        for idx in 0..MAX_USER_SYMBOLS {
+            p1.add_constant(4, format!("a{}", idx), "constant".to_string(), idx as f64)
+                .unwrap();
+        }
+        p2.add_constant(4, "overflow".to_string(), "constant".to_string(), 99.0)
+            .unwrap();
+
+        let err = p1
+            .merge(p2)
+            .expect_err("merging over-capacity profiles should fail");
+        assert!(err.to_string().contains("At most 16 user constants"));
+    }
+
+    #[test]
+    fn test_add_constant_rejects_over_capacity() {
+        let mut profile = Profile::new();
+        for idx in 0..MAX_USER_SYMBOLS {
+            profile
+                .add_constant(4, format!("c{}", idx), "constant".to_string(), idx as f64)
+                .unwrap();
+        }
+
+        let err = profile
+            .add_constant(4, "overflow".to_string(), "constant".to_string(), 17.0)
+            .expect_err("17th constant should be rejected");
+
+        assert!(err.to_string().contains("At most 16 user constants"));
+    }
+
+    #[test]
+    fn test_add_function_rejects_over_capacity() {
+        let mut profile = Profile::new();
+        for idx in 0..MAX_USER_SYMBOLS {
+            let udf = UserFunction::parse(&format!("4:f{}:desc:E", idx)).unwrap();
+            profile.add_function(udf).unwrap();
+        }
+
+        let udf = UserFunction::parse("4:overflow:desc:E").unwrap();
+        let err = profile
+            .add_function(udf)
+            .expect_err("17th function should be rejected");
+
+        assert!(err.to_string().contains("At most 16 user functions"));
     }
 }

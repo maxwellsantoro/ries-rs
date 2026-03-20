@@ -7,8 +7,7 @@
 use ries_rs::{
     eval, expr, format_stability_report, format_verification_report, gen, pool, print_presets,
     profile, search, symbol, udf, verify_matches_highprec_with_trig_scale, FastMatchConfig, Report,
-    ReportConfig, ReportDisplayFormat, StabilityAnalyzer, StabilityConfig, SymbolTable,
-    DEGENERATE_DERIVATIVE,
+    ReportConfig, ReportDisplayFormat, StabilityAnalyzer, StabilityConfig, DEGENERATE_DERIVATIVE,
 };
 
 mod cli;
@@ -226,7 +225,7 @@ fn main() {
     }
 
     // Build generation config with CLI options
-    let mut gen_config = match build_gen_config(
+    let gen_config = match build_gen_config(
         max_lhs_complexity,
         max_rhs_complexity,
         min_type,
@@ -238,8 +237,7 @@ fn main() {
         args.only_symbols_rhs.as_deref(),
         args.op_limits.as_deref(),
         args.op_limits_rhs.as_deref(),
-        profile.constants.clone(),
-        profile.functions.clone(),
+        &profile,
         diagnostics.show_pruned_arith,
     ) {
         Ok(config) => config,
@@ -248,9 +246,6 @@ fn main() {
             std::process::exit(2);
         }
     };
-
-    // Set the symbol table from the profile (for per-run weights and names)
-    gen_config.symbol_table = std::sync::Arc::new(SymbolTable::from_profile(&profile));
 
     // Determine pool size based on mode
     let use_report = args.report && !args.classic;

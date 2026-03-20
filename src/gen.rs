@@ -14,19 +14,14 @@
 //! as they're generated rather than accumulating them.
 
 use crate::eval::{evaluate_fast_with_context, EvalContext};
+use crate::profile::{Profile, UserConstant, MAX_USER_SYMBOLS};
 use crate::symbol_table::SymbolTable;
+use crate::thresholds::QUANTIZE_SCALE;
 use std::sync::Arc;
 
 // =============================================================================
 // NAMED CONSTANTS FOR QUANTIZATION AND VALUE LIMITS
 // =============================================================================
-
-/// Scale factor for quantizing floating-point values to integers.
-///
-/// This preserves approximately 8 significant digits, which is sufficient
-/// for deduplication while avoiding overflow when converting to i64.
-/// Values are quantized as: `(v * QUANTIZE_SCALE).round() as i64`
-const QUANTIZE_SCALE: f64 = 1e8;
 
 /// Maximum absolute value for quantization before using sentinel values.
 ///
@@ -41,7 +36,6 @@ const MAX_QUANTIZED_VALUE: f64 = 1e10;
 /// and unlikely to be useful, so they are filtered out during generation.
 const MAX_GENERATED_VALUE: f64 = 1e12;
 use crate::expr::{EvaluatedExpr, Expression, MAX_EXPR_LEN};
-use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::UserFunction;
 use std::collections::HashMap;
@@ -439,6 +433,60 @@ impl Default for GenConfig {
             symbol_table: Arc::new(SymbolTable::new()),
         }
     }
+}
+
+/// Build a baseline generation config from a profile.
+///
+/// This is the shared source of truth for Python, WASM, and CLI setup before
+/// CLI-specific symbol filtering is applied.
+pub fn build_gen_config_from_profile(
+    max_lhs_complexity: u32,
+    max_rhs_complexity: u32,
+    profile: &Profile,
+) -> Result<GenConfig, String> {
+    validate_user_symbol_capacity(profile.constants.len(), profile.functions.len())?;
+
+    let mut config = GenConfig {
+        max_lhs_complexity,
+        max_rhs_complexity,
+        user_constants: profile.constants.clone(),
+        user_functions: profile.functions.clone(),
+        symbol_table: Arc::new(SymbolTable::from_profile(profile)),
+        ..GenConfig::default()
+    };
+
+    for idx in 0..profile.constants.len() {
+        if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
+            config.constants.push(sym);
+        }
+    }
+    for idx in 0..profile.functions.len() {
+        if let Some(sym) = Symbol::from_byte(144 + idx as u8) {
+            config.unary_ops.push(sym);
+        }
+    }
+
+    Ok(config)
+}
+
+/// Validate that the fixed user symbol slots are not exceeded.
+pub fn validate_user_symbol_capacity(
+    constant_count: usize,
+    function_count: usize,
+) -> Result<(), String> {
+    if constant_count > MAX_USER_SYMBOLS {
+        return Err(format!(
+            "At most {} user constants are supported (got {})",
+            MAX_USER_SYMBOLS, constant_count
+        ));
+    }
+    if function_count > MAX_USER_SYMBOLS {
+        return Err(format!(
+            "At most {} user functions are supported (got {})",
+            MAX_USER_SYMBOLS, function_count
+        ));
+    }
+    Ok(())
 }
 
 /// Result of expression generation

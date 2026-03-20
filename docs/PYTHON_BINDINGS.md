@@ -33,6 +33,26 @@ Rust-only verification without building a wheel:
 cargo check --manifest-path ries-py/Cargo.toml --locked
 ```
 
+Rust-side binding tests without building the extension-module flavor:
+
+```bash
+./scripts/test_ries_py_rust.sh
+```
+
+End-to-end Python integration tests:
+
+```bash
+./scripts/test_ries_py_python.sh -q
+```
+
+CI note:
+
+- GitHub Actions pins Python 3.11 for the `ries-py` Rust-side test lane.
+- GitHub Actions also runs an end-to-end Python integration lane via
+  `./scripts/test_ries_py_python.sh -q`.
+- Local machines may use newer interpreters; the helper script keeps that path
+  usable by enabling PyO3 stable-ABI forward compatibility when needed.
+
 ## Module API
 
 The module exports:
@@ -129,6 +149,13 @@ print(json.dumps(payload, indent=2))
 - Make sure the Python environment used for import matches the one used for
   `maturin`.
 - On Linux you may need `python3-dev`; on macOS, the Xcode command-line tools.
+- For Rust-side `ries-py` tests, use `./scripts/test_ries_py_rust.sh` instead
+  of plain `cargo test --manifest-path ries-py/Cargo.toml`. The helper disables
+  the `extension-module` feature and sets PyO3 interpreter environment
+  variables consistently.
+- If your local interpreter is newer than the PyO3 version in this repository
+  supports, the helper enables `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` so the
+  Rust-only test path can still run against the stable ABI.
 
 **Unexpected preset error**
 

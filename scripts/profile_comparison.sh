@@ -18,10 +18,21 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RIES_RS_DIR="$(dirname "$SCRIPT_DIR")"
 RIES_ORIGINAL_DIR="$(dirname "$RIES_RS_DIR")/ries-original"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || true)}"
 
 # Default settings
 VERBOSE=false
 QUICK=false
+TIME_VERBOSE_FLAG="-p"
+
+case "$(uname -s)" in
+    Darwin|FreeBSD|OpenBSD|NetBSD)
+        TIME_VERBOSE_FLAG="-l"
+        ;;
+    Linux)
+        TIME_VERBOSE_FLAG="-v"
+        ;;
+esac
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -84,22 +95,63 @@ if [[ "$COMPARE" == "true" ]]; then
 fi
 echo ""
 
+print_rust_json_metrics() {
+    local json_file=$1
+
+    if [[ -z "$PYTHON_BIN" ]]; then
+        return
+    fi
+
+    "$PYTHON_BIN" - "$json_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+stats = payload.get("search_stats", {})
+metrics = [
+    ("search_ms", f"{stats.get('search_ms', 0.0):.3f}"),
+    ("candidate_window_avg", f"{stats.get('candidate_window_avg', 0.0):.2f}"),
+    ("candidate_window_max", str(stats.get("candidate_window_max", 0))),
+    ("strict_gate_rejections", str(stats.get("strict_gate_rejections", 0))),
+    (
+        "candidates_per_pool_insertion",
+        f"{stats.get('candidates_per_pool_insertion', 0.0):.2f}",
+    ),
+    ("newton_success_rate", f"{100.0 * stats.get('newton_success_rate', 0.0):.1f}%"),
+    ("pool_acceptance_rate", f"{100.0 * stats.get('pool_acceptance_rate', 0.0):.1f}%"),
+]
+
+for key, value in metrics:
+    print(f"  Rust {key}: {value}")
+PY
+}
+
 # Function to run benchmark
 run_benchmark() {
     local name=$1
     local target=$2
     local level=$3
+    local json_file
+    local time_file
+    json_file="$(mktemp)"
+    time_file="$(mktemp)"
+    local rust_args=("$target" "-l$level" "--json" "--report" "false")
+    trap 'rm -f "$json_file" "$time_file"' RETURN
 
     echo "--- $name (target=$target, level=$level) ---"
 
     # Run Rust version
     if [[ "$VERBOSE" == "true" ]]; then
-        echo "Rust output:"
-        /usr/bin/time -l "$RIES_RS" "$target" "-l$level" 2>&1 | head -30
+        echo "Rust timing output:"
+        /usr/bin/time "$TIME_VERBOSE_FLAG" "$RIES_RS" "${rust_args[@]}" >/dev/null
         echo ""
     fi
 
-    RUST_TIME=$(/usr/bin/time -p "$RIES_RS" "$target" "-l$level" 2>&1 | grep "real" | awk '{print $2}')
+    { /usr/bin/time -p "$RIES_RS" "${rust_args[@]}" >"$json_file"; } 2>"$time_file"
+    RUST_TIME=$(awk '/^real / { print $2 }' "$time_file")
+    print_rust_json_metrics "$json_file"
 
     if [[ "$COMPARE" == "true" ]]; then
         C_TIME=$(/usr/bin/time -p "$RIES_C" "$target" "-l$level" 2>&1 | grep "real" | awk '{print $2}')
@@ -115,6 +167,9 @@ run_benchmark() {
         echo "  Rust: ${RUST_TIME}s"
     fi
     echo ""
+
+    rm -f "$json_file" "$time_file"
+    trap - RETURN
 }
 
 # Run benchmarks

@@ -111,6 +111,48 @@ jobs:
       - name: Build wasm + parallel features
         run: cargo build --features "wasm parallel" --locked
 
+  test-ries-py-rust:
+    name: Test (ries-py Rust helpers)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run ries-py Rust-side tests
+        run: ./scripts/test_ries_py_rust.sh
+
+  test-ries-py-python:
+    name: Test (ries-py Python integration)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run ries-py Python integration tests
+        run: ./scripts/test_ries_py_python.sh -q
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

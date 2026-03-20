@@ -54,7 +54,7 @@ pub fn load_runtime_profile(args: &Args, profile_arg: Option<&str>) -> Result<Pr
     let mut profile = if let Some(profile_path) = profile_arg {
         Profile::from_file(profile_path).map_err(|e| CliExit::config(e.to_string()))?
     } else {
-        Profile::load_default()
+        Profile::load_default().map_err(|e| CliExit::config(e.to_string()))?
     };
 
     if let Some(preset_name) = &args.preset {
@@ -64,13 +64,17 @@ pub fn load_runtime_profile(args: &Args, profile_arg: Option<&str>) -> Result<Pr
                 preset_name
             ))
         })?;
-        profile = profile.merge(preset.to_profile());
+        profile = profile
+            .merge(preset.to_profile())
+            .map_err(|e| CliExit::config(e.to_string()))?;
     }
 
     for include_path in &args.include {
         let included =
             Profile::from_file(include_path).map_err(|e| CliExit::config(e.to_string()))?;
-        profile = profile.merge(included);
+        profile = profile
+            .merge(included)
+            .map_err(|e| CliExit::config(e.to_string()))?;
     }
 
     for constant_spec in &args.user_constant {
@@ -105,6 +109,10 @@ pub fn load_runtime_profile(args: &Args, profile_arg: Option<&str>) -> Result<Pr
             eprintln!("Warning: Failed to parse --symbol-names '{}': {}", spec, e);
         }
     }
+
+    profile
+        .validate_user_symbol_capacity()
+        .map_err(|e| CliExit::config(e.to_string()))?;
 
     Ok(profile)
 }

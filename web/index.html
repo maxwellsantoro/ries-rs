@@ -486,15 +486,19 @@
       return [...new Set(candidates)];
     }
 
-    const PKG_CANDIDATES = getPkgCandidates();
-
     let wasmModule = null;
+    let wasmWorker = null;
+    let wasmRuntime = 'direct'; // 'direct' | 'worker'
+    let wasmVersion = 'unknown';
     let isThreaded = false;
     let workerCount = 0;
     let searchInProgress = false;
     let advancedHintShown = false;
     let currentView = 'cards';   // 'cards' | 'text'
     let currentMatches = [];     // last search results, for re-rendering on view toggle
+    let workerRequestId = 1;
+    const workerPending = new Map();
+    let workerInitPromise = null;
 
     // ============================================================
     // Utility Functions (Task 7)
@@ -518,7 +522,8 @@
     }
 
     function setVersion(version) {
-      document.getElementById('version').textContent = 'RIES-RS v' + version;
+      wasmVersion = version || 'unknown';
+      document.getElementById('version').textContent = 'RIES-RS v' + wasmVersion;
     }
 
     function setWorkerStatus(status) {
@@ -763,7 +768,7 @@
     // ============================================================
 
     function formatResults(matches, target, level) {
-      const ver = (wasmModule && wasmModule.version) ? wasmModule.version() : 'unknown';
+      const ver = wasmVersion || 'unknown';
       const header =
         '# RIES-RS v' + ver +
         ' \u2014 target: ' + target +
@@ -786,51 +791,210 @@
     // WASM Loading (Task 8)
     // ============================================================
 
+    function getPkgCandidates() {
+      const currentUrl = new URL(window.location.href);
+      const pathname = currentUrl.pathname;
+      const servedFromWebDir =
+        pathname.includes('/web/') ||
+        pathname.endsWith('/web') ||
+        pathname.endsWith('/web/index.html');
+
+      const candidates = [
+        new URL(servedFromWebDir ? '../pkg/ries_rs.js' : './pkg/ries_rs.js', currentUrl).href,
+      ];
+
+      if (!servedFromWebDir) {
+        candidates.push(new URL('../pkg/ries_rs.js', currentUrl).href);
+      }
+
+      candidates.push(new URL('/pkg/ries_rs.js', currentUrl).href);
+      return [...new Set(candidates)];
+    }
+
+    function normalizePresets(presets) {
+      if (presets instanceof Map) {
+        return Array.from(presets.entries());
+      }
+      if (Array.isArray(presets)) {
+        return presets.map(function(name) { return [name, '']; });
+      }
+      if (presets && typeof presets === 'object') {
+        return Object.entries(presets);
+      }
+      return [];
+    }
+
+    function setWorkerError(message, err) {
+      console.warn(message, err);
+      if (wasmWorker) {
+        wasmWorker.terminate();
+        wasmWorker = null;
+      }
+      workerPending.forEach(function(entry) {
+        entry.reject(new Error(message));
+      });
+      workerPending.clear();
+      if (workerInitPromise) {
+        workerInitPromise = null;
+      }
+    }
+
+    function postWorkerRequest(type, payload = {}) {
+      if (!wasmWorker) {
+        return Promise.reject(new Error('WASM worker is not initialized'));
+      }
+
+      const id = workerRequestId++;
+      return new Promise(function(resolve, reject) {
+        workerPending.set(id, { resolve: resolve, reject: reject });
+        wasmWorker.postMessage({ type: type, id: id, ...payload });
+      });
+    }
+
+    async function initWorkerRuntime() {
+      if (!('Worker' in window)) {
+        throw new Error('Web Workers are not supported in this browser');
+      }
+
+      if (workerInitPromise) {
+        return workerInitPromise;
+      }
+
+      workerInitPromise = new Promise(function(resolve, reject) {
+        const worker = new Worker(new URL('./search-worker.js', import.meta.url), { type: 'module' });
+        wasmWorker = worker;
+
+        worker.onmessage = function(event) {
+          const data = event.data || {};
+
+          if (data.type === 'ready') {
+            isThreaded = Boolean(data.threaded);
+            workerCount = data.workerCount || 0;
+            if (data.version) {
+              setVersion(data.version);
+            }
+            resolve(data);
+            return;
+          }
+
+          if (data.type === 'response') {
+            const entry = workerPending.get(data.id);
+            if (!entry) {
+              return;
+            }
+            workerPending.delete(data.id);
+            entry.resolve(data.value);
+            return;
+          }
+
+          if (data.type === 'error') {
+            const entry = workerPending.get(data.id);
+            if (entry) {
+              workerPending.delete(data.id);
+              entry.reject(new Error(data.error || 'Unknown worker error'));
+              return;
+            }
+            reject(new Error(data.error || 'Unknown worker error'));
+          }
+        };
+
+        worker.onerror = function(err) {
+          reject(err instanceof ErrorEvent ? err.error || new Error(err.message) : err);
+        };
+
+        worker.postMessage({
+          type: 'init',
+          concurrency: navigator.hardwareConcurrency || 4,
+        });
+      }).catch(function(err) {
+        setWorkerError('Failed to initialize WASM worker', err);
+        throw err;
+      });
+
+      return workerInitPromise;
+    }
+
+    async function loadDirectWasmModule() {
+      let lastError = null;
+      for (const candidate of getPkgCandidates()) {
+        try {
+          wasmModule = await import(candidate);
+          await wasmModule.default();
+          return wasmModule;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+
+      throw lastError || new Error('Failed to load WASM module');
+    }
+
+    async function getPresets() {
+      if (wasmRuntime === 'worker') {
+        const presets = await postWorkerRequest('listPresets');
+        return normalizePresets(presets);
+      }
+
+      if (!wasmModule || typeof wasmModule.listPresets !== 'function') {
+        return [];
+      }
+
+      return normalizePresets(wasmModule.listPresets());
+    }
+
+    async function runSearch(targetValue, searchConfig) {
+      if (wasmRuntime === 'worker') {
+        return postWorkerRequest('search', {
+          targetValue: targetValue,
+          searchConfig: searchConfig,
+        });
+      }
+
+      return wasmModule.search(targetValue, searchConfig);
+    }
+
     async function initWasm() {
       setWorkerStatus({ type: 'loading', message: 'Loading WASM module...' });
 
-      let lastError = null;
-      for (const candidate of PKG_CANDIDATES) {
+      let initError = null;
+      try {
+        await initWorkerRuntime();
+        wasmRuntime = 'worker';
+      } catch (err) {
+        initError = err;
+      }
+
+      if (wasmRuntime !== 'worker') {
         try {
-          wasmModule = await import(candidate);
-          // Call the default export which is the async initialization function
-          await wasmModule.default();
-          break;
+          await loadDirectWasmModule();
+          wasmRuntime = 'direct';
+          isThreaded = typeof wasmModule.initThreadPool === 'function';
+          if (isThreaded) {
+            try {
+              const concurrency = navigator.hardwareConcurrency || 4;
+              await wasmModule.initThreadPool(concurrency);
+              workerCount = concurrency;
+            } catch (err) {
+              console.warn('Failed to init thread pool:', err);
+              isThreaded = false;
+            }
+          }
+
+          const version = wasmModule.version ? wasmModule.version() : 'unknown';
+          setVersion(version);
         } catch (err) {
-          lastError = err;
-          continue;
+          initError = err;
         }
       }
 
-      if (!wasmModule) {
+      if (!wasmModule && wasmRuntime !== 'worker') {
         setWorkerStatus({
           type: 'error',
-          message: 'Failed to load WASM: ' + formatError(lastError)
+          message: 'Failed to load WASM: ' + formatError(initError)
         });
         setStatus('Failed to load WASM module. Check console for details.', 'error');
-        console.error('WASM loading failed:', lastError);
+        console.error('WASM loading failed:', initError);
         return;
-      }
-
-      // Detect threaded version
-      isThreaded = typeof wasmModule.initThreadPool === 'function';
-      if (isThreaded) {
-        try {
-          const concurrency = navigator.hardwareConcurrency || 4;
-          await wasmModule.initThreadPool(concurrency);
-          workerCount = concurrency;
-        } catch (err) {
-          console.warn('Failed to init thread pool:', err);
-          isThreaded = false;
-        }
-      }
-
-      // Get version
-      try {
-        const version = wasmModule.version ? wasmModule.version() : 'unknown';
-        setVersion(version);
-      } catch (err) {
-        setVersion('unknown');
       }
 
       setWorkerStatus({ type: 'ready', workers: workerCount });
@@ -838,7 +1002,7 @@
 
       // Initialize UI
       renderQuickConstants();
-      fillPresets();
+      await fillPresets();
       loadFromURL();
     }
 
@@ -882,13 +1046,9 @@
       });
     }
 
-    function fillPresets() {
-      if (!wasmModule || typeof wasmModule.listPresets !== 'function') {
-        return;
-      }
-
+    async function fillPresets() {
       try {
-        const presets = wasmModule.listPresets();
+        const presets = await getPresets();
         const select = document.getElementById('preset');
 
         // Clear existing options except the first one
@@ -896,21 +1056,12 @@
           select.remove(1);
         }
 
-        let presetEntries = [];
-        if (presets instanceof Map) {
-          presetEntries = Array.from(presets.entries());
-        } else if (Array.isArray(presets)) {
-          presetEntries = presets.map(function(name) { return [name, '']; });
-        } else if (presets && typeof presets === 'object') {
-          presetEntries = Object.entries(presets);
-        }
-
-        presetEntries.sort(function(a, b) {
+        presets.sort(function(a, b) {
           return String(a[0]).localeCompare(String(b[0]));
         });
 
         // Add preset options
-        presetEntries.forEach(function(entry) {
+        presets.forEach(function(entry) {
           const preset = entry[0];
           const description = entry[1];
           const option = document.createElement('option');
@@ -949,7 +1100,7 @@
     }
 
     async function performSearch(target) {
-      if (searchInProgress || !wasmModule) {
+      if (searchInProgress || (!wasmModule && wasmRuntime !== 'worker')) {
         return;
       }
 
@@ -991,7 +1142,7 @@
         }
 
         // Perform the search (target is first argument, config is optional second)
-        const matches = wasmModule.search(targetValue, searchConfig);
+        const matches = await runSearch(targetValue, searchConfig);
 
         // Render results
         if (matches && matches.length > 0) {

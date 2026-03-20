@@ -116,6 +116,18 @@ impl TieredExprDatabase {
         &tier_vec[start..end]
     }
 
+    /// Count expressions across all tiers within the value range [low, high].
+    pub fn count_in_range(&self, low: f64, high: f64) -> usize {
+        self.tiers
+            .iter()
+            .map(|tier| {
+                let start = tier.partition_point(|e| e.value < low);
+                let end = tier.partition_point(|e| e.value <= high);
+                end.saturating_sub(start)
+            })
+            .sum()
+    }
+
     /// Create an iterator that yields expressions from all tiers in order
     /// (Tier 0 first, then Tier 1, etc.) within a value range
     pub fn iter_tiers_in_range(&self, low: f64, high: f64) -> TieredRangeIter<'_> {
@@ -396,7 +408,9 @@ impl ExprDatabase {
                 let high = lhs.value + val_error;
 
                 stats.lhs_tested += 1;
-                for rhs in self.range(low, high) {
+                let rhs_slice = self.range(low, high);
+                stats.record_candidate_window(rhs_slice.len());
+                for rhs in rhs_slice {
                     if !config.rhs_symbol_allowed(&rhs.expr) {
                         continue;
                     }
@@ -424,16 +438,20 @@ impl ExprDatabase {
 
             stats.lhs_tested += 1;
 
-            // Search for RHS expressions near this LHS value
-            // Use adaptive search radius based on current thresholds
-            let min_search_radius = 0.5 * lhs.derivative.abs(); // Allow ~0.5 error in x
-            let search_radius = (pool.accept_error * lhs.derivative.abs()).max(min_search_radius);
+            // Search for RHS expressions near this LHS value using the same
+            // adaptive radius logic as the streaming path.
+            let search_radius = calculate_adaptive_search_radius(
+                lhs.derivative,
+                lhs.expr.complexity(),
+                pool.len(),
+                config.max_matches,
+                pool.best_error,
+            );
             let low = lhs.value - search_radius;
             let high = lhs.value + search_radius;
 
             let rhs_slice = self.range(low, high);
-            // Track slice sizes for optimization analysis
-            // println!("LHS {} (val={:.4}): slice size = {}", lhs.expr.to_postfix(), lhs.value, rhs_slice.len());
+            stats.record_candidate_window(rhs_slice.len());
             for rhs in rhs_slice {
                 if !config.rhs_symbol_allowed(&rhs.expr) {
                     continue;
@@ -455,6 +473,7 @@ impl ExprDatabase {
                 // Use strict gate to avoid expensive Newton calls for marginal candidates
                 let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
                 if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
+                    stats.strict_gate_rejections += 1;
                     continue;
                 }
 
@@ -490,10 +509,11 @@ impl ExprDatabase {
 
                 // Refine with Newton-Raphson
                 stats.newton_calls += 1;
+                let initial_guess = config.target + x_delta;
                 if let Some(refined_x) = newton_raphson_with_constants(
                     &lhs.expr,
                     rhs.value,
-                    config.target,
+                    initial_guess,
                     config.newton_iterations,
                     &context.eval,
                     config.show_newton,

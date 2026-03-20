@@ -39,7 +39,7 @@ fn test_profile_merge() {
     });
     p2.symbol_names.insert(Symbol::E, "ℯ".to_string());
 
-    let merged = p1.merge(p2);
+    let merged = p1.merge(p2).unwrap();
 
     assert_eq!(merged.constants.len(), 2);
     assert_eq!(merged.symbol_names.len(), 2);
@@ -66,7 +66,7 @@ fn test_profile_override() {
         num_type: NumType::Integer,
     });
 
-    let merged = p1.merge(p2);
+    let merged = p1.merge(p2).unwrap();
 
     // Should have only one constant (the override)
     assert_eq!(merged.constants.len(), 1);

@@ -77,6 +77,18 @@ cd ries-py
 maturin develop --release
 ```
 
+For Rust-side binding checks without building/loading the extension module:
+
+```bash
+./scripts/test_ries_py_rust.sh
+```
+
+For end-to-end Python import/search checks in an isolated virtualenv:
+
+```bash
+./scripts/test_ries_py_python.sh -q
+```
+
 ### Web App / WASM
 
 GitHub releases include a `ries-rs-wasm.tar.gz` artifact with the generated WASM
@@ -161,9 +173,10 @@ Performance claims are tracked conservatively with separate benchmark artifacts
 for end-to-end CLI runs and generation-only scaling:
 
 - End-to-end CLI baseline:
-  [`docs/benchmarks/2026-02-25-level3-baseline.md`](docs/benchmarks/2026-02-25-level3-baseline.md)
-  reports `1.084x` observed speedup on the published level-3 workload because
-  matching/Newton dominates that run.
+  [`docs/benchmarks/2026-03-20-level3-baseline.md`](docs/benchmarks/2026-03-20-level3-baseline.md)
+  captures the newer search heuristics metrics on the published level-3
+  workload; on that run, matching/Newton still dominates and the parallel path
+  was slower than the deterministic sequential baseline (`0.818x` observed speedup).
 - Generation-only scaling:
   [`docs/benchmarks/2026-02-25-generation-parallel-scaling.md`](docs/benchmarks/2026-02-25-generation-parallel-scaling.md)
   reports `3.18x` median speedup for parallel generation.

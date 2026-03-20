@@ -111,8 +111,8 @@ struct FastCandidate {
 }
 
 /// Generate fast candidates for common constants and simple expressions
-fn get_constant_candidates() -> Vec<FastCandidate> {
-    vec![
+fn get_constant_candidates() -> &'static [FastCandidate] {
+    static CANDIDATES: &[FastCandidate] = &[
         // Integers
         FastCandidate {
             symbols: &[Symbol::One],
@@ -258,7 +258,9 @@ fn get_constant_candidates() -> Vec<FastCandidate> {
         FastCandidate {
             symbols: &[Symbol::Phi, Symbol::Recip],
         },
-    ]
+    ];
+
+    CANDIDATES
 }
 
 /// Check if target matches a simple integer

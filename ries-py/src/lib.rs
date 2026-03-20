@@ -181,59 +181,14 @@ impl From<ries_core::search::Match> for PyMatch {
     }
 }
 
-fn build_symbol_table(
-    profile: &ries_core::profile::Profile,
-) -> ries_core::SymbolTable {
-    ries_core::SymbolTable::from_profile(profile)
-}
-
 /// Build a GenConfig from simple parameters
 fn build_gen_config(
     max_lhs_complexity: u32,
     max_rhs_complexity: u32,
     profile: &ries_core::profile::Profile,
-) -> ries_core::gen::GenConfig {
-    use ries_core::symbol::{NumType, Symbol};
-    use std::collections::HashMap;
-    use std::sync::Arc;
-
-    let mut constants: Vec<Symbol> = Symbol::constants().to_vec();
-    let mut unary_ops: Vec<Symbol> = Symbol::unary_ops().to_vec();
-    let binary_ops: Vec<Symbol> = Symbol::binary_ops().to_vec();
-
-    for idx in 0..profile.constants.len().min(16) {
-        if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
-            constants.push(sym);
-        }
-    }
-    for idx in 0..profile.functions.len().min(16) {
-        if let Some(sym) = Symbol::from_byte(144 + idx as u8) {
-            unary_ops.push(sym);
-        }
-    }
-
-    let symbol_table = build_symbol_table(profile);
-
-    ries_core::gen::GenConfig {
-        max_lhs_complexity,
-        max_rhs_complexity,
-        max_length: 21, // Default max length
-        constants,
-        unary_ops,
-        binary_ops,
-        rhs_constants: None,
-        rhs_unary_ops: None,
-        rhs_binary_ops: None,
-        symbol_max_counts: HashMap::new(),
-        rhs_symbol_max_counts: None,
-        min_num_type: NumType::Transcendental,
-        generate_lhs: true,
-        generate_rhs: true,
-        user_constants: profile.constants.clone(),
-        user_functions: profile.functions.clone(),
-        show_pruned_arith: false,
-        symbol_table: Arc::new(symbol_table),
-    }
+) -> PyResult<ries_core::gen::GenConfig> {
+    ries_core::gen::build_gen_config_from_profile(max_lhs_complexity, max_rhs_complexity, profile)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// Search for algebraic equations given a target value
@@ -303,11 +258,13 @@ fn search(
                 preset_name
             ))
         })?;
-        profile = profile.merge(parsed.to_profile());
+        profile = profile.merge(parsed.to_profile()).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid preset profile: {}", e))
+        })?;
     }
 
     // Build generation config
-    let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, &profile);
+    let gen_config = build_gen_config(max_lhs_complexity, max_rhs_complexity, &profile)?;
 
     // Build search config
     let max_error = (target.abs() * 0.01).max(1e-12);
@@ -419,8 +376,9 @@ mod tests {
     #[test]
     fn test_build_gen_config_includes_preset_user_constants() {
         let profile = ries_core::profile::Profile::new()
-            .merge(ries_core::Preset::AnalyticNT.to_profile());
-        let config = build_gen_config(18, 20, &profile);
+            .merge(ries_core::Preset::AnalyticNT.to_profile())
+            .expect("preset profile should merge");
+        let config = build_gen_config(18, 20, &profile).expect("should build config");
 
         assert!(
             !config.user_constants.is_empty(),

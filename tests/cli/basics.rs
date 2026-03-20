@@ -94,6 +94,38 @@ fn test_json_output_is_valid_and_machine_readable() {
             .unwrap_or(0)
             >= 1
     );
+    assert!(
+        parsed["search_stats"]["candidate_window_total"]
+            .as_u64()
+            .unwrap_or(0)
+            >= parsed["search_stats"]["candidate_pairs_tested"]
+                .as_u64()
+                .unwrap_or(0)
+    );
+    assert!(
+        parsed["search_stats"]["candidate_window_avg"].is_number(),
+        "candidate_window_avg should be numeric"
+    );
+    assert!(
+        parsed["search_stats"]["candidate_window_max"].is_u64(),
+        "candidate_window_max should be an integer"
+    );
+    assert!(
+        parsed["search_stats"]["strict_gate_rejections"].is_u64(),
+        "strict_gate_rejections should be an integer"
+    );
+    assert!(
+        parsed["search_stats"]["candidates_per_pool_insertion"].is_number(),
+        "candidates_per_pool_insertion should be numeric"
+    );
+    assert!(
+        parsed["search_stats"]["newton_success_rate"].is_number(),
+        "newton_success_rate should be numeric"
+    );
+    assert!(
+        parsed["search_stats"]["pool_acceptance_rate"].is_number(),
+        "pool_acceptance_rate should be numeric"
+    );
     let peak = &parsed["search_stats"]["peak_memory_bytes"];
     assert!(
         peak.is_null() || peak.is_u64(),
@@ -301,7 +333,8 @@ fn test_streaming_classic_matches_classic_top_result() {
     let (classic_stdout, _stderr) = run_ries(&["2.5", "--classic", "-n", "1"]);
     let (streaming_stdout, _stderr) = run_ries(&["2.5", "--streaming", "--classic", "-n", "1"]);
 
-    let classic_first = parse_first_match_line(&classic_stdout).expect("missing classic first match");
+    let classic_first =
+        parse_first_match_line(&classic_stdout).expect("missing classic first match");
     let streaming_first =
         parse_first_match_line(&streaming_stdout).expect("missing streaming classic first match");
 

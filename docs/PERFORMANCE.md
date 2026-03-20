@@ -16,6 +16,8 @@ artifact in the repository.
 
 ## Current Benchmark Reports
 
+- `docs/benchmarks/2026-03-20-level3-baseline.md`
+  End-to-end CLI baseline regenerated with candidate-window and pool-gating metrics.
 - `docs/benchmarks/2026-02-25-level3-baseline.md`
   End-to-end CLI baseline for a non-exact level-3 workload.
 - `docs/benchmarks/2026-02-25-generation-parallel-scaling.md`
@@ -56,6 +58,23 @@ Why `--json`:
 - includes structured timing and search stats
 - preserves the exact run configuration more clearly than formatted text output
 - is easy to archive under `docs/benchmarks/artifacts/`
+
+For artifact-backed end-to-end benchmark captures, prefer:
+
+```bash
+python3 scripts/capture_search_benchmark.py \
+  --name 2026-03-19-level3-baseline \
+  --target 2.506314 \
+  --level 3 \
+  --ranking complexity
+```
+
+That command writes:
+
+- raw sequential deterministic JSON
+- raw parallel JSON
+- environment metadata
+- a generated Markdown summary table including the newer search metrics used for heuristic tuning
 
 ## Criterion Benchmarks
 
@@ -98,7 +117,21 @@ instruments -t "Time Profiler" ./target/release/ries-rs 2.5 -l3
 
 The repository also includes `scripts/profile_comparison.sh` for side-by-side
 local comparison against a historical C RIES build when that binary is
-available.
+available. The script auto-selects the verbose `time` flag for the host
+platform so it works on both macOS and Linux, and it now extracts the Rust
+search JSON metrics most useful for heuristic tuning:
+
+- `candidate_window_avg`
+- `candidate_window_max`
+- `strict_gate_rejections`
+- `candidates_per_pool_insertion`
+- `newton_success_rate`
+- `pool_acceptance_rate`
+
+Use `scripts/profile_comparison.sh` for quick local exploration. Use
+`scripts/capture_search_benchmark.py` when the goal is to generate repository
+artifacts suitable for benchmark notes, release documentation, or future
+before/after comparisons.
 
 ## Memory Notes
 

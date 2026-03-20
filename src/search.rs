@@ -80,6 +80,12 @@ pub struct SearchStats {
     pub lhs_tested: usize,
     /// Number of candidate pairs tested (coarse filter)
     pub candidates_tested: usize,
+    /// Total number of RHS expressions scanned across all candidate windows
+    pub candidate_window_total: usize,
+    /// Largest RHS candidate window scanned for any single LHS
+    pub candidate_window_max: usize,
+    /// Number of candidates rejected by the strict pre-Newton gate
+    pub strict_gate_rejections: usize,
     /// Number of Newton-Raphson calls
     pub newton_calls: usize,
     /// Number of successful Newton convergences
@@ -105,6 +111,56 @@ impl SearchStats {
         Self::default()
     }
 
+    #[inline]
+    pub fn record_candidate_window(&mut self, width: usize) {
+        self.candidate_window_total = self.candidate_window_total.saturating_add(width);
+        self.candidate_window_max = self.candidate_window_max.max(width);
+    }
+
+    #[inline]
+    pub fn candidate_window_avg(&self) -> f64 {
+        if self.lhs_tested == 0 {
+            0.0
+        } else {
+            self.candidate_window_total as f64 / self.lhs_tested as f64
+        }
+    }
+
+    #[inline]
+    pub fn candidates_per_pool_insertion(&self) -> f64 {
+        if self.pool_insertions == 0 {
+            0.0
+        } else {
+            self.candidates_tested as f64 / self.pool_insertions as f64
+        }
+    }
+
+    #[inline]
+    pub fn newton_success_rate(&self) -> f64 {
+        if self.newton_calls == 0 {
+            0.0
+        } else {
+            self.newton_success as f64 / self.newton_calls as f64
+        }
+    }
+
+    #[inline]
+    pub fn pool_attempts(&self) -> usize {
+        self.pool_insertions
+            .saturating_add(self.pool_rejections_error)
+            .saturating_add(self.pool_rejections_dedupe)
+    }
+
+    #[inline]
+    pub fn pool_acceptance_rate(&self) -> f64 {
+        let attempts = self.pool_attempts();
+        if attempts == 0 {
+            0.0
+        } else {
+            self.pool_insertions as f64 / attempts as f64
+        }
+    }
+
     /// Print stats to stdout
     pub fn print(&self) {
         println!();
@@ -125,15 +181,18 @@ impl SearchStats {
         );
         println!("    LHS tested:      {:>10}", self.lhs_tested);
         println!("    Candidates:      {:>10}", self.candidates_tested);
+        println!("    Window avg:      {:>10.2}", self.candidate_window_avg());
+        println!("    Window max:      {:>10}", self.candidate_window_max);
+        println!("    Gate rejects:    {:>10}", self.strict_gate_rejections);
+        println!(
+            "    Cand/insert:     {:>10.2}",
+            self.candidates_per_pool_insertion()
+        );
         println!("    Newton calls:    {:>10}", self.newton_calls);
         println!(
             "    Newton success:  {:>10} ({:.1}%)",
             self.newton_success,
-            if self.newton_calls > 0 {
-                100.0 * self.newton_success as f64 / self.newton_calls as f64
-            } else {
-                0.0
-            }
+            100.0 * self.newton_success_rate()
         );
         if self.early_exit {
             println!("    Early exit:      yes");
@@ -144,6 +203,10 @@ impl SearchStats {
         println!("    Rejected (err):  {:>10}", self.pool_rejections_error);
         println!("    Rejected (dup):  {:>10}", self.pool_rejections_dedupe);
         println!("    Evictions:       {:>10}", self.pool_evictions);
+        println!(
+            "    Acceptance:      {:>9.1}%",
+            100.0 * self.pool_acceptance_rate()
+        );
         println!("    Final size:      {:>10}", self.pool_final_size);
         println!("    Best error:      {:>14.2e}", self.pool_best_error);
     }
@@ -740,26 +803,14 @@ pub fn search_adaptive(
     db.insert_rhs(all_rhs);
 
     let search_start = SearchTimer::start();
-    let (matches, match_stats) = db.find_matches_with_stats_and_context(&all_lhs, &context);
+    let (matches, mut stats) = db.find_matches_with_stats_and_context(&all_lhs, &context);
     let search_time = search_start.elapsed();
 
-    // Combine stats
-    let mut stats = SearchStats::new();
+    // Overwrite the generation-side counts for the adaptive wrapper.
     stats.gen_time = gen_time;
     stats.search_time = search_time;
     stats.lhs_count = all_lhs.len();
     stats.rhs_count = db.rhs_count();
-    stats.lhs_tested = match_stats.lhs_tested;
-    stats.candidates_tested = match_stats.candidates_tested;
-    stats.newton_calls = match_stats.newton_calls;
-    stats.newton_success = match_stats.newton_success;
-    stats.pool_insertions = match_stats.pool_insertions;
-    stats.pool_rejections_error = match_stats.pool_rejections_error;
-    stats.pool_rejections_dedupe = match_stats.pool_rejections_dedupe;
-    stats.pool_evictions = match_stats.pool_evictions;
-    stats.pool_final_size = match_stats.pool_final_size;
-    stats.pool_best_error = match_stats.pool_best_error;
-    stats.early_exit = match_stats.early_exit;
 
     (matches, stats)
 }
@@ -831,7 +882,13 @@ fn prefer_streaming_stop_match(candidate: &Match, current: &Match) -> bool {
         .expr
         .complexity()
         .cmp(&current.lhs.expr.complexity())
-        .then_with(|| candidate.rhs.expr.complexity().cmp(&current.rhs.expr.complexity()))
+        .then_with(|| {
+            candidate
+                .rhs
+                .expr
+                .complexity()
+                .cmp(&current.rhs.expr.complexity())
+        })
         .then_with(|| {
             candidate
                 .error
@@ -839,12 +896,28 @@ fn prefer_streaming_stop_match(candidate: &Match, current: &Match) -> bool {
                 .partial_cmp(&current.error.abs())
                 .unwrap_or(Ordering::Equal)
         })
-        .then_with(|| candidate.lhs.expr.to_postfix().cmp(&current.lhs.expr.to_postfix()))
-        .then_with(|| candidate.rhs.expr.to_postfix().cmp(&current.rhs.expr.to_postfix()))
+        .then_with(|| {
+            candidate
+                .lhs
+                .expr
+                .to_postfix()
+                .cmp(&current.lhs.expr.to_postfix())
+        })
+        .then_with(|| {
+            candidate
+                .rhs
+                .expr
+                .to_postfix()
+                .cmp(&current.rhs.expr.to_postfix())
+        })
         .is_lt()
 }
 
-fn merge_priority_match(mut matches: Vec<Match>, priority: Match, max_matches: usize) -> Vec<Match> {
+fn merge_priority_match(
+    mut matches: Vec<Match>,
+    priority: Match,
+    max_matches: usize,
+) -> Vec<Match> {
     if let Some(idx) = matches
         .iter()
         .position(|m| m.lhs.expr == priority.lhs.expr && m.rhs.expr == priority.rhs.expr)
@@ -969,6 +1042,10 @@ pub fn search_streaming_with_config(
                     }
 
                     stats.lhs_tested += 1;
+                    stats.record_candidate_window(rhs_db.count_in_range(
+                        lhs.value - DEGENERATE_RANGE_TOLERANCE,
+                        lhs.value + DEGENERATE_RANGE_TOLERANCE,
+                    ));
                     for rhs in rhs_db.iter_tiers_in_range(
                         lhs.value - DEGENERATE_RANGE_TOLERANCE,
                         lhs.value + DEGENERATE_RANGE_TOLERANCE,
@@ -1016,6 +1093,7 @@ pub fn search_streaming_with_config(
                 );
                 let low = lhs.value - search_radius;
                 let high = lhs.value + search_radius;
+                stats.record_candidate_window(rhs_db.count_in_range(low, high));
 
                 for rhs in rhs_db.iter_tiers_in_range(low, high) {
                     if !search_config.rhs_symbol_allowed(&rhs.expr) {
@@ -1035,6 +1113,7 @@ pub fn search_streaming_with_config(
 
                     let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
                     if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
+                        stats.strict_gate_rejections += 1;
                         continue;
                     }
 
@@ -1064,10 +1143,11 @@ pub fn search_streaming_with_config(
                     }
 
                     stats.newton_calls += 1;
+                    let initial_guess = search_config.target + x_delta;
                     if let Some(refined_x) = newton_raphson_with_constants(
                         &lhs.expr,
                         rhs.value,
-                        search_config.target,
+                        initial_guess,
                         search_config.newton_iterations,
                         &context.eval,
                         search_config.show_newton,
