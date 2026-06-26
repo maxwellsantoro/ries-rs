@@ -373,180 +373,10 @@ impl ExprDatabase {
         // Early exit tracking
         let mut early_exit = false;
 
-        'outer: for lhs in sorted_lhs {
-            // Check early exit conditions
-            if early_exit {
+        for lhs in sorted_lhs {
+            if !match_one_lhs(self, lhs, context, &mut pool, &mut stats) {
+                early_exit = true;
                 break;
-            }
-            // Skip LHS with value too close to 0 - these produce floods of
-            // trivial matches (like cospi(2.5)=0 matching many RHS near 0)
-            // Original RIES: "Prune zero subexpressions"
-            if lhs.value.abs() < config.zero_value_threshold {
-                if config.show_pruned_range {
-                    eprintln!(
-                        "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",
-                        lhs.value,
-                        lhs.expr.to_infix()
-                    );
-                }
-                continue;
-            }
-
-            // Skip degenerate expressions: contain x but derivative is 0
-            // These are trivial identities like 1^x=1, x/x=1, log_x(x)=1
-            if super::should_skip_degenerate_lhs(lhs, config.target, &context.eval) {
-                continue;
-            }
-            if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-                // Derivative is non-zero at test_x, so this might be a true repeated root
-                // Check if LHS(target) ≈ some RHS
-                let val_error = DEGENERATE_RANGE_TOLERANCE;
-                let low = lhs.value - val_error;
-                let high = lhs.value + val_error;
-
-                stats.lhs_tested += 1;
-                let rhs_slice = self.range(low, high);
-                stats.record_candidate_window(lhs, rhs_slice.len());
-                for rhs in rhs_slice {
-                    if !config.rhs_symbol_allowed(&rhs.expr) {
-                        continue;
-                    }
-                    stats.candidates_tested += 1;
-                    if config.show_match_checks {
-                        eprintln!(
-                            "  [match] checking lhs={:.6} rhs={:.6}",
-                            lhs.value, rhs.value
-                        );
-                    }
-                    let val_diff = (lhs.value - rhs.value).abs();
-                    if val_diff < val_error && pool.would_accept(0.0, true) {
-                        let m = Match {
-                            lhs: lhs.clone(),
-                            rhs: rhs.clone(),
-                            x_value: config.target,
-                            error: 0.0,
-                            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                        };
-                        pool.try_insert(m);
-                    }
-                }
-                continue;
-            }
-
-            stats.lhs_tested += 1;
-
-            // Search for RHS expressions near this LHS value using the same
-            // adaptive radius logic as the streaming path.
-            let search_radius = calculate_adaptive_search_radius(
-                lhs.derivative,
-                lhs.expr.complexity(),
-                pool.len(),
-                config.max_matches,
-                pool.best_error,
-                pool.accept_error,
-            );
-            let low = lhs.value - search_radius;
-            let high = lhs.value + search_radius;
-
-            let rhs_slice = self.range(low, high);
-            stats.record_candidate_window(lhs, rhs_slice.len());
-            for rhs in rhs_slice {
-                if !config.rhs_symbol_allowed(&rhs.expr) {
-                    continue;
-                }
-                stats.candidates_tested += 1;
-                if config.show_match_checks {
-                    eprintln!(
-                        "  [match] checking lhs={:.6} rhs={:.6}",
-                        lhs.value, rhs.value
-                    );
-                }
-
-                // Compute initial error estimate (coarse filter)
-                let val_diff = lhs.value - rhs.value;
-                let x_delta = -val_diff / lhs.derivative;
-                let coarse_error = x_delta.abs();
-
-                // Skip if coarse estimate won't pass threshold
-                // Use strict gate to avoid expensive Newton calls for marginal candidates
-                let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
-                if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
-                    stats.strict_gate_rejections += 1;
-                    continue;
-                }
-
-                if !config.refine_with_newton {
-                    let refined_x = config.target + x_delta;
-                    let refined_error = x_delta;
-                    let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
-
-                    if pool.would_accept(refined_error.abs(), is_exact) {
-                        let m = Match {
-                            lhs: lhs.clone(),
-                            rhs: rhs.clone(),
-                            x_value: refined_x,
-                            error: refined_error,
-                            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                        };
-
-                        pool.try_insert(m);
-
-                        if config.stop_at_exact && is_exact {
-                            early_exit = true;
-                            break 'outer;
-                        }
-                        if let Some(threshold) = config.stop_below {
-                            if refined_error.abs() < threshold {
-                                early_exit = true;
-                                break 'outer;
-                            }
-                        }
-                    }
-                    continue;
-                }
-
-                // Refine with Newton-Raphson
-                stats.newton_calls += 1;
-                let initial_guess = config.target + x_delta;
-                if let Some(refined_x) = newton_raphson_with_constants(
-                    &lhs.expr,
-                    rhs.value,
-                    initial_guess,
-                    config.newton_iterations,
-                    &context.eval,
-                    config.show_newton,
-                    config.derivative_margin,
-                ) {
-                    stats.newton_success += 1;
-                    let refined_error = refined_x - config.target;
-                    let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
-
-                    // Check if this is acceptable
-                    if pool.would_accept(refined_error.abs(), is_exact) {
-                        let m = Match {
-                            lhs: lhs.clone(),
-                            rhs: rhs.clone(),
-                            x_value: refined_x,
-                            error: refined_error,
-                            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                        };
-
-                        // Insert into pool (handles thresholds and eviction)
-                        pool.try_insert(m);
-
-                        // Check early exit conditions
-                        if config.stop_at_exact && is_exact {
-                            early_exit = true;
-                            break 'outer;
-                        }
-                        if let Some(threshold) = config.stop_below {
-                            if refined_error.abs() < threshold {
-                                early_exit = true;
-                                break 'outer;
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -563,6 +393,318 @@ impl ExprDatabase {
         // Return sorted matches from pool
         (pool.into_sorted(), stats)
     }
+
+    /// Turbo matcher: parallelize the LHS match/Newton scan across cores.
+    ///
+    /// The RHS database is shared read-only. The complexity-sorted LHS set is
+    /// split into contiguous bands; each Rayon worker matches its band with a
+    /// private bounded pool (each sized to the full `max_matches`, so no band
+    /// can drop a match that belongs in the global top-k). The per-band pools
+    /// are then merged through one final pool to produce the global ranking.
+    ///
+    /// # Alternative contract
+    ///
+    /// This intentionally does **not** honor the serial path's byte-identical
+    /// guarantee. What it *does* guarantee is that the single best match (rank 1)
+    /// is identical to serial: the global best is rank 1 within whichever band
+    /// owns its LHS (so it is never evicted), and a band's pool sees a subset of
+    /// the LHS set, so its adaptive scan radius is always at least as wide as
+    /// serial's at the same LHS — turbo therefore cannot miss a match serial
+    /// found. After the merge, the global best sorts to rank 1.
+    ///
+    /// Lower-ranked results may differ from serial: when more matches qualify
+    /// than `max_matches`, each band keeps only its own top-k, so the merged
+    /// tail is a valid top-k but not necessarily the *same* one serial would
+    /// pick among equally-ranked candidates, and it may vary with thread count.
+    ///
+    /// Bands are processed in ascending complexity, so the per-band
+    /// complexity-ceiling early exit in [`match_one_lhs`] stays valid.
+    #[cfg(feature = "parallel")]
+    pub fn find_matches_turbo_with_stats_and_context(
+        &self,
+        lhs_exprs: &[EvaluatedExpr],
+        context: &SearchContext<'_>,
+    ) -> (Vec<Match>, SearchStats) {
+        use rayon::prelude::*;
+
+        let config = context.config;
+        let search_start = SearchTimer::start();
+        let initial_max_error = config.max_error.max(1e-12);
+
+        let mut sorted_lhs: Vec<_> = lhs_exprs.iter().collect();
+        sorted_lhs.sort_by_key(|e| e.expr.complexity());
+
+        // Aim for several bands per worker so Rayon's work-stealing can balance
+        // the heavier high-complexity bands against the cheap low ones.
+        let threads = rayon::current_num_threads().max(1);
+        let target_bands = (threads * 4).max(1);
+        let band_size = sorted_lhs.len().div_ceil(target_bands).max(1);
+
+        let (all_matches, mut stats) = sorted_lhs
+            .par_chunks(band_size)
+            .map(|band| {
+                let mut local_pool = TopKPool::new_with_diagnostics(
+                    config.max_matches,
+                    initial_max_error,
+                    config.show_db_adds,
+                    config.ranking_mode,
+                );
+                let mut local_stats = SearchStats::new();
+                for lhs in band {
+                    if !match_one_lhs(self, lhs, context, &mut local_pool, &mut local_stats) {
+                        // Ceiling / stop-condition early exit for this band; later
+                        // bands are strictly more complex and cannot beat it.
+                        local_stats.early_exit = true;
+                        break;
+                    }
+                }
+                (local_pool.into_sorted(), local_stats)
+            })
+            .reduce(
+                || (Vec::new(), SearchStats::new()),
+                |(mut acc_matches, mut acc_stats), (band_matches, band_stats)| {
+                    acc_stats.merge_search_counters(&band_stats);
+                    acc_matches.extend(band_matches);
+                    (acc_matches, acc_stats)
+                },
+            );
+
+        // Re-rank the merged per-band candidates through a single bounded pool to
+        // obtain the global top-k under the canonical ordering.
+        let mut pool = TopKPool::new_with_diagnostics(
+            config.max_matches,
+            initial_max_error,
+            config.show_db_adds,
+            config.ranking_mode,
+        );
+        for m in all_matches {
+            pool.try_insert(m);
+        }
+
+        stats.pool_insertions = pool.stats.insertions;
+        stats.pool_rejections_error = pool.stats.rejections_error;
+        stats.pool_rejections_dedupe = pool.stats.rejections_dedupe;
+        stats.pool_evictions = pool.stats.evictions;
+        stats.pool_final_size = pool.len();
+        stats.pool_best_error = pool.best_error;
+        stats.search_time = search_start.elapsed();
+
+        (pool.into_sorted(), stats)
+    }
+}
+
+/// Match a single LHS expression against the RHS database, inserting any
+/// accepted matches into `pool` and updating `stats`.
+///
+/// Returns `false` when an early-exit condition (`stop_at_exact` / `stop_below`)
+/// fires; the caller should stop processing further LHS. This is the shared
+/// inner loop used by both the serial and parallel matchers.
+fn match_one_lhs(
+    db: &ExprDatabase,
+    lhs: &EvaluatedExpr,
+    context: &SearchContext<'_>,
+    pool: &mut TopKPool,
+    stats: &mut SearchStats,
+) -> bool {
+    let config = context.config;
+
+    // Complexity-ceiling early exit: once the pool is full of exact matches,
+    // any equation built from this LHS has total complexity
+    // `lhs + rhs >= ceiling + 1 > ceiling` (every RHS has complexity >= 1), so
+    // it is strictly more complex than the simplest pooled exact match and can
+    // never enter — not even on a lexicographic tie. Because LHS are processed
+    // in ascending complexity order, this LHS and every remaining one are
+    // hopeless, so stop the whole scan. (The per-candidate skip below uses a
+    // strict `>` because there the RHS complexity is already included and ties
+    // are still reachable.)
+    let exact_ceiling = pool.exact_complexity_ceiling();
+    if let Some(ceiling) = exact_ceiling {
+        if lhs.expr.complexity() >= ceiling {
+            return false;
+        }
+    }
+
+    // Skip LHS with value too close to 0 - these produce floods of
+    // trivial matches (like cospi(2.5)=0 matching many RHS near 0).
+    // Original RIES: "Prune zero subexpressions"
+    if lhs.value.abs() < config.zero_value_threshold {
+        if config.show_pruned_range {
+            eprintln!(
+                "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",
+                lhs.value,
+                lhs.expr.to_infix()
+            );
+        }
+        return true;
+    }
+
+    // Skip degenerate expressions: contain x but derivative is 0.
+    // These are trivial identities like 1^x=1, x/x=1, log_x(x)=1.
+    if super::should_skip_degenerate_lhs(lhs, config.target, &context.eval) {
+        return true;
+    }
+    if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
+        // Derivative is non-zero at test_x, so this might be a true repeated root.
+        // Check if LHS(target) ≈ some RHS.
+        let val_error = DEGENERATE_RANGE_TOLERANCE;
+        let low = lhs.value - val_error;
+        let high = lhs.value + val_error;
+
+        stats.lhs_tested += 1;
+        let rhs_slice = db.range(low, high);
+        stats.record_candidate_window(lhs, rhs_slice.len());
+        for rhs in rhs_slice {
+            if !config.rhs_symbol_allowed(&rhs.expr) {
+                continue;
+            }
+            stats.candidates_tested += 1;
+            if config.show_match_checks {
+                eprintln!(
+                    "  [match] checking lhs={:.6} rhs={:.6}",
+                    lhs.value, rhs.value
+                );
+            }
+            let val_diff = (lhs.value - rhs.value).abs();
+            if val_diff < val_error && pool.would_accept(0.0, true) {
+                let m = Match {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                    x_value: config.target,
+                    error: 0.0,
+                    complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                };
+                pool.try_insert(m);
+            }
+        }
+        return true;
+    }
+
+    stats.lhs_tested += 1;
+
+    // Search for RHS expressions near this LHS value using the adaptive radius.
+    let search_radius = calculate_adaptive_search_radius(
+        lhs.derivative,
+        lhs.expr.complexity(),
+        pool.len(),
+        config.max_matches,
+        pool.best_error,
+        pool.accept_error,
+    );
+    let low = lhs.value - search_radius;
+    let high = lhs.value + search_radius;
+
+    let rhs_slice = db.range(low, high);
+    stats.record_candidate_window(lhs, rhs_slice.len());
+    for rhs in rhs_slice {
+        if !config.rhs_symbol_allowed(&rhs.expr) {
+            continue;
+        }
+
+        // Complexity-ceiling skip: when the pool is saturated with exact
+        // matches, a candidate strictly more complex than the simplest pooled
+        // exact match cannot win, so avoid the Newton refinement entirely.
+        //
+        // The bound is strict (`>`), not `>=`: a candidate whose total
+        // complexity *equals* the ceiling ties on exactness and complexity, and
+        // the canonical comparator then breaks the tie on lexicographic postfix
+        // order — so it can still legitimately displace the pool's worst exact
+        // match. Skipping ties would change which equation occupies the final
+        // rank, so they must still go through refinement.
+        if let Some(ceiling) = exact_ceiling {
+            if lhs.expr.complexity() + rhs.expr.complexity() > ceiling {
+                continue;
+            }
+        }
+
+        stats.candidates_tested += 1;
+        if config.show_match_checks {
+            eprintln!(
+                "  [match] checking lhs={:.6} rhs={:.6}",
+                lhs.value, rhs.value
+            );
+        }
+
+        // Compute initial error estimate (coarse filter).
+        let val_diff = lhs.value - rhs.value;
+        let x_delta = -val_diff / lhs.derivative;
+        let coarse_error = x_delta.abs();
+
+        // Skip if coarse estimate won't pass threshold. The strict gate avoids
+        // expensive Newton calls for marginal candidates.
+        let is_potentially_exact = coarse_error < NEWTON_FINAL_TOLERANCE;
+        if !pool.would_accept_strict(coarse_error, is_potentially_exact) {
+            stats.strict_gate_rejections += 1;
+            continue;
+        }
+
+        if !config.refine_with_newton {
+            let refined_x = config.target + x_delta;
+            let refined_error = x_delta;
+            let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+
+            if pool.would_accept(refined_error.abs(), is_exact) {
+                let m = Match {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                    x_value: refined_x,
+                    error: refined_error,
+                    complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                };
+
+                pool.try_insert(m);
+
+                if config.stop_at_exact && is_exact {
+                    return false;
+                }
+                if let Some(threshold) = config.stop_below {
+                    if refined_error.abs() < threshold {
+                        return false;
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Refine with Newton-Raphson.
+        stats.newton_calls += 1;
+        let initial_guess = config.target + x_delta;
+        if let Some(refined_x) = newton_raphson_with_constants(
+            &lhs.expr,
+            rhs.value,
+            initial_guess,
+            config.newton_iterations,
+            &context.eval,
+            config.show_newton,
+            config.derivative_margin,
+        ) {
+            stats.newton_success += 1;
+            let refined_error = refined_x - config.target;
+            let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+
+            if pool.would_accept(refined_error.abs(), is_exact) {
+                let m = Match {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                    x_value: refined_x,
+                    error: refined_error,
+                    complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                };
+
+                pool.try_insert(m);
+
+                if config.stop_at_exact && is_exact {
+                    return false;
+                }
+                if let Some(threshold) = config.stop_below {
+                    if refined_error.abs() < threshold {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    true
 }
 
 impl Default for ExprDatabase {

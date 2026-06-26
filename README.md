@@ -144,6 +144,17 @@ Deterministic machine-readable output:
 ries-rs 3.141592653589793 --deterministic --json --emit-manifest run.json
 ```
 
+Turbo mode (parallelize matching across all cores for maximum speed):
+
+```bash
+ries-rs 2.506314 -l3 --turbo
+```
+
+`--turbo` runs the match/Newton phase on every core. It returns the same single
+best match as the serial path but trades reproducibility and memory for speed —
+the lower-ranked tail may differ between runs and thread counts. Use
+`--deterministic` instead when you need reproducible output.
+
 For the authoritative option list:
 
 ```bash
@@ -156,7 +167,8 @@ ries-rs --help
 
 - Faithful reimplementation of the core RIES search model
 - Deterministic and documented execution modes
-- Memory-safe Rust implementation with optional parallel search
+- Memory-safe Rust implementation with optional parallel generation and a
+  parallel `--turbo` match phase
 - Structured output for automation (`--json`, `--emit-manifest`)
 - CLI, Rust library, Python bindings, and WebAssembly builds
 - Modular presets, profiles, and extension points
@@ -176,11 +188,15 @@ for end-to-end CLI runs and generation-only scaling:
   [`docs/benchmarks/2026-03-20-level3-baseline.md`](docs/benchmarks/2026-03-20-level3-baseline.md)
   captures the current level-3 workload; after tightening the adaptive search
   radius and snapping exact default-scale trig singularities, the candidate
-  scan set dropped to about `8.1M` pairs. The current parallel CLI path is
-  still near break-even on this workload (`0.996x`) because generation is
-  parallelized but the dominant batch matching/Newton phase remains serial;
-  the newer count-only preflight does, however, cut parallel peak RSS
-  substantially.
+  scan set dropped to about `8.1M` pairs. The default `--parallel` CLI path is
+  near break-even on this workload because it parallelizes generation only,
+  while the dominant matching/Newton phase stays serial to preserve
+  byte-identical results.
+- `--turbo` parallelizes the matching/Newton phase itself, trading the
+  byte-identical guarantee (and extra memory) for large end-to-end speedups on
+  multi-core machines — measured `4x`–`35x` over the serial path on level-3
+  targets (8 cores). It still returns the same single best match as serial; see
+  [`docs/SEARCH_MODEL.md`](docs/SEARCH_MODEL.md) for the turbo contract.
 - Generation-only scaling:
   [`docs/benchmarks/2026-02-25-generation-parallel-scaling.md`](docs/benchmarks/2026-02-25-generation-parallel-scaling.md)
   reports `3.18x` median speedup for parallel generation.
@@ -214,7 +230,8 @@ historical notes.
 3. Generate left-hand-side and right-hand-side expression candidates
 4. Use Newton refinement to solve `LHS(x) = RHS`
 5. Filter, deduplicate, and refine candidate equations
-6. Rank matches by exactness, error, and parity-style or complexity-style order
+6. Rank matches by exactness, then error (exact matches rank by simplicity, not
+   sub-tolerance residual), then parity-style or complexity-style order
 
 ## Documentation
 

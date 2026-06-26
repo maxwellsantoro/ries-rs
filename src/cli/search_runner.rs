@@ -28,6 +28,7 @@ pub fn run_search(
     parallel: bool,
     one_sided: bool,
     adaptive: bool,
+    turbo: bool,
     level: u32,
 ) -> SearchResult {
     let start = Instant::now();
@@ -41,7 +42,11 @@ pub fn run_search(
     } else {
         #[cfg(feature = "parallel")]
         {
-            if parallel {
+            if turbo {
+                // Turbo parallelizes the match phase too; it implies parallel
+                // generation. Trades byte-identical results for throughput.
+                crate::search::search_turbo_with_stats_and_config(gen_config, search_config)
+            } else if parallel {
                 crate::search::search_parallel_with_stats_and_config(gen_config, search_config)
             } else {
                 crate::search::search_with_stats_and_config(gen_config, search_config)
@@ -50,6 +55,7 @@ pub fn run_search(
         #[cfg(not(feature = "parallel"))]
         {
             let _ = parallel;
+            let _ = turbo;
             crate::search::search_with_stats_and_config(gen_config, search_config)
         }
     };

@@ -384,6 +384,7 @@ fn main() {
             // No fast match found, do full search
             // Deterministic mode disables parallelism for reproducible results
             let use_parallel = !args.deterministic && args.parallel;
+            let use_turbo = !args.deterministic && args.turbo;
             let result = run_search(
                 &gen_config,
                 &search_config,
@@ -391,6 +392,7 @@ fn main() {
                 use_parallel,
                 args.one_sided,
                 args.adaptive,
+                use_turbo,
                 level_value as u32,
             );
             (result.matches, result.stats, result.elapsed)
@@ -399,6 +401,7 @@ fn main() {
         // Not in quick mode, always do full search
         // Deterministic mode disables parallelism for reproducible results
         let use_parallel = !args.deterministic && args.parallel;
+        let use_turbo = !args.deterministic && args.turbo;
         let result = run_search(
             &gen_config,
             &search_config,
@@ -406,6 +409,7 @@ fn main() {
             use_parallel,
             args.one_sided,
             args.adaptive,
+            use_turbo,
             level_value as u32,
         );
         (result.matches, result.stats, result.elapsed)
@@ -431,6 +435,7 @@ fn main() {
                 use_parallel,
                 one_sided: args.one_sided,
                 adaptive: args.adaptive,
+                turbo: !args.deterministic && args.turbo,
                 level: level_value as u32,
             },
         ))

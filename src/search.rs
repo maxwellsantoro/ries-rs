@@ -151,6 +151,35 @@ impl SearchStats {
         }
     }
 
+    /// Merge another stats record's additive search/pool counters into this one.
+    ///
+    /// Generation-side counts and timing are owned by the caller and are not
+    /// merged. The largest-candidate-window record keeps whichever side observed
+    /// the wider window. Used to combine per-thread stats from the turbo matcher.
+    #[cfg(feature = "parallel")]
+    pub fn merge_search_counters(&mut self, other: &SearchStats) {
+        self.lhs_tested = self.lhs_tested.saturating_add(other.lhs_tested);
+        self.candidates_tested = self
+            .candidates_tested
+            .saturating_add(other.candidates_tested);
+        self.candidate_window_total = self
+            .candidate_window_total
+            .saturating_add(other.candidate_window_total);
+        if other.candidate_window_max > self.candidate_window_max {
+            self.candidate_window_max = other.candidate_window_max;
+            self.candidate_window_max_lhs_postfix = other.candidate_window_max_lhs_postfix.clone();
+            self.candidate_window_max_lhs_value = other.candidate_window_max_lhs_value;
+            self.candidate_window_max_lhs_derivative = other.candidate_window_max_lhs_derivative;
+            self.candidate_window_max_lhs_complexity = other.candidate_window_max_lhs_complexity;
+        }
+        self.strict_gate_rejections = self
+            .strict_gate_rejections
+            .saturating_add(other.strict_gate_rejections);
+        self.newton_calls = self.newton_calls.saturating_add(other.newton_calls);
+        self.newton_success = self.newton_success.saturating_add(other.newton_success);
+        self.early_exit |= other.early_exit;
+    }
+
     #[inline]
     pub fn candidate_window_avg(&self) -> f64 {
         if self.lhs_tested == 0 {
@@ -270,6 +299,7 @@ impl SearchStats {
 /// | 1     | 14      | 16      | ~130K                     |
 /// | 2     | 18      | 20      | ~500K                     |
 /// | 3     | 22      | 24      | ~2M                       |
+/// | 4     | 26      | 28      | ~6M                       |
 /// | 5     | 30      | 32      | ~15M                      |
 ///
 /// # Note
@@ -1448,6 +1478,62 @@ pub fn search_parallel_with_stats_and_config(
     db.insert_rhs(generated.rhs);
 
     let (matches, mut stats) = db.find_matches_with_stats_and_context(&generated.lhs, &context);
+    stats.gen_time = gen_time;
+    stats.lhs_count = generated.lhs.len();
+    stats.rhs_count = db.rhs_count();
+
+    (matches, stats)
+}
+
+/// Turbo search: parallel generation **and** a parallel match/Newton phase.
+///
+/// This trades the parallel path's byte-identical guarantee for throughput. It
+/// returns the same single best (rank-1) match as serial search (see
+/// [`ExprDatabase::find_matches_turbo_with_stats_and_context`] for why), but the
+/// lower-ranked tail may differ from serial and may vary with thread count.
+/// Turbo also tolerates a larger materialized expression set than the serial /
+/// parallel paths before falling back to streaming, trading memory for speed.
+#[cfg(feature = "parallel")]
+pub fn search_turbo_with_stats_and_config(
+    gen_config: &crate::gen::GenConfig,
+    config: &SearchConfig,
+) -> (Vec<Match>, SearchStats) {
+    use crate::gen::{
+        count_expressions_with_limit_and_context, generate_all_parallel_with_context,
+    };
+
+    if !config.target.is_finite() {
+        return (Vec::new(), SearchStats::default());
+    }
+
+    // Turbo trades memory for speed, so it tolerates a much larger materialized
+    // expression set than the default batch path before falling back to the
+    // serial streaming matcher. (The serial/parallel paths stream above ~2M to
+    // bound memory; turbo's whole purpose is to use more resources.)
+    const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 64_000_000;
+    let context = SearchContext::new(config);
+
+    // OOM-safety gate: sequential count-only preflight before committing.
+    if count_expressions_with_limit_and_context(
+        gen_config,
+        config.target,
+        &context.eval,
+        MAX_EXPRESSIONS_BEFORE_STREAMING,
+    )
+    .is_none()
+    {
+        return search_streaming_with_config(gen_config, config);
+    }
+
+    let gen_start = SearchTimer::start();
+    let generated = generate_all_parallel_with_context(gen_config, config.target, &context.eval);
+    let gen_time = gen_start.elapsed();
+
+    let mut db = ExprDatabase::new();
+    db.insert_rhs(generated.rhs);
+
+    let (matches, mut stats) =
+        db.find_matches_turbo_with_stats_and_context(&generated.lhs, &context);
     stats.gen_time = gen_time;
     stats.lhs_count = generated.lhs.len();
     stats.rhs_count = db.rhs_count();

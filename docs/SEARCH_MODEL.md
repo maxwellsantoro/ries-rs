@@ -76,6 +76,7 @@ Search implementations:
 
 - sequential: `search_with_stats_and_config`
 - parallel: `search_parallel_with_stats_and_config` (parallel generation, serial batch matching/Newton)
+- turbo: `search_turbo_with_stats_and_config` (parallel generation **and** parallel matching/Newton; alternative contract, see below)
 - streaming: `search_streaming_with_config`
 - one-sided: `search_one_sided_with_stats_and_config`
 
@@ -133,7 +134,13 @@ The canonical comparator is `compare_matches` in `src/pool.rs`.
 Ordering is:
 
 1. Exactness (exact before non-exact)
-2. Absolute error (`|x_value - target|`, smaller first)
+2. Absolute error (`|x_value - target|`, smaller first) — **for non-exact matches
+   only**. Matches within `EXACT_MATCH_TOLERANCE` are all treated as equally
+   exact: residual differences below that tolerance are floating-point noise, not
+   a quality signal, so they collapse to a single error rank and are decided by
+   complexity instead. This keeps the bounded pool from churning on sub-tolerance
+   residuals and matches the original RIES intent of ranking exact forms by
+   simplicity.
 3. Ranking-mode tie-break:
    - `complexity`: lower `C_match` first
    - `parity`: lower legacy parity score first, then lower `C_match`
@@ -141,6 +148,14 @@ Ordering is:
 5. Lexicographic postfix order of RHS symbols
 
 This final lexical tie-break is what makes total ordering explicit and stable.
+
+Because exact matches rank by complexity, once the bounded result pool is full of
+exact matches the search can prune: no equation more complex than the simplest
+pooled exact match can enter. `TopKPool::exact_complexity_ceiling` exposes this
+bound, and the matcher uses it to skip Newton refinement for over-complex
+candidates and to stop early (LHS are processed in ascending complexity order).
+This optimization only narrows work that could never change the result set, so it
+preserves the ordering above exactly.
 
 ## Determinism Contract
 
@@ -162,6 +177,32 @@ This yields stable output ordering for identical:
 Practical caveat:
 
 - floating-point behavior is deterministic within a given build/runtime environment, but results should still be treated as build-config specific unless a manifest is recorded (`--emit-manifest`).
+
+## Turbo Contract (Alternative)
+
+`--turbo` deliberately opts out of the determinism contract above to parallelize
+the match/Newton phase across all cores (the `--parallel` path parallelizes only
+generation, so it stays byte-identical to serial). Turbo is for throughput, not
+reproducibility, and `--deterministic` disables it.
+
+What turbo **guarantees**:
+
+- the single best (rank-1) match is identical to serial search — the global best
+  is rank 1 in whichever band owns its LHS and is never evicted, and a band's
+  adaptive scan radius is always at least as wide as serial's, so turbo cannot
+  miss a match serial found;
+- every returned match is a genuine, fully-refined equation within `max_error`.
+
+What turbo **does not** guarantee:
+
+- the lower-ranked tail. When more matches qualify than the requested count, each
+  parallel band keeps only its own top-k, so the merged result is a valid top-k
+  but may differ from serial's choice among equally-ranked candidates and may
+  vary with thread count.
+
+Turbo also trades memory for speed: it materializes a much larger expression set
+than the streaming fallback (hundreds of MB at level 3), which is what lets the
+match phase run in parallel.
 
 ## Reproducible CLI Output Modes
 

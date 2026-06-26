@@ -812,6 +812,7 @@ fn test_search_adaptive_calls_iterative_algorithm() {
     );
 }
 
+#[cfg(feature = "parallel")]
 fn match_signatures(matches: &[ries_rs::search::Match]) -> Vec<(String, String, i64)> {
     let mut signatures: Vec<(String, String, i64)> = matches
         .iter()
@@ -848,6 +849,101 @@ fn test_parallel_matches_sequential_results() {
         match_signatures(&sequential),
         match_signatures(&parallel),
         "parallel and sequential search should return the same match set"
+    );
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_turbo_best_match_equals_sequential() {
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    // Turbo's alternative contract: the single best (rank-1) match is identical
+    // to serial, even though the lower-ranked tail may differ. Check it across a
+    // few targets with distinct best forms.
+    for target in [
+        std::f64::consts::SQRT_2,
+        2.0 * std::f64::consts::PI,
+        std::f64::consts::FRAC_PI_2,
+        3.301,
+    ] {
+        let gen_config = fast_config();
+        let search_config = SearchConfig {
+            target,
+            max_matches: 20,
+            user_constants: gen_config.user_constants.clone(),
+            user_functions: gen_config.user_functions.clone(),
+            ..Default::default()
+        };
+
+        let (sequential, _) = search_with_stats_and_config(&gen_config, &search_config);
+        let (turbo, _) = search_turbo_with_stats_and_config(&gen_config, &search_config);
+
+        assert!(
+            !sequential.is_empty() && !turbo.is_empty(),
+            "target {target}"
+        );
+        let seq_best = (
+            sequential[0].lhs.expr.to_postfix(),
+            sequential[0].rhs.expr.to_postfix(),
+        );
+        let turbo_best = (
+            turbo[0].lhs.expr.to_postfix(),
+            turbo[0].rhs.expr.to_postfix(),
+        );
+        assert_eq!(
+            seq_best, turbo_best,
+            "turbo and serial must agree on the best match for {target}"
+        );
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_turbo_results_are_valid_refined_matches() {
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    // Every match turbo returns must be a genuine refined equation: its reported
+    // error must equal x_value - target, within tolerance.
+    let gen_config = fast_config();
+    let search_config = SearchConfig {
+        target: 2.5,
+        max_matches: 20,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (turbo, _) = search_turbo_with_stats_and_config(&gen_config, &search_config);
+    assert!(!turbo.is_empty());
+    for m in &turbo {
+        assert!(
+            (m.error - (m.x_value - search_config.target)).abs() < 1e-9,
+            "turbo match error must be consistent with x_value"
+        );
+        assert!(m.error.abs() <= search_config.max_error + 1e-12);
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_turbo_finds_known_exact_match() {
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    // 2*pi has the simple exact form x = 2*pi; turbo must surface it.
+    let gen_config = fast_config();
+    let search_config = SearchConfig {
+        target: 2.0 * std::f64::consts::PI,
+        max_matches: 20,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (turbo, _) = search_turbo_with_stats_and_config(&gen_config, &search_config);
+
+    assert!(
+        turbo.iter().any(|m| m.error.abs() < 1e-14),
+        "turbo should find at least one exact match for 2*pi"
     );
 }
 

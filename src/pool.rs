@@ -134,12 +134,17 @@ pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Order
         1_u8
     };
 
-    let mut ord = a_exactness.cmp(&b_exactness).then_with(|| {
-        a.error
-            .abs()
-            .partial_cmp(&b.error.abs())
-            .unwrap_or(Ordering::Equal)
-    });
+    // Matches within exact tolerance are treated as equally exact: sub-tolerance
+    // residual differences are floating-point noise, not a meaningful quality
+    // signal. Collapsing them to zero lets complexity (simplicity) decide among
+    // exact matches, which both matches the original RIES intent and keeps the
+    // bounded pool stable instead of churning on residual noise.
+    let a_eff_err = if a_exactness == 0 { 0.0 } else { a.error.abs() };
+    let b_eff_err = if b_exactness == 0 { 0.0 } else { b.error.abs() };
+
+    let mut ord = a_exactness
+        .cmp(&b_exactness)
+        .then_with(|| a_eff_err.partial_cmp(&b_eff_err).unwrap_or(Ordering::Equal));
 
     if ord != Ordering::Equal {
         return ord;
@@ -175,7 +180,11 @@ impl PoolEntry {
         // For IEEE 754 doubles, positive values' bit patterns preserve ordering
         // when interpreted as unsigned, but we need to handle NaN/Infinity specially.
         let error_abs = m.error.abs();
-        let error_bits = if error_abs.is_nan() {
+        let error_bits = if is_exact {
+            // Exact matches collapse to a single rank so complexity (not residual
+            // floating-point noise) decides between them; see `compare_matches`.
+            0
+        } else if error_abs.is_nan() {
             // NaN should sort as worst (largest) error
             i64::MAX
         } else if error_abs.is_infinite() {
@@ -380,6 +389,30 @@ impl TopKPool {
         }
     }
 
+    /// Complexity ceiling implied by a pool that is full of exact matches.
+    ///
+    /// When the pool is at capacity and its worst entry is already an exact
+    /// match, no candidate with complexity `>= ceiling` can ever enter: a
+    /// non-exact candidate loses on exactness, and an equally-exact candidate
+    /// loses on complexity (exact matches rank by complexity). Callers use this
+    /// to skip Newton refinement — and, since LHS are processed in ascending
+    /// complexity order, to stop the search entirely — once it fires.
+    ///
+    /// Returns `None` when the pool is not yet saturated with exact matches, so
+    /// the optimization never prunes while better matches are still reachable.
+    #[inline]
+    pub fn exact_complexity_ceiling(&self) -> Option<u32> {
+        if self.heap.len() < self.capacity {
+            return None;
+        }
+        let worst = self.heap.peek()?;
+        if worst.m.error.abs() < EXACT_MATCH_TOLERANCE {
+            Some(worst.m.complexity)
+        } else {
+            None
+        }
+    }
+
     /// Check if a match would be accepted (for early pruning)
     pub fn would_accept(&self, error: f64, is_exact: bool) -> bool {
         if is_exact {
@@ -581,6 +614,53 @@ mod tests {
             "expected accept_error to relax after eviction, got {}",
             pool.accept_error
         );
+    }
+
+    #[test]
+    fn test_exact_matches_rank_by_complexity_not_residual() {
+        // A simpler exact match with a (slightly) larger sub-tolerance residual
+        // must still outrank a more complex exact match with a tinier residual:
+        // residual differences below EXACT_MATCH_TOLERANCE are noise.
+        let simpler = make_match("x", "2p*", 5e-15, 46);
+        let complex = make_match("x1+", "2p*1+", 1e-16, 80);
+
+        let mut pool = TopKPool::new(10, 1.0);
+        pool.try_insert(complex);
+        pool.try_insert(simpler);
+
+        let sorted = pool.into_sorted();
+        assert_eq!(
+            sorted[0].complexity, 46,
+            "simpler exact match should rank first"
+        );
+    }
+
+    #[test]
+    fn test_exact_complexity_ceiling_only_when_saturated_with_exacts() {
+        let mut pool = TopKPool::new(2, 1.0);
+
+        // Not full yet -> no ceiling.
+        pool.try_insert(make_match("x", "1", 0.0, 30));
+        assert_eq!(pool.exact_complexity_ceiling(), None);
+
+        // Full, all exact -> ceiling is the worst (largest) exact complexity.
+        pool.try_insert(make_match("x1+", "2", 0.0, 50));
+        assert_eq!(pool.exact_complexity_ceiling(), Some(50));
+
+        // A simpler exact evicts the complexity-50 entry, tightening the ceiling.
+        pool.try_insert(make_match("x2*", "3", 0.0, 40));
+        assert_eq!(pool.exact_complexity_ceiling(), Some(40));
+    }
+
+    #[test]
+    fn test_exact_complexity_ceiling_absent_when_worst_is_inexact() {
+        let mut pool = TopKPool::new(2, 1.0);
+        pool.try_insert(make_match("x", "1", 0.0, 30));
+        pool.try_insert(make_match("x1+", "2", 0.01, 20));
+
+        // Pool is full but its worst entry is a non-exact approximation, so a
+        // simpler exact match could still arrive: no ceiling.
+        assert_eq!(pool.exact_complexity_ceiling(), None);
     }
 
     #[test]

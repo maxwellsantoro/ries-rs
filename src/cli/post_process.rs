@@ -111,6 +111,7 @@ pub struct StabilityRunConfig<'a> {
     pub use_parallel: bool,
     pub one_sided: bool,
     pub adaptive: bool,
+    pub turbo: bool,
     pub level: u32,
 }
 
@@ -139,6 +140,7 @@ pub fn run_stability_check(
             config.use_parallel,
             config.one_sided,
             config.adaptive,
+            config.turbo,
             config.level,
         );
         analyzer.add_level(result.matches);

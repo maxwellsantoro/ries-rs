@@ -119,6 +119,16 @@ pub struct Args {
     #[arg(long, default_value = "true")]
     pub parallel: bool,
 
+    /// Turbo mode: parallelize the match/Newton phase across all cores.
+    ///
+    /// Unlike `--parallel` (which parallelizes only generation and is
+    /// byte-identical to serial), turbo also runs LHS matching on every core and
+    /// uses more memory. It returns the same single best match as serial search,
+    /// but the lower-ranked results may differ and may vary with thread count.
+    /// Use it for raw speed; use `--deterministic` for reproducibility.
+    #[arg(long)]
+    pub turbo: bool,
+
     /// Force deterministic output (disables parallelism, uses stable sorting)
     /// Required for reproducible results in academic papers
     #[arg(long)]

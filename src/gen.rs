@@ -96,7 +96,7 @@ pub struct GenConfig {
     /// This is a hard limit on expression length regardless of complexity score.
     /// Prevents pathological cases with many low-complexity symbols.
     ///
-    /// Default: `MAX_EXPR_LEN` (255)
+    /// Default: `MAX_EXPR_LEN` (21)
     pub max_length: usize,
 
     /// Symbols available for constants and variables (Seft::A type).
@@ -1430,71 +1430,56 @@ fn should_prune_binary(expr: &Expression, sym: Symbol) -> bool {
     }
 }
 
-/// Check if the last n stack items are identical subexpressions
+/// Check whether the top two stack subexpressions are identical.
 ///
-/// This uses a stack-based approach to identify subexpression boundaries.
-/// For postfix notation, we track the stack depth to find where each
-/// subexpression starts.
+/// This is only ever used with `n == 2` (the generator compares the two
+/// operands feeding a binary operator). The boundary of a complete postfix
+/// subexpression is found with a single backward scan that tracks how many
+/// operands still need to be supplied to the left: atoms supply one
+/// (`-1`), unary ops are neutral (`0`), binary ops demand one more (`+1`).
+/// When the running balance reaches zero, the subexpression starts there.
+///
+/// This avoids the prefix-depth table the previous implementation built on
+/// every call — a hot path during generation, since it runs for every
+/// commutative/cancelling binary candidate.
 fn is_same_subexpr(symbols: &[Symbol], n: usize) -> bool {
-    if symbols.len() < n * 2 || n < 2 {
+    // Each subexpression is at least one symbol, so two of them need >= 2
+    // symbols. The original guard also rejected anything below `n * 2`, which
+    // for the only supported case (`n == 2`) means a length of at least 4;
+    // preserve that exactly so single-atom operands stay handled by the
+    // dedicated `last == X && prev == X` arms in `should_prune_binary`.
+    if n != 2 || symbols.len() < n * 2 {
         return false;
     }
 
-    // Find the boundaries of the last n subexpressions on the stack
-    // We need to trace backwards through the postfix to find where each
-    // complete subexpression starts
-
-    let mut stack_depths: Vec<usize> = Vec::with_capacity(symbols.len() + 1);
-    stack_depths.push(0); // Initial depth
-
-    for &sym in symbols {
-        let prev_depth = *stack_depths.last().unwrap();
-        let new_depth = match sym.seft() {
-            Seft::A => prev_depth + 1,
-            Seft::B => prev_depth,     // pop 1, push 1
-            Seft::C => prev_depth - 1, // pop 2, push 1
-        };
-        stack_depths.push(new_depth);
-    }
-
-    let final_depth = *stack_depths.last().unwrap();
-    if final_depth < n {
-        return false;
-    }
-
-    // Find where each of the last n subexpressions starts
-    let mut subexpr_starts: Vec<usize> = Vec::with_capacity(n);
-    let mut target_depth = final_depth;
-
-    for i in (0..symbols.len()).rev() {
-        if stack_depths[i] == target_depth && stack_depths[i + 1] > target_depth {
-            subexpr_starts.push(i);
-            target_depth -= 1;
-            if subexpr_starts.len() == n {
-                break;
+    /// Walk left from `end - 1` until one complete subexpression has been
+    /// consumed, returning its start index (or `None` on underflow).
+    fn subexpr_start(symbols: &[Symbol], end: usize) -> Option<usize> {
+        let mut needed: i32 = 1;
+        for i in (0..end).rev() {
+            needed += match symbols[i].seft() {
+                Seft::A => -1,
+                Seft::B => 0,
+                Seft::C => 1,
+            };
+            if needed == 0 {
+                return Some(i);
             }
         }
+        None
     }
 
-    if subexpr_starts.len() != n {
+    let end = symbols.len();
+    let Some(top_start) = subexpr_start(symbols, end) else {
         return false;
-    }
+    };
+    let Some(prev_start) = subexpr_start(symbols, top_start) else {
+        return false;
+    };
 
-    // Check if all n subexpressions are identical
-    // For simplicity with n=2, compare the two subexpressions
-    if n == 2 && subexpr_starts.len() == 2 {
-        let start1 = subexpr_starts[1]; // Earlier subexpression
-        let start2 = subexpr_starts[0]; // Later subexpression
-        let end1 = start2; // End of first is start of second
-        let end2 = symbols.len(); // End of second is end of expression
-
-        // Compare the symbol slices
-        if end1 - start1 == end2 - start2 {
-            return symbols[start1..end1] == symbols[start2..end2];
-        }
-    }
-
-    false
+    // Slice equality already compares lengths, so unequal-length operands
+    // short-circuit to `false`.
+    symbols[prev_start..top_start] == symbols[top_start..end]
 }
 
 /// Check if a symbol is a constant (no x)
@@ -1874,6 +1859,35 @@ mod tests {
     }
 
     // ==================== expression_respects_constraints tests ====================
+
+    #[test]
+    fn test_is_same_subexpr_detects_identical_operands() {
+        use crate::symbol::Symbol::*;
+
+        // 2 3 + | 2 3 + : the two operands of a pending binary op are equal.
+        let same = [Two, Three, Add, Two, Three, Add];
+        assert!(is_same_subexpr(&same, 2));
+
+        // 2 3 + | 2 4 + : operands differ in the last atom.
+        let diff = [Two, Three, Add, Two, Four, Add];
+        assert!(!is_same_subexpr(&diff, 2));
+
+        // Unequal-length operands: 2 3 + | 5 .
+        let unequal = [Two, Three, Add, Five];
+        assert!(!is_same_subexpr(&unequal, 2));
+
+        // Nested unary inside identical operands: 2 q n | 2 q n (sqrt then neg).
+        let nested = [Two, Sqrt, Neg, Two, Sqrt, Neg];
+        assert!(is_same_subexpr(&nested, 2));
+
+        // Single-atom operands stay out of scope (handled by dedicated arms).
+        let short = [Two, Two];
+        assert!(!is_same_subexpr(&short, 2));
+
+        // Only n == 2 is supported.
+        let triple = [Two, Three, Add, Two, Three, Add, Two, Three, Add];
+        assert!(!is_same_subexpr(&triple, 3));
+    }
 
     #[test]
     fn test_quantize_value_signed_boundary_symmetry_around_zero() {
