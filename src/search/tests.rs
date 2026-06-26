@@ -1499,3 +1499,65 @@ fn test_full_gem_formula() {
         None => println!("Parse failed!"),
     }
 }
+
+#[test]
+fn test_should_skip_degenerate_lhs_skips_constant_power() {
+    use crate::eval::{evaluate_fast_with_context, EvalContext};
+    use crate::expr::{EvaluatedExpr, Expression};
+    use crate::symbol::NumType;
+
+    // 1^x = 1 with derivative 0 everywhere.
+    let expr = Expression::parse("1x^").expect("valid postfix");
+    let ctx = EvalContext::default();
+    let at_target = evaluate_fast_with_context(&expr, 2.5, &ctx).expect("eval at target");
+    let lhs = EvaluatedExpr::new(
+        expr,
+        at_target.value,
+        at_target.derivative,
+        NumType::Transcendental,
+    );
+
+    assert!(
+        super::should_skip_degenerate_lhs(&lhs, 2.5, &ctx),
+        "1^x should be treated as degenerate"
+    );
+}
+
+#[test]
+fn test_should_skip_degenerate_lhs_skips_when_probe_fails() {
+    use crate::eval::EvalContext;
+    use crate::expr::{EvaluatedExpr, Expression};
+    use crate::symbol::{NumType, Symbol};
+
+    // sqrt(x - 8) is undefined at both target 2.5 and the probe point 2.5 + e.
+    // Force the degenerate branch with a near-zero derivative recorded at generation time.
+    let expr = Expression::from_symbols(&[
+        Symbol::X,
+        Symbol::Eight,
+        Symbol::Sub,
+        Symbol::Sqrt,
+    ]);
+    let ctx = EvalContext::default();
+    let lhs = EvaluatedExpr::new(expr, 0.0, 0.0, NumType::Transcendental);
+
+    assert!(
+        super::should_skip_degenerate_lhs(&lhs, 2.5, &ctx),
+        "probe failure should skip the LHS instead of falling through to value matching"
+    );
+}
+
+#[test]
+fn test_search_adaptive_rejects_non_finite_target() {
+    let config = fast_test_config();
+    let search_config = SearchConfig {
+        target: f64::NAN,
+        max_matches: 10,
+        ..Default::default()
+    };
+
+    let (matches, _) = super::search_adaptive(&config, &search_config, 0);
+    assert!(
+        matches.is_empty(),
+        "non-finite targets should return no matches"
+    );
+}

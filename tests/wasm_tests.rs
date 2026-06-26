@@ -46,6 +46,17 @@ fn test_wasm_version() {
 }
 
 #[wasm_bindgen_test]
+fn test_wasm_search_rejects_non_finite_target() {
+    for bad_target in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let result = search(bad_target, None);
+        assert!(
+            result.is_err(),
+            "search should reject non-finite target {bad_target}"
+        );
+    }
+}
+
+#[wasm_bindgen_test]
 fn test_wasm_basic_search() {
     // Test that basic search works through WASM bindings
     let result = search(2.0, None).expect("search should succeed");

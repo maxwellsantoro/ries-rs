@@ -333,7 +333,10 @@ impl HighPrec {
     /// # Panics
     ///
     /// Panics if the input string is not a valid float literal.
-    /// Use `try_from_str_with_prec` for a non-panicking version.
+    ///
+    /// Prefer [`try_from_str_with_prec`](Self::try_from_str_with_prec) in
+    /// application and FFI code. This panicking constructor is intended for
+    /// trusted internal constant literals (for example `"5"` or `"2"`).
     pub fn from_str_with_prec(s: &str, prec_bits: u32) -> Self {
         Self::try_from_str_with_prec(s, prec_bits).unwrap_or_else(|e| panic!("{e}"))
     }

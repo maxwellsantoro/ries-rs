@@ -25,6 +25,16 @@ def test_search_returns_typed_matches():
     assert "error" in payload
 
 
+def test_search_rejects_non_finite_target():
+    for bad_target in (float("nan"), float("inf"), float("-inf")):
+        try:
+            ries_rs.search(bad_target)
+        except ValueError as exc:
+            assert "finite" in str(exc).lower()
+        else:
+            raise AssertionError(f"expected ValueError for target={bad_target!r}")
+
+
 def test_search_rejects_unknown_preset():
     try:
         ries_rs.search(3.141592653589793, preset="does-not-exist")

@@ -75,12 +75,14 @@ pub struct WasmMatch {
 
 impl From<crate::search::Match> for WasmMatch {
     fn from(m: crate::search::Match) -> Self {
-        let lhs_infix = m.lhs.expr.to_infix();
-        let rhs_infix = m.rhs.expr.to_infix();
+        let lhs_infix = m.lhs.expr.to_infix_or_postfix();
+        let rhs_infix = m.rhs.expr.to_infix_or_postfix();
 
         // Analytical solver
         let solved = crate::solver::solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
-        let solve_for_x = solved.as_ref().map(|e| format!("x = {}", e.to_infix()));
+        let solve_for_x = solved
+            .as_ref()
+            .map(|e| format!("x = {}", e.to_infix_or_postfix()));
         let solve_for_x_postfix = solved.as_ref().map(|e| e.to_postfix());
 
         // Canonical key
@@ -266,6 +268,12 @@ fn build_gen_config(
 /// ```
 #[wasm_bindgen]
 pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, JsValue> {
+    if !target.is_finite() {
+        return Err(JsValue::from_str(
+            "target must be a finite number (not NaN or Infinity)",
+        ));
+    }
+
     let opts = parse_search_options(options)?;
     if opts.use_pslq {
         return Err(JsValue::from_str(

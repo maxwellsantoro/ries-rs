@@ -20,9 +20,14 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use ries_rs::{search, GenConfig};
+//! use ries_rs::{search, search::level_to_complexity, GenConfig};
 //!
-//! let config = GenConfig::default();
+//! let (max_lhs, max_rhs) = level_to_complexity(2);
+//! let config = GenConfig {
+//!     max_lhs_complexity: max_lhs,
+//!     max_rhs_complexity: max_rhs,
+//!     ..GenConfig::default()
+//! };
 //! let matches = search(2.5, &config, 10);
 //!
 //! // Should find equations like x = 5/2, x-2 = 1/2, etc.

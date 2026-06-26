@@ -394,28 +394,10 @@ impl ExprDatabase {
 
             // Skip degenerate expressions: contain x but derivative is 0
             // These are trivial identities like 1^x=1, x/x=1, log_x(x)=1
+            if super::should_skip_degenerate_lhs(lhs, config.target, &context.eval) {
+                continue;
+            }
             if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-                // To distinguish true repeated roots from degenerate expressions,
-                // evaluate at a different x value. Degenerate expressions have
-                // derivative 0 everywhere; true repeated roots only at specific x.
-                // Use an irrational offset to avoid hitting special values
-                let test_x = config.target + std::f64::consts::E;
-                // Use the full evaluator (including user_functions) so that UDF-containing
-                // expressions are not silently skipped due to evaluate_with_constants
-                // returning Err for user-function symbols.
-                if let Ok(test_result) =
-                    crate::eval::evaluate_fast_with_context(&lhs.expr, test_x, &context.eval)
-                {
-                    // Check both: derivative still ~0, AND value unchanged
-                    // This catches x*(1/x)=1 type expressions
-                    let value_unchanged =
-                        (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
-                    let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
-                    if deriv_still_zero || value_unchanged {
-                        // Degenerate expression - skip
-                        continue;
-                    }
-                }
                 // Derivative is non-zero at test_x, so this might be a true repeated root
                 // Check if LHS(target) ≈ some RHS
                 let val_error = DEGENERATE_RANGE_TOLERANCE;

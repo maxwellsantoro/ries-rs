@@ -91,6 +91,22 @@ Notes:
   not the CLI's heavier `-l/--level` mapping.
 - The Python API currently uses complexity-first ranking and does not expose the
   CLI's broader flag surface.
+- `target` must be finite; `NaN` and `Infinity` raise `ValueError`.
+
+### API vs CLI level scale
+
+The Python `level` parameter uses `search::level_to_complexity`, not the CLI
+`-l/--level` mapping. The CLI uses higher bases and a larger multiplier so each
+level explores a much larger expression space.
+
+| Level | API `(max_lhs, max_rhs)` | CLI `(max_lhs, max_rhs)` |
+|-------|--------------------------|--------------------------|
+| 0 | (10, 12) | (35, 35) |
+| 2 | (18, 20) | (55, 55) |
+| 5 | (30, 32) | (85, 85) |
+
+For reproducible CLI-equivalent runs from Python, build a `GenConfig` with the
+CLI bounds from `docs/SEARCH_MODEL.md` and call the Rust library directly.
 
 ## `PyMatch` Properties
 

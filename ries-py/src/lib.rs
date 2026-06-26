@@ -149,12 +149,14 @@ impl PyMatch {
 
 impl From<ries_core::search::Match> for PyMatch {
     fn from(m: ries_core::search::Match) -> Self {
-        let lhs_infix = m.lhs.expr.to_infix();
-        let rhs_infix = m.rhs.expr.to_infix();
+        let lhs_infix = m.lhs.expr.to_infix_or_postfix();
+        let rhs_infix = m.rhs.expr.to_infix_or_postfix();
 
         // Analytical solver
         let solved = ries_core::solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
-        let solve_for_x = solved.as_ref().map(|e| format!("x = {}", e.to_infix()));
+        let solve_for_x = solved
+            .as_ref()
+            .map(|e| format!("x = {}", e.to_infix_or_postfix()));
         let solve_for_x_postfix = solved.as_ref().map(|e| e.to_postfix());
 
         // Canonical key
@@ -198,8 +200,10 @@ fn build_gen_config(
 /// target : float
 ///     The target value to find equations for
 /// level : int, optional
-///     Search level (default 2). Higher levels search more expressions.
-///     Level 0 ≈ 89M expressions, Level 2 ≈ 11B, Level 5 ≈ 15T
+///     Search level (default 2). Accepted range: 0..=5.
+///     Uses the library API complexity mapping ``(10 + 4*L, 12 + 4*L)``,
+///     not the heavier CLI ``-l/--level`` mapping ``(35 + 10*L, 35 + 10*L)``.
+///     Example API bounds: level 0 → (10, 12), level 2 → (18, 20), level 5 → (30, 32).
 /// max_matches : int, optional
 ///     Maximum number of matches to return (default 16).
 ///     Note: Internally, the search requests 2*max_matches candidates
@@ -231,6 +235,11 @@ fn search(
     preset: Option<&str>,
     parallel: bool,
 ) -> PyResult<Vec<PyMatch>> {
+    if !target.is_finite() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "target must be a finite number (not NaN or Infinity)",
+        ));
+    }
     if level > MAX_API_LEVEL {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Invalid level {}. Supported range is 0..={}.",

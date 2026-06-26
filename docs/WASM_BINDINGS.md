@@ -85,6 +85,21 @@ Notes:
   heavier `-l/--level` mapping.
 - Non-threaded WASM builds search sequentially; threaded builds can use the
   parallel engine after `initThreadPool(...)`.
+- `target` must be finite; `NaN` and `Infinity` return an error.
+
+### API vs CLI level scale
+
+The WASM `level` option uses `search::level_to_complexity`, not the CLI
+`-l/--level` mapping. The CLI uses higher bases and a larger multiplier so each
+level explores a much larger expression space.
+
+| Level | API `(max_lhs, max_rhs)` | CLI `(max_lhs, max_rhs)` |
+|-------|--------------------------|--------------------------|
+| 0 | (10, 12) | (35, 35) |
+| 2 | (18, 20) | (55, 55) |
+| 5 | (30, 32) | (85, 85) |
+
+See `docs/SEARCH_MODEL.md` for the full mapping rationale.
 
 ## `WasmMatch` Properties
 

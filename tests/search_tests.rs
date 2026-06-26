@@ -811,3 +811,74 @@ fn test_search_adaptive_calls_iterative_algorithm() {
          the iterative growth may not be running at all"
     );
 }
+
+fn match_signatures(matches: &[ries_rs::search::Match]) -> Vec<(String, String, i64)> {
+    let mut signatures: Vec<(String, String, i64)> = matches
+        .iter()
+        .map(|m| {
+            (
+                m.lhs.expr.to_postfix(),
+                m.rhs.expr.to_postfix(),
+                (m.error / 1e-12).round() as i64,
+            )
+        })
+        .collect();
+    signatures.sort();
+    signatures
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_parallel_matches_sequential_results() {
+    use ries_rs::search::search_parallel_with_stats_and_config;
+
+    let gen_config = fast_config();
+    let search_config = SearchConfig {
+        target: 2.0,
+        max_matches: 20,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (sequential, _) = search_with_stats_and_config(&gen_config, &search_config);
+    let (parallel, _) = search_parallel_with_stats_and_config(&gen_config, &search_config);
+
+    assert_eq!(
+        match_signatures(&sequential),
+        match_signatures(&parallel),
+        "parallel and sequential search should return the same match set"
+    );
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_parallel_rhs_override_matches_sequential() {
+    use ries_rs::search::search_parallel_with_stats_and_config;
+
+    let mut gen_config = fast_config();
+    gen_config.rhs_constants = Some(vec![
+        Symbol::One,
+        Symbol::Two,
+        Symbol::Three,
+        Symbol::Pi,
+        Symbol::E,
+    ]);
+
+    let search_config = SearchConfig {
+        target: 2.0,
+        max_matches: 20,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (sequential, _) = search_with_stats_and_config(&gen_config, &search_config);
+    let (parallel, _) = search_parallel_with_stats_and_config(&gen_config, &search_config);
+
+    assert_eq!(
+        match_signatures(&sequential),
+        match_signatures(&parallel),
+        "parallel RHS-override fallback should match sequential results"
+    );
+}

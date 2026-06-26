@@ -20,6 +20,28 @@ mod tests;
 
 use db::calculate_adaptive_search_radius;
 pub use db::{ComplexityTier, ExprDatabase, TieredExprDatabase};
+
+/// Returns true when a near-zero-derivative LHS should be skipped as degenerate.
+pub(crate) fn should_skip_degenerate_lhs(
+    lhs: &EvaluatedExpr,
+    target: f64,
+    eval: &EvalContext<'_>,
+) -> bool {
+    if lhs.derivative.abs() >= DEGENERATE_TEST_THRESHOLD {
+        return false;
+    }
+    let test_x = target + std::f64::consts::E;
+    match crate::eval::evaluate_fast_with_context(&lhs.expr, test_x, eval) {
+        Ok(test_result) => {
+            let value_unchanged =
+                (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+            let deriv_still_zero =
+                test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
+            deriv_still_zero || value_unchanged
+        }
+        Err(_) => true,
+    }
+}
 #[cfg(test)]
 use newton::newton_raphson;
 use newton::newton_raphson_with_constants;
@@ -726,6 +748,10 @@ pub fn search_adaptive(
     use crate::gen::{quantize_value, LhsKey};
     use std::collections::HashMap;
 
+    if !search_config.target.is_finite() {
+        return (Vec::new(), SearchStats::default());
+    }
+
     let gen_start = SearchTimer::start();
     let context = SearchContext::new(search_config);
     // Use HashMap so dedup keeps the simplest expression, not first-seen.
@@ -958,6 +984,10 @@ pub fn search_streaming_with_config(
     use crate::gen::{generate_streaming_with_context, StreamingCallbacks};
     use std::collections::HashMap;
 
+    if !search_config.target.is_finite() {
+        return (Vec::new(), SearchStats::default());
+    }
+
     let gen_start = SearchTimer::start();
     let mut stats = SearchStats::new();
     let context = SearchContext::new(search_config);
@@ -1044,20 +1074,10 @@ pub fn search_streaming_with_config(
                 }
 
                 // Skip degenerate expressions
+                if should_skip_degenerate_lhs(lhs, search_config.target, &context.eval) {
+                    return true;
+                }
                 if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-                    let test_x = search_config.target + std::f64::consts::E;
-                    if let Ok(test_result) =
-                        crate::eval::evaluate_fast_with_context(&lhs.expr, test_x, &context.eval)
-                    {
-                        let value_unchanged =
-                            (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
-                        let deriv_still_zero =
-                            test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
-                        if deriv_still_zero || value_unchanged {
-                            return true;
-                        }
-                    }
-
                     stats.lhs_tested += 1;
                     stats.record_candidate_window(
                         lhs,
@@ -1400,6 +1420,10 @@ pub fn search_parallel_with_stats_and_config(
     use crate::gen::{
         count_expressions_with_limit_and_context, generate_all_parallel_with_context,
     };
+
+    if !config.target.is_finite() {
+        return (Vec::new(), SearchStats::default());
+    }
 
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
     let context = SearchContext::new(config);

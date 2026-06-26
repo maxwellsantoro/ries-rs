@@ -358,6 +358,14 @@ impl Expression {
             .expect("stack underflow in to_infix: expression is not valid postfix")
     }
 
+    /// Format as infix, falling back to postfix when the expression is malformed.
+    ///
+    /// Prefer this over [`to_infix`](Self::to_infix) at FFI and other untrusted-output
+    /// boundaries where a panic would be unacceptable.
+    pub fn to_infix_or_postfix(&self) -> String {
+        self.try_to_infix().unwrap_or_else(|_| self.to_postfix())
+    }
+
     /// Convert to infix notation using a symbol table for display names
     ///
     /// This is the table-driven version that uses per-run configuration
@@ -1076,6 +1084,12 @@ mod tests {
             "try_to_infix on malformed expression should return Err, got Ok({:?})",
             result.ok()
         );
+    }
+
+    #[test]
+    fn test_to_infix_or_postfix_falls_back_on_malformed_expression() {
+        let expr = Expression::from_symbols(&[Symbol::Add]);
+        assert_eq!(expr.to_infix_or_postfix(), expr.to_postfix());
     }
 
     #[test]
