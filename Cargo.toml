@@ -43,6 +43,10 @@ exclude = [
 
     # Scratch / backup files
     "Cargo.toml.orig",
+
+    # Agent guidance docs (CLAUDE.md is a symlink to AGENTS.md)
+    "AGENTS.md",
+    "CLAUDE.md",
 ]
 
 [lib]

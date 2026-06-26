@@ -51,7 +51,6 @@ playwright-report/
 
 # Local assistant config
 .claude/
-CLAUDE.md
 .github/hooks/
 
 # Local cargo config

@@ -21,7 +21,9 @@ When docs and code diverge, code and tests win.
 - For `highprec`: GMP and MPFR
   - Ubuntu/Debian: `sudo apt-get install libgmp-dev libmpfr-dev`
   - macOS: `brew install gmp mpfr`
-- For Python bindings: Python + `maturin`
+- For Python bindings: Python, [`uv`](https://docs.astral.sh/uv/) (environment
+  management), and `maturin` (extension build). `scripts/test_ries_py_python.sh`
+  uses `uv` to create the isolated test environment.
 - For web/WASM work: Node.js and Rust nightly
 
 ### Common build commands
