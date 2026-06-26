@@ -1531,12 +1531,7 @@ fn test_should_skip_degenerate_lhs_skips_when_probe_fails() {
 
     // sqrt(x - 8) is undefined at both target 2.5 and the probe point 2.5 + e.
     // Force the degenerate branch with a near-zero derivative recorded at generation time.
-    let expr = Expression::from_symbols(&[
-        Symbol::X,
-        Symbol::Eight,
-        Symbol::Sub,
-        Symbol::Sqrt,
-    ]);
+    let expr = Expression::from_symbols(&[Symbol::X, Symbol::Eight, Symbol::Sub, Symbol::Sqrt]);
     let ctx = EvalContext::default();
     let lhs = EvaluatedExpr::new(expr, 0.0, 0.0, NumType::Transcendental);
 

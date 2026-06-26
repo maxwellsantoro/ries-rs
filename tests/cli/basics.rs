@@ -112,10 +112,16 @@ fn test_json_output_is_valid_and_machine_readable() {
     );
     let search_stats = &parsed["search_stats"];
     if let Some(v) = search_stats.get("candidate_window_max_lhs_postfix") {
-        assert!(v.is_string(), "candidate_window_max_lhs_postfix should be a string");
+        assert!(
+            v.is_string(),
+            "candidate_window_max_lhs_postfix should be a string"
+        );
     }
     if let Some(v) = search_stats.get("candidate_window_max_lhs_value") {
-        assert!(v.is_number(), "candidate_window_max_lhs_value should be numeric");
+        assert!(
+            v.is_number(),
+            "candidate_window_max_lhs_value should be numeric"
+        );
     }
     if let Some(v) = search_stats.get("candidate_window_max_lhs_derivative") {
         assert!(

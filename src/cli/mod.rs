@@ -61,6 +61,6 @@ pub use config_builder::build_gen_config;
 pub use legacy::{normalize_legacy_args, NormalizedArgs};
 
 pub use post_process::{
-    expression_constraints_from_args, filter_matches, run_stability_check, ExpressionConstraintArgs,
-    PostProcessOptions, StabilityRunConfig,
+    expression_constraints_from_args, filter_matches, run_stability_check,
+    ExpressionConstraintArgs, PostProcessOptions, StabilityRunConfig,
 };

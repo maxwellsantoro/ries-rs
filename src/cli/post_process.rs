@@ -3,8 +3,8 @@
 use ries_rs::gen::{expression_respects_constraints, ExpressionConstraintOptions, GenConfig};
 use ries_rs::profile::Profile;
 use ries_rs::search::{Match, SearchConfig};
-use ries_rs::{canonical_expression_key, StabilityAnalyzer, StabilityConfig, StabilityResult};
 use ries_rs::symbol::NumType;
+use ries_rs::{canonical_expression_key, StabilityAnalyzer, StabilityConfig, StabilityResult};
 use std::collections::HashSet;
 
 use super::search_runner::run_search;
@@ -92,10 +92,10 @@ pub fn filter_matches(matches: &mut Vec<Match>, options: PostProcessOptions<'_>)
     if options.canon_enabled {
         let mut seen = HashSet::<(String, String)>::new();
         matches.retain(|m| {
-            let lhs_key = canonical_expression_key(&m.lhs.expr)
-                .unwrap_or_else(|| m.lhs.expr.to_postfix());
-            let rhs_key = canonical_expression_key(&m.rhs.expr)
-                .unwrap_or_else(|| m.rhs.expr.to_postfix());
+            let lhs_key =
+                canonical_expression_key(&m.lhs.expr).unwrap_or_else(|| m.lhs.expr.to_postfix());
+            let rhs_key =
+                canonical_expression_key(&m.rhs.expr).unwrap_or_else(|| m.rhs.expr.to_postfix());
             seen.insert((lhs_key, rhs_key))
         });
     }

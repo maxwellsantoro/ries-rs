@@ -15,13 +15,14 @@ mod cli;
 use clap::Parser;
 use cli::{
     build_gen_config, build_json_output, build_manifest, canon_reduction_enabled,
-    cli_level_to_complexity, compute_significant_digits_tolerance, expression_constraints_from_args,
-    filter_matches, format_bytes_binary, format_value, handle_special_modes, load_runtime_profile,
-    normalize_legacy_args, parse_diagnostics, parse_display_format, parse_memory_size_bytes,
-    parse_symbol_sets, peak_memory_bytes, print_footer, print_header, print_match_absolute,
-    print_match_relative, print_show_work_details, print_symbol_table, run_search,
-    run_stability_check, Args, CliExit, DisplayFormat, ExpressionConstraintArgs, NormalizedArgs,
-    PostProcessOptions, StabilityRunConfig,
+    cli_level_to_complexity, compute_significant_digits_tolerance,
+    expression_constraints_from_args, filter_matches, format_bytes_binary, format_value,
+    handle_special_modes, load_runtime_profile, normalize_legacy_args, parse_diagnostics,
+    parse_display_format, parse_memory_size_bytes, parse_symbol_sets, peak_memory_bytes,
+    print_footer, print_header, print_match_absolute, print_match_relative,
+    print_show_work_details, print_symbol_table, run_search, run_stability_check, Args, CliExit,
+    DisplayFormat, ExpressionConstraintArgs, NormalizedArgs, PostProcessOptions,
+    StabilityRunConfig,
 };
 use ries_rs::{canonical_expression_key, solve_for_x_rhs_expression};
 use std::time::Duration;
@@ -437,17 +438,16 @@ fn main() {
         None
     };
 
-    let (expression_constraints, expression_constraints_active) =
-        expression_constraints_from_args(
-            &profile,
-            ExpressionConstraintArgs {
-                rational_exponents: args.rational_exponents,
-                any_exponents: args.any_exponents,
-                rational_trig_args: args.rational_trig_args,
-                any_trig_args: args.any_trig_args,
-                max_trig_cycles: args.max_trig_cycles,
-            },
-        );
+    let (expression_constraints, expression_constraints_active) = expression_constraints_from_args(
+        &profile,
+        ExpressionConstraintArgs {
+            rational_exponents: args.rational_exponents,
+            any_exponents: args.any_exponents,
+            rational_trig_args: args.rational_trig_args,
+            any_trig_args: args.any_trig_args,
+            max_trig_cycles: args.max_trig_cycles,
+        },
+    );
     let canon_enabled = (args.canon_simplify
         || canon_reduction_enabled(args.canon_reduction.as_deref()))
         && !args.no_canon_simplify;
@@ -457,7 +457,8 @@ fn main() {
             min_equate_value: args.min_equate_value,
             max_equate_value: args.max_equate_value,
             min_match_distance: args.min_match_distance,
-            expression_constraints: expression_constraints_active.then_some(&expression_constraints),
+            expression_constraints: expression_constraints_active
+                .then_some(&expression_constraints),
             numeric_anagram: args.numeric_anagram,
             canon_enabled,
         },

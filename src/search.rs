@@ -33,10 +33,8 @@ pub(crate) fn should_skip_degenerate_lhs(
     let test_x = target + std::f64::consts::E;
     match crate::eval::evaluate_fast_with_context(&lhs.expr, test_x, eval) {
         Ok(test_result) => {
-            let value_unchanged =
-                (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
-            let deriv_still_zero =
-                test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
+            let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+            let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
             deriv_still_zero || value_unchanged
         }
         Err(_) => true,
