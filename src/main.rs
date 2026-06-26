@@ -7,7 +7,7 @@
 use ries_rs::{
     eval, expr, format_stability_report, format_verification_report, gen, pool, print_presets,
     profile, search, symbol, udf, verify_matches_highprec_with_trig_scale, FastMatchConfig, Report,
-    ReportConfig, ReportDisplayFormat, StabilityAnalyzer, StabilityConfig, DEGENERATE_DERIVATIVE,
+    ReportConfig, ReportDisplayFormat, DEGENERATE_DERIVATIVE,
 };
 
 mod cli;
@@ -15,51 +15,18 @@ mod cli;
 use clap::Parser;
 use cli::{
     build_gen_config, build_json_output, build_manifest, canon_reduction_enabled,
-    cli_level_to_complexity, compute_significant_digits_tolerance, format_bytes_binary,
-    format_value, handle_special_modes, load_runtime_profile, normalize_legacy_args,
-    parse_diagnostics, parse_display_format, parse_memory_size_bytes, parse_symbol_sets,
-    peak_memory_bytes, print_footer, print_header, print_match_absolute, print_match_relative,
-    print_show_work_details, print_symbol_table, run_search, Args, CliExit, DisplayFormat,
-    NormalizedArgs,
+    cli_level_to_complexity, compute_significant_digits_tolerance, expression_constraints_from_args,
+    filter_matches, format_bytes_binary, format_value, handle_special_modes, load_runtime_profile,
+    normalize_legacy_args, parse_diagnostics, parse_display_format, parse_memory_size_bytes,
+    parse_symbol_sets, peak_memory_bytes, print_footer, print_header, print_match_absolute,
+    print_match_relative, print_show_work_details, print_symbol_table, run_search,
+    run_stability_check, Args, CliExit, DisplayFormat, ExpressionConstraintArgs, NormalizedArgs,
+    PostProcessOptions, StabilityRunConfig,
 };
-use ries_rs::{
-    canonical_expression_key, expression_respects_constraints, solve_for_x_rhs_expression,
-    ExpressionConstraintOptions,
-};
+use ries_rs::{canonical_expression_key, solve_for_x_rhs_expression};
 use std::time::Duration;
 
 // Args struct is now imported from cli::Args
-
-fn match_in_equate_bounds(
-    m: &search::Match,
-    min_equate_value: Option<f64>,
-    max_equate_value: Option<f64>,
-) -> bool {
-    let lhs = m.lhs.value;
-    let rhs = m.rhs.value;
-    let min_ok = min_equate_value.is_none_or(|min| lhs >= min && rhs >= min);
-    let max_ok = max_equate_value.is_none_or(|max| lhs <= max && rhs <= max);
-    min_ok && max_ok
-}
-
-fn digit_signature(expression: &expr::Expression) -> String {
-    let mut digits: Vec<char> = expression
-        .symbols()
-        .iter()
-        .filter_map(|sym| {
-            let b = *sym as u8;
-            (b'1'..=b'9').contains(&b).then_some(b as char)
-        })
-        .collect();
-    digits.sort_unstable();
-    digits.into_iter().collect()
-}
-
-fn match_is_numeric_anagram(m: &search::Match) -> bool {
-    let lhs = digit_signature(&m.lhs.expr);
-    let rhs = digit_signature(&m.rhs.expr);
-    !lhs.is_empty() && lhs == rhs
-}
 
 fn exit_with(err: CliExit) -> ! {
     eprintln!("{}", err.message);
@@ -451,91 +418,50 @@ fn main() {
         matches.sort_by(|a, b| pool::compare_matches(a, b, ranking_mode));
     }
 
-    // Stability check: run multiple passes with different tolerances
+    let use_parallel = !args.deterministic && args.parallel;
     let stability_results = if args.stability_check {
-        let config = if args.stability_thorough {
-            StabilityConfig::thorough()
-        } else {
-            StabilityConfig::default()
-        };
-        let tolerance_factors = config.tolerance_factors.clone();
-        let mut analyzer = StabilityAnalyzer::new(config);
-
-        // Add the base matches
-        analyzer.add_level(matches.clone());
-
-        // Run additional levels with tighter tolerances
-        let base_error = search_config.max_error;
-        let use_parallel = !args.deterministic && args.parallel;
-
-        for factor in tolerance_factors.into_iter().skip(1) {
-            let mut tighter_config = search_config.clone();
-            tighter_config.max_error = base_error * factor;
-
-            let result = run_search(
-                &gen_config,
-                &tighter_config,
+        Some(run_stability_check(
+            matches.clone(),
+            StabilityRunConfig {
+                gen_config: &gen_config,
+                search_config: &search_config,
+                thorough: args.stability_thorough,
                 use_streaming,
                 use_parallel,
-                args.one_sided,
-                args.adaptive,
-                level_value as u32,
-            );
-            analyzer.add_level(result.matches);
-        }
-
-        Some(analyzer.analyze())
+                one_sided: args.one_sided,
+                adaptive: args.adaptive,
+                level: level_value as u32,
+            },
+        ))
     } else {
         None
     };
 
-    if args.min_equate_value.is_some() || args.max_equate_value.is_some() {
-        matches.retain(|m| match_in_equate_bounds(m, args.min_equate_value, args.max_equate_value));
-    }
-    if let Some(min_match_distance) = args.min_match_distance {
-        matches.retain(|m| m.error.abs() >= min_match_distance);
-    }
-    let mut user_constant_types = [symbol::NumType::Transcendental; 16];
-    for (idx, uc) in profile.constants.iter().take(16).enumerate() {
-        user_constant_types[idx] = uc.num_type;
-    }
-    let mut user_function_types = [symbol::NumType::Transcendental; 16];
-    for (idx, uf) in profile.functions.iter().take(16).enumerate() {
-        user_function_types[idx] = uf.num_type;
-    }
-
-    let expression_constraints = ExpressionConstraintOptions {
-        rational_exponents: args.rational_exponents && !args.any_exponents,
-        rational_trig_args: args.rational_trig_args && !args.any_trig_args,
-        max_trig_cycles: args.max_trig_cycles,
-        user_constant_types,
-        user_function_types,
-    };
-    if expression_constraints.rational_exponents
-        || expression_constraints.rational_trig_args
-        || expression_constraints.max_trig_cycles.is_some()
-    {
-        matches.retain(|m| {
-            expression_respects_constraints(&m.lhs.expr, expression_constraints)
-                && expression_respects_constraints(&m.rhs.expr, expression_constraints)
-        });
-    }
-    if args.numeric_anagram {
-        matches.retain(match_is_numeric_anagram);
-    }
+    let (expression_constraints, expression_constraints_active) =
+        expression_constraints_from_args(
+            &profile,
+            ExpressionConstraintArgs {
+                rational_exponents: args.rational_exponents,
+                any_exponents: args.any_exponents,
+                rational_trig_args: args.rational_trig_args,
+                any_trig_args: args.any_trig_args,
+                max_trig_cycles: args.max_trig_cycles,
+            },
+        );
     let canon_enabled = (args.canon_simplify
         || canon_reduction_enabled(args.canon_reduction.as_deref()))
         && !args.no_canon_simplify;
-    if canon_enabled {
-        let mut seen = std::collections::HashSet::<(String, String)>::new();
-        matches.retain(|m| {
-            let lhs_key =
-                canonical_expression_key(&m.lhs.expr).unwrap_or_else(|| m.lhs.expr.to_postfix());
-            let rhs_key =
-                canonical_expression_key(&m.rhs.expr).unwrap_or_else(|| m.rhs.expr.to_postfix());
-            seen.insert((lhs_key, rhs_key))
-        });
-    }
+    filter_matches(
+        &mut matches,
+        PostProcessOptions {
+            min_equate_value: args.min_equate_value,
+            max_equate_value: args.max_equate_value,
+            min_match_distance: args.min_match_distance,
+            expression_constraints: expression_constraints_active.then_some(&expression_constraints),
+            numeric_anagram: args.numeric_anagram,
+            canon_enabled,
+        },
+    );
 
     let elapsed = search_elapsed;
 

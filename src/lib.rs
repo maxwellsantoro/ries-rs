@@ -91,6 +91,7 @@ mod fast_match;
 pub mod gen;
 mod highprec_verify;
 mod manifest;
+mod match_summary;
 mod metrics;
 pub mod pool;
 #[cfg(feature = "highprec")]
@@ -156,6 +157,7 @@ pub use precision::{HighPrec, RiesFloat, DEFAULT_PRECISION};
 
 // Manifest types for reproducibility
 pub use manifest::{MatchInfo, RunManifest, SearchConfigInfo, UserConstantInfo};
+pub use match_summary::MatchSummary;
 
 // Structured reporting and analysis
 pub use highprec_verify::{

@@ -149,36 +149,26 @@ impl PyMatch {
 
 impl From<ries_core::search::Match> for PyMatch {
     fn from(m: ries_core::search::Match) -> Self {
-        let lhs_infix = m.lhs.expr.to_infix_or_postfix();
-        let rhs_infix = m.rhs.expr.to_infix_or_postfix();
+        Self::from(&ries_core::MatchSummary::from(m))
+    }
+}
 
-        // Analytical solver
-        let solved = ries_core::solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
-        let solve_for_x = solved
-            .as_ref()
-            .map(|e| format!("x = {}", e.to_infix_or_postfix()));
-        let solve_for_x_postfix = solved.as_ref().map(|e| e.to_postfix());
-
-        // Canonical key
-        let canonical_key = ries_core::canonical_expression_key(&m.lhs.expr)
-            .zip(ries_core::canonical_expression_key(&m.rhs.expr))
-            .map(|(l, r)| format!("{}={}", l, r))
-            .unwrap_or_else(|| format!("{}={}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()));
-
+impl From<&ries_core::MatchSummary> for PyMatch {
+    fn from(summary: &ries_core::MatchSummary) -> Self {
         Self {
-            lhs: lhs_infix,
-            rhs: rhs_infix,
-            lhs_postfix: m.lhs.expr.to_postfix(),
-            rhs_postfix: m.rhs.expr.to_postfix(),
-            solve_for_x,
-            solve_for_x_postfix,
-            canonical_key,
-            x_value: m.x_value,
-            error: m.error,
-            complexity: m.complexity,
-            operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
-            tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),
-            is_exact: m.error.abs() < ries_core::EXACT_MATCH_TOLERANCE,
+            lhs: summary.lhs.clone(),
+            rhs: summary.rhs.clone(),
+            lhs_postfix: summary.lhs_postfix.clone(),
+            rhs_postfix: summary.rhs_postfix.clone(),
+            solve_for_x: summary.solve_for_x.clone(),
+            solve_for_x_postfix: summary.solve_for_x_postfix.clone(),
+            canonical_key: summary.canonical_key.clone(),
+            x_value: summary.x_value,
+            error: summary.error,
+            complexity: summary.complexity,
+            operator_count: summary.operator_count,
+            tree_depth: summary.tree_depth,
+            is_exact: summary.is_exact,
         }
     }
 }

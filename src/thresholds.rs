@@ -146,6 +146,11 @@ pub const BEST_ERROR_TIGHTEN_FACTOR: f64 = 0.999;
 /// Value: 0.9999
 pub const ACCEPT_ERROR_TIGHTEN_FACTOR: f64 = 0.9999;
 
+/// Pool capacity fraction below which accept_error may relax after eviction
+///
+/// Value: 0.5
+pub const ACCEPT_ERROR_RELAX_CAPACITY_FRACTION: f64 = 0.5;
+
 /// Strict gate threshold fraction
 ///
 /// When pool is near capacity, only accept candidates with error

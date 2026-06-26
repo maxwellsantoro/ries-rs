@@ -13,8 +13,9 @@
 use crate::expr::Expression;
 use crate::search::Match;
 use crate::thresholds::{
-    ACCEPT_ERROR_TIGHTEN_FACTOR, BEST_ERROR_TIGHTEN_FACTOR, EXACT_MATCH_TOLERANCE,
-    NEWTON_TOLERANCE, STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR,
+    ACCEPT_ERROR_RELAX_CAPACITY_FRACTION, ACCEPT_ERROR_TIGHTEN_FACTOR,
+    BEST_ERROR_TIGHTEN_FACTOR, EXACT_MATCH_TOLERANCE, NEWTON_TOLERANCE,
+    STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR,
 };
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
@@ -182,8 +183,7 @@ impl PoolEntry {
             // Infinity should also sort as worst (just below NaN)
             i64::MAX - 1
         } else {
-            // For normal positive floats, the bit pattern preserves ordering
-            // when cast to i64 (since all positive floats have bit patterns < i64::MAX)
+            // Safe: positive f64 bit patterns have sign bit 0, so to_bits() < i64::MAX.
             error_abs.to_bits() as i64
         };
         let mode_tie = match ranking_mode {
@@ -351,10 +351,34 @@ impl TopKPool {
                 // be inserted later.
                 self.seen_eqn.remove(&EqnKey::from_match(&evicted.m));
                 self.stats.evictions += 1;
+                self.relax_accept_error_after_eviction();
             }
         }
 
         true
+    }
+
+    /// Re-anchor accept_error to pool contents when there is room after eviction.
+    fn relax_accept_error_after_eviction(&mut self) {
+        if self.heap.is_empty() {
+            return;
+        }
+
+        let relax_threshold =
+            (self.capacity as f64 * ACCEPT_ERROR_RELAX_CAPACITY_FRACTION).ceil() as usize;
+        if self.heap.len() >= relax_threshold {
+            return;
+        }
+
+        if let Some(worst) = self.heap.peek() {
+            let worst_error = worst.m.error.abs();
+            if worst_error >= EXACT_MATCH_TOLERANCE {
+                self.accept_error = self
+                    .accept_error
+                    .max(worst_error)
+                    .max(self.accept_error / ACCEPT_ERROR_TIGHTEN_FACTOR);
+            }
+        }
     }
 
     /// Check if a match would be accepted (for early pruning)
@@ -540,6 +564,24 @@ mod tests {
         // When sorted, the normal match should come first (lowest error)
         let sorted = pool.into_sorted();
         assert_eq!(sorted[0].lhs.expr.to_postfix(), "x");
+    }
+
+    #[test]
+    fn test_pool_relaxes_accept_error_after_eviction_when_under_half_capacity() {
+        let mut pool = TopKPool::new(4, 1.0);
+
+        pool.try_insert(make_match("x", "1", 0.5, 10));
+        pool.try_insert(make_match("x1+", "2", 0.4, 20));
+        pool.try_insert(make_match("x2*", "3", 0.3, 30));
+        pool.try_insert(make_match("x3/", "4", 0.2, 40));
+        pool.try_insert(make_match("x4-", "5", 0.1, 50));
+
+        assert_eq!(pool.len(), 4);
+        assert!(
+            pool.accept_error >= 0.2,
+            "expected accept_error to relax after eviction, got {}",
+            pool.accept_error
+        );
     }
 
     #[test]

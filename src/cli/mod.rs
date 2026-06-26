@@ -29,6 +29,7 @@ pub mod json_types;
 pub mod legacy;
 pub mod manifest;
 pub mod output;
+pub mod post_process;
 pub mod runtime;
 pub mod search_runner;
 
@@ -58,3 +59,8 @@ pub use search_runner::run_search;
 pub use config_builder::build_gen_config;
 
 pub use legacy::{normalize_legacy_args, NormalizedArgs};
+
+pub use post_process::{
+    expression_constraints_from_args, filter_matches, run_stability_check, ExpressionConstraintArgs,
+    PostProcessOptions, StabilityRunConfig,
+};
