@@ -84,6 +84,14 @@ pub struct SearchStats {
     pub candidate_window_total: usize,
     /// Largest RHS candidate window scanned for any single LHS
     pub candidate_window_max: usize,
+    /// Postfix form of the LHS that produced the largest candidate window
+    pub candidate_window_max_lhs_postfix: Option<String>,
+    /// LHS value for the largest candidate window
+    pub candidate_window_max_lhs_value: Option<f64>,
+    /// LHS derivative for the largest candidate window
+    pub candidate_window_max_lhs_derivative: Option<f64>,
+    /// LHS complexity for the largest candidate window
+    pub candidate_window_max_lhs_complexity: Option<u32>,
     /// Number of candidates rejected by the strict pre-Newton gate
     pub strict_gate_rejections: usize,
     /// Number of Newton-Raphson calls
@@ -112,9 +120,15 @@ impl SearchStats {
     }
 
     #[inline]
-    pub fn record_candidate_window(&mut self, width: usize) {
+    pub fn record_candidate_window(&mut self, lhs: &EvaluatedExpr, width: usize) {
         self.candidate_window_total = self.candidate_window_total.saturating_add(width);
-        self.candidate_window_max = self.candidate_window_max.max(width);
+        if width > self.candidate_window_max {
+            self.candidate_window_max = width;
+            self.candidate_window_max_lhs_postfix = Some(lhs.expr.to_postfix());
+            self.candidate_window_max_lhs_value = Some(lhs.value);
+            self.candidate_window_max_lhs_derivative = Some(lhs.derivative);
+            self.candidate_window_max_lhs_complexity = Some(lhs.expr.complexity());
+        }
     }
 
     #[inline]
@@ -183,6 +197,9 @@ impl SearchStats {
         println!("    Candidates:      {:>10}", self.candidates_tested);
         println!("    Window avg:      {:>10.2}", self.candidate_window_avg());
         println!("    Window max:      {:>10}", self.candidate_window_max);
+        if let Some(lhs) = &self.candidate_window_max_lhs_postfix {
+            println!("    Window max lhs:  {:>10}", lhs);
+        }
         println!("    Gate rejects:    {:>10}", self.strict_gate_rejections);
         println!(
             "    Cand/insert:     {:>10.2}",
@@ -1042,10 +1059,13 @@ pub fn search_streaming_with_config(
                     }
 
                     stats.lhs_tested += 1;
-                    stats.record_candidate_window(rhs_db.count_in_range(
-                        lhs.value - DEGENERATE_RANGE_TOLERANCE,
-                        lhs.value + DEGENERATE_RANGE_TOLERANCE,
-                    ));
+                    stats.record_candidate_window(
+                        lhs,
+                        rhs_db.count_in_range(
+                            lhs.value - DEGENERATE_RANGE_TOLERANCE,
+                            lhs.value + DEGENERATE_RANGE_TOLERANCE,
+                        ),
+                    );
                     for rhs in rhs_db.iter_tiers_in_range(
                         lhs.value - DEGENERATE_RANGE_TOLERANCE,
                         lhs.value + DEGENERATE_RANGE_TOLERANCE,
@@ -1090,10 +1110,11 @@ pub fn search_streaming_with_config(
                     pool.len(),
                     search_config.max_matches,
                     pool.best_error,
+                    pool.accept_error,
                 );
                 let low = lhs.value - search_radius;
                 let high = lhs.value + search_radius;
-                stats.record_candidate_window(rhs_db.count_in_range(low, high));
+                stats.record_candidate_window(lhs, rhs_db.count_in_range(low, high));
 
                 for rhs in rhs_db.iter_tiers_in_range(low, high) {
                     if !search_config.rhs_symbol_allowed(&rhs.expr) {
@@ -1312,10 +1333,11 @@ pub fn search_one_sided_with_stats_and_config(
     (pool.into_sorted(), stats)
 }
 
-/// Perform a parallel search using Rayon
+/// Perform a search whose generation phase uses Rayon.
 ///
 /// This function is part of the public API for library consumers who want
-/// parallel search without statistics collection.
+/// parallel generation without statistics collection. Matching/Newton remains
+/// the same serial batch matcher used by the sequential path.
 #[cfg(feature = "parallel")]
 #[allow(dead_code)]
 pub fn search_parallel(
@@ -1327,10 +1349,10 @@ pub fn search_parallel(
     matches
 }
 
-/// Perform a parallel search with statistics collection
+/// Perform a search with parallel generation and statistics collection.
 ///
 /// This function is part of the public API for library consumers who want
-/// detailed statistics about the parallel search process.
+/// detailed statistics about the search process. Matching/Newton remains serial.
 #[cfg(feature = "parallel")]
 #[allow(dead_code)]
 pub fn search_parallel_with_stats(
@@ -1363,24 +1385,28 @@ pub fn search_parallel_with_stats_and_options(
     search_parallel_with_stats_and_config(gen_config, &config)
 }
 
-/// Perform a parallel search with a fully specified search configuration.
+/// Perform a search with parallel generation and a fully specified search configuration.
 ///
-/// Generation uses Rayon for parallelism. A sequential OOM-safety check runs
-/// first: if it estimates the expression space would exceed ~2M entries the
-/// function falls back to streaming mode automatically.
+/// Generation uses Rayon for parallelism, while RHS database construction and
+/// LHS/RHS matching/Newton remain the same serial batch pipeline used by the
+/// sequential path. A sequential count-only OOM-safety check runs first: if it
+/// estimates the expression space would exceed ~2M entries the function falls
+/// back to streaming mode automatically.
 #[cfg(feature = "parallel")]
 pub fn search_parallel_with_stats_and_config(
     gen_config: &crate::gen::GenConfig,
     config: &SearchConfig,
 ) -> (Vec<Match>, SearchStats) {
-    use crate::gen::{generate_all_parallel_with_context, generate_all_with_limit_and_context};
+    use crate::gen::{
+        count_expressions_with_limit_and_context, generate_all_parallel_with_context,
+    };
 
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
     let context = SearchContext::new(config);
 
-    // OOM-safety gate: run a sequential bounded generation to check whether the
+    // OOM-safety gate: do a sequential count-only preflight to check whether the
     // search space fits in memory before committing to the parallel run.
-    if generate_all_with_limit_and_context(
+    if count_expressions_with_limit_and_context(
         gen_config,
         config.target,
         &context.eval,

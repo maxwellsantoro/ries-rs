@@ -121,6 +121,10 @@ pub mod constants {
 /// This matches original `sinpi(x) = sin(πx)` semantics.
 pub const DEFAULT_TRIG_ARGUMENT_SCALE: f64 = std::f64::consts::PI;
 
+/// Tolerance for snapping default `sinpi/cospi/tanpi` arguments to exact
+/// integer and half-integer values.
+const TRIG_EXACT_ARGUMENT_TOLERANCE: f64 = 1e-12;
+
 /// Explicit evaluation context for a single run.
 ///
 /// This keeps trig scaling and user-defined symbols inside the function
@@ -669,6 +673,55 @@ fn eval_unary(
 ) -> Result<StackEntry, EvalError> {
     use Symbol::*;
 
+    #[inline]
+    fn is_default_trig_scale(scale: f64) -> bool {
+        (scale - DEFAULT_TRIG_ARGUMENT_SCALE).abs() <= f64::EPSILON
+    }
+
+    #[inline]
+    fn rounded_f64_to_i64(rounded: f64) -> Option<i64> {
+        if !rounded.is_finite() {
+            return None;
+        }
+        if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
+            return None;
+        }
+        Some(rounded as i64)
+    }
+
+    #[inline]
+    fn snap_integer(value: f64) -> Option<i64> {
+        let rounded = value.round();
+        if (value - rounded).abs() <= TRIG_EXACT_ARGUMENT_TOLERANCE {
+            rounded_f64_to_i64(rounded)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn snap_half_integer_index(value: f64) -> Option<i64> {
+        let doubled = value * 2.0;
+        let rounded = doubled.round();
+        if (doubled - rounded).abs() > TRIG_EXACT_ARGUMENT_TOLERANCE {
+            return None;
+        }
+        let rounded_i = rounded_f64_to_i64(rounded)?;
+        if rounded_i.rem_euclid(2) == 0 {
+            return None;
+        }
+        Some((rounded_i - 1) / 2)
+    }
+
+    #[inline]
+    fn alternating_sign(n: i64) -> f64 {
+        if n.rem_euclid(2) == 0 {
+            1.0
+        } else {
+            -1.0
+        }
+    }
+
     let (val, deriv, num_type) = match sym {
         // Negation: -a, d(-a)/dx = -da/dx
         Neg => (-a.val, -a.deriv, a.num_type),
@@ -736,27 +789,77 @@ fn eval_unary(
 
         // sin(π*a), d(sin(πa))/dx = π*cos(πa)*da/dx
         SinPi => {
-            let val = (trig_argument_scale * a.val).sin();
-            let deriv = trig_argument_scale * (trig_argument_scale * a.val).cos() * a.deriv;
-            (val, deriv, NumType::Transcendental)
+            if is_default_trig_scale(trig_argument_scale) {
+                if let Some(n) = snap_integer(a.val) {
+                    (
+                        0.0,
+                        trig_argument_scale * alternating_sign(n) * a.deriv,
+                        NumType::Transcendental,
+                    )
+                } else if let Some(n) = snap_half_integer_index(a.val) {
+                    (alternating_sign(n), 0.0, NumType::Transcendental)
+                } else {
+                    let val = (trig_argument_scale * a.val).sin();
+                    let deriv = trig_argument_scale * (trig_argument_scale * a.val).cos() * a.deriv;
+                    (val, deriv, NumType::Transcendental)
+                }
+            } else {
+                let val = (trig_argument_scale * a.val).sin();
+                let deriv = trig_argument_scale * (trig_argument_scale * a.val).cos() * a.deriv;
+                (val, deriv, NumType::Transcendental)
+            }
         }
 
         // cos(π*a), d(cos(πa))/dx = -π*sin(πa)*da/dx
         CosPi => {
-            let val = (trig_argument_scale * a.val).cos();
-            let deriv = -trig_argument_scale * (trig_argument_scale * a.val).sin() * a.deriv;
-            (val, deriv, NumType::Transcendental)
+            if is_default_trig_scale(trig_argument_scale) {
+                if let Some(n) = snap_integer(a.val) {
+                    (alternating_sign(n), 0.0, NumType::Transcendental)
+                } else if let Some(n) = snap_half_integer_index(a.val) {
+                    (
+                        0.0,
+                        -trig_argument_scale * alternating_sign(n) * a.deriv,
+                        NumType::Transcendental,
+                    )
+                } else {
+                    let val = (trig_argument_scale * a.val).cos();
+                    let deriv =
+                        -trig_argument_scale * (trig_argument_scale * a.val).sin() * a.deriv;
+                    (val, deriv, NumType::Transcendental)
+                }
+            } else {
+                let val = (trig_argument_scale * a.val).cos();
+                let deriv = -trig_argument_scale * (trig_argument_scale * a.val).sin() * a.deriv;
+                (val, deriv, NumType::Transcendental)
+            }
         }
 
         // tan(π*a), d(tan(πa))/dx = π*sec²(πa)*da/dx
         TanPi => {
-            let cos_val = (trig_argument_scale * a.val).cos();
-            if cos_val.abs() < 1e-10 {
-                return Err(EvalError::Overflow);
+            if is_default_trig_scale(trig_argument_scale) {
+                if snap_half_integer_index(a.val).is_some() {
+                    return Err(EvalError::Overflow);
+                }
+                if snap_integer(a.val).is_some() {
+                    (0.0, trig_argument_scale * a.deriv, NumType::Transcendental)
+                } else {
+                    let cos_val = (trig_argument_scale * a.val).cos();
+                    if cos_val.abs() < 1e-10 {
+                        return Err(EvalError::Overflow);
+                    }
+                    let val = (trig_argument_scale * a.val).tan();
+                    let deriv = trig_argument_scale * a.deriv / (cos_val * cos_val);
+                    (val, deriv, NumType::Transcendental)
+                }
+            } else {
+                let cos_val = (trig_argument_scale * a.val).cos();
+                if cos_val.abs() < 1e-10 {
+                    return Err(EvalError::Overflow);
+                }
+                let val = (trig_argument_scale * a.val).tan();
+                let deriv = trig_argument_scale * a.deriv / (cos_val * cos_val);
+                (val, deriv, NumType::Transcendental)
             }
-            let val = (trig_argument_scale * a.val).tan();
-            let deriv = trig_argument_scale * a.deriv / (cos_val * cos_val);
-            (val, deriv, NumType::Transcendental)
         }
 
         // Lambert W function (principal branch)
@@ -1120,6 +1223,65 @@ mod tests {
         // W(e) = 1
         let w = lambert_w(constants::E).unwrap();
         assert!((w - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_sinpi_snaps_exact_integer_and_half_integer_arguments() {
+        let integer_expr = Expression::parse("xS").unwrap();
+        let integer_result = evaluate(&integer_expr, 1.0).unwrap();
+        assert_eq!(integer_result.value, 0.0);
+        assert!(approx_eq(integer_result.derivative, -constants::PI));
+
+        let half_integer_expr = Expression::parse("12/S").unwrap();
+        let half_integer_result = evaluate(&half_integer_expr, 0.0).unwrap();
+        assert_eq!(half_integer_result.value, 1.0);
+        assert_eq!(half_integer_result.derivative, 0.0);
+    }
+
+    #[test]
+    fn test_cospi_snaps_exact_integer_and_half_integer_arguments() {
+        let integer_expr = Expression::parse("xC").unwrap();
+        let integer_result = evaluate(&integer_expr, 1.0).unwrap();
+        assert_eq!(integer_result.value, -1.0);
+        assert_eq!(integer_result.derivative, 0.0);
+
+        let half_integer_expr = Expression::parse("xC").unwrap();
+        let half_integer_result = evaluate(&half_integer_expr, 0.5).unwrap();
+        assert_eq!(half_integer_result.value, 0.0);
+        assert!(approx_eq(half_integer_result.derivative, -constants::PI));
+    }
+
+    #[test]
+    fn test_tanpi_snaps_exact_integer_and_half_integer_arguments() {
+        let integer_expr = Expression::parse("xT").unwrap();
+        let integer_result = evaluate(&integer_expr, 1.0).unwrap();
+        assert_eq!(integer_result.value, 0.0);
+        assert!(approx_eq(integer_result.derivative, constants::PI));
+
+        let half_integer_expr = Expression::parse("12/T").unwrap();
+        assert!(matches!(
+            evaluate(&half_integer_expr, 0.0),
+            Err(EvalError::Overflow)
+        ));
+    }
+
+    #[test]
+    fn test_custom_trig_argument_scale_preserves_raw_trig_behavior() {
+        let expr = Expression::parse("xS").unwrap();
+        let context = EvalContext::new().with_trig_argument_scale(1.0);
+        let result = evaluate_with_context(&expr, 1.0, &context).unwrap();
+
+        assert!(approx_eq(result.value, 1.0_f64.sin()));
+        assert!(approx_eq(result.derivative, 1.0_f64.cos()));
+    }
+
+    #[test]
+    fn test_exact_trig_zero_rejects_pathological_negative_power_branch() {
+        let expr = Expression::parse("1Sxn^S").unwrap();
+        assert!(matches!(
+            evaluate(&expr, 2.506314),
+            Err(EvalError::SqrtDomain)
+        ));
     }
 
     #[test]

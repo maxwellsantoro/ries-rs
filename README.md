@@ -174,9 +174,13 @@ for end-to-end CLI runs and generation-only scaling:
 
 - End-to-end CLI baseline:
   [`docs/benchmarks/2026-03-20-level3-baseline.md`](docs/benchmarks/2026-03-20-level3-baseline.md)
-  captures the newer search heuristics metrics on the published level-3
-  workload; on that run, matching/Newton still dominates and the parallel path
-  was slower than the deterministic sequential baseline (`0.818x` observed speedup).
+  captures the current level-3 workload; after tightening the adaptive search
+  radius and snapping exact default-scale trig singularities, the candidate
+  scan set dropped to about `8.1M` pairs. The current parallel CLI path is
+  still near break-even on this workload (`0.996x`) because generation is
+  parallelized but the dominant batch matching/Newton phase remains serial;
+  the newer count-only preflight does, however, cut parallel peak RSS
+  substantially.
 - Generation-only scaling:
   [`docs/benchmarks/2026-02-25-generation-parallel-scaling.md`](docs/benchmarks/2026-02-25-generation-parallel-scaling.md)
   reports `3.18x` median speedup for parallel generation.

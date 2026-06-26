@@ -8,8 +8,8 @@ use crate::pool::TopKPool;
 use crate::thresholds::{
     ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
     BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_RANGE_TOLERANCE, DEGENERATE_TEST_THRESHOLD,
-    EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR, NEWTON_FINAL_TOLERANCE, TIER_0_MAX,
-    TIER_1_MAX, TIER_2_MAX,
+    EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR, NEWTON_FINAL_TOLERANCE,
+    STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
 };
 
 /// Database for storing expressions sorted by value
@@ -233,6 +233,7 @@ pub(super) fn calculate_adaptive_search_radius(
     pool_size: usize,
     pool_capacity: usize,
     best_error: f64,
+    accept_error: f64,
 ) -> f64 {
     let deriv_abs = derivative.abs();
 
@@ -262,11 +263,25 @@ pub(super) fn calculate_adaptive_search_radius(
     // Combined radius
     let radius = base_radius * complexity_factor * pool_factor * exact_factor;
 
+    // Cap the scan radius by the same coarse-error envelope that the pool gate
+    // already enforces. Candidates outside this bound are guaranteed to be
+    // rejected before Newton, so scanning them only inflates candidate windows.
+    let gate_factor = if pool_capacity > 0
+        && pool_size as f64 >= pool_capacity as f64 * STRICT_GATE_CAPACITY_FRACTION
+    {
+        STRICT_GATE_FACTOR
+    } else {
+        1.0
+    };
+    let coarse_error_cap = accept_error.max(NEWTON_FINAL_TOLERANCE) * gate_factor;
+    let gated_radius_cap = deriv_abs * coarse_error_cap;
+
     // Ensure we have a reasonable minimum and cap at maximum
     let min_radius = 0.1 * deriv_abs; // At least 0.1 * derivative
     radius
         .max(min_radius)
         .min(MAX_SEARCH_RADIUS_FACTOR * deriv_abs)
+        .min(gated_radius_cap)
 }
 
 impl ExprDatabase {
@@ -409,7 +424,7 @@ impl ExprDatabase {
 
                 stats.lhs_tested += 1;
                 let rhs_slice = self.range(low, high);
-                stats.record_candidate_window(rhs_slice.len());
+                stats.record_candidate_window(lhs, rhs_slice.len());
                 for rhs in rhs_slice {
                     if !config.rhs_symbol_allowed(&rhs.expr) {
                         continue;
@@ -446,12 +461,13 @@ impl ExprDatabase {
                 pool.len(),
                 config.max_matches,
                 pool.best_error,
+                pool.accept_error,
             );
             let low = lhs.value - search_radius;
             let high = lhs.value + search_radius;
 
             let rhs_slice = self.range(low, high);
-            stats.record_candidate_window(rhs_slice.len());
+            stats.record_candidate_window(lhs, rhs_slice.len());
             for rhs in rhs_slice {
                 if !config.rhs_symbol_allowed(&rhs.expr) {
                     continue;
@@ -570,5 +586,34 @@ impl ExprDatabase {
 impl Default for ExprDatabase {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adaptive_radius_is_capped_by_accept_error() {
+        let derivative = 10.0;
+        let radius = calculate_adaptive_search_radius(derivative, 10, 0, 16, 1.0, 1e-3);
+
+        assert!(
+            (radius - 0.01).abs() < 1e-12,
+            "radius should be capped by derivative * accept_error"
+        );
+    }
+
+    #[test]
+    fn test_adaptive_radius_uses_strict_gate_cap_when_pool_is_full() {
+        let derivative = 100.0;
+        let accept_error = 0.02;
+        let radius = calculate_adaptive_search_radius(derivative, 10, 16, 16, 1.0, accept_error);
+
+        let expected_cap = derivative * accept_error * STRICT_GATE_FACTOR;
+        assert!(
+            (radius - expected_cap).abs() < 1e-12,
+            "strict-gate fullness should tighten the scan radius cap"
+        );
     }
 }

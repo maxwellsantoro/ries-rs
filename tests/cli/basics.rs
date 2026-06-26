@@ -110,6 +110,25 @@ fn test_json_output_is_valid_and_machine_readable() {
         parsed["search_stats"]["candidate_window_max"].is_u64(),
         "candidate_window_max should be an integer"
     );
+    let search_stats = &parsed["search_stats"];
+    if let Some(v) = search_stats.get("candidate_window_max_lhs_postfix") {
+        assert!(v.is_string(), "candidate_window_max_lhs_postfix should be a string");
+    }
+    if let Some(v) = search_stats.get("candidate_window_max_lhs_value") {
+        assert!(v.is_number(), "candidate_window_max_lhs_value should be numeric");
+    }
+    if let Some(v) = search_stats.get("candidate_window_max_lhs_derivative") {
+        assert!(
+            v.is_number(),
+            "candidate_window_max_lhs_derivative should be numeric"
+        );
+    }
+    if let Some(v) = search_stats.get("candidate_window_max_lhs_complexity") {
+        assert!(
+            v.is_u64(),
+            "candidate_window_max_lhs_complexity should be an integer"
+        );
+    }
     assert!(
         parsed["search_stats"]["strict_gate_rejections"].is_u64(),
         "strict_gate_rejections should be an integer"

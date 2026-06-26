@@ -156,15 +156,36 @@ Status:
 - Reproducible artifact capture now exists via
   `scripts/capture_search_benchmark.py`, which writes environment metadata,
   raw JSON outputs, and a generated Markdown summary for benchmark notes.
-- Remaining work is analysis of those captured runs and any heuristic retuning
-  that the new measurements justify.
+- The first measurement-backed heuristic change is now in place: adaptive
+  search radius is capped by the same coarse-error envelope already enforced by
+  the pool gate, which materially reduced candidate scans in the refreshed
+  level-3 baseline.
+- A follow-up evaluator fix now snaps exact default-scale `sinpi/cospi/tanpi`
+  arguments at integers and half-integers, which removed the pathological
+  `1Sxn^S` outlier and cut the candidate scan set in the published level-3
+  benchmark from roughly `66.1M` pairs to `8.1M`.
+- The widest remaining scan window in the refreshed baseline is now on
+  `x6s^T`, which appears to be a real high-derivative expression rather than an
+  exact-trig artifact.
+- The parallel batch path now uses a count-only OOM preflight instead of a full
+  sequential bounded-generation pass, which materially lowers parallel peak RSS
+  on the published benchmark.
+- Remaining work is analysis of whether surviving large-window expressions like
+  `x6s^T` justify any additional coarse-admission or window-sizing retuning,
+  plus separate investigation of whether more of the batch matcher can be
+  parallelized. The current benchmark remains near break-even because the
+  dominant LHS/RHS matching and Newton phases are still serial.
 
 ### 8. Quantization follow-up
 
-- Keep current quantization for now.
-- Add collision-focused property tests near the 1e-8 resolution boundary.
-- Remove duplicate `QUANTIZE_SCALE` definitions so there is one source of
-  truth.
+- Keep current quantization policy for now.
+- `QUANTIZE_SCALE` is now centralized, with the numeric scale defined in
+  `src/thresholds.rs` and quantization behavior applied through
+  `gen::quantize_value()`.
+- Collision-focused boundary coverage is now in place around the effective
+  `1e-8` resolution via bucket-edge tests in `src/gen.rs`.
+- Remaining quantization follow-up is only higher-cost collision analysis if a
+  real workload shows harmful near-boundary dedupe loss.
 
 ### 9. Browser responsiveness
 

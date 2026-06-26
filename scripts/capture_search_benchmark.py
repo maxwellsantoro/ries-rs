@@ -175,6 +175,17 @@ def summary_row(label: str, payload: dict) -> list[str]:
     ]
 
 
+def widest_window_lines(label: str, payload: dict) -> list[str]:
+    stats = payload.get("search_stats", {})
+    lhs = stats.get("candidate_window_max_lhs_postfix")
+    if not lhs:
+        return []
+    return [
+        f"- {label} widest-window LHS: `{lhs}`",
+        f"  value={format_num(stats.get('candidate_window_max_lhs_value'))}, derivative={format_num(stats.get('candidate_window_max_lhs_derivative'))}, complexity={format_num(stats.get('candidate_window_max_lhs_complexity'), 0)}",
+    ]
+
+
 def write_summary(
     summary_path: Path,
     report_name: str,
@@ -229,6 +240,15 @@ def write_summary(
                     f"Observed speedup (sequential deterministic / parallel): **{seq_elapsed / par_elapsed:.3f}x**",
                 ]
             )
+
+    widest_lines: list[str] = []
+    if sequential_payload is not None:
+        widest_lines.extend(widest_window_lines("Sequential", sequential_payload))
+    if parallel_payload is not None:
+        widest_lines.extend(widest_window_lines("Parallel", parallel_payload))
+    if widest_lines:
+        lines.extend(["", "## Widest Window", ""])
+        lines.extend(widest_lines)
 
     lines.extend(
         [

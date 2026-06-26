@@ -530,6 +530,46 @@ pub fn quantize_value(v: f64) -> i64 {
     (v * QUANTIZE_SCALE).round() as i64
 }
 
+fn dedupe_rhs_expressions(rhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
+    use std::collections::hash_map::Entry;
+
+    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
+    for expr in rhs_raw {
+        let key = quantize_value(expr.value);
+        match rhs_map.entry(key) {
+            Entry::Occupied(mut slot) => {
+                if expr.expr.complexity() < slot.get().expr.complexity() {
+                    *slot.get_mut() = expr;
+                }
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(expr);
+            }
+        }
+    }
+    rhs_map.into_values().collect()
+}
+
+fn dedupe_lhs_expressions(lhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
+    use std::collections::hash_map::Entry;
+
+    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
+    for expr in lhs_raw {
+        let key = (quantize_value(expr.value), quantize_value(expr.derivative));
+        match lhs_map.entry(key) {
+            Entry::Occupied(mut slot) => {
+                if expr.expr.complexity() < slot.get().expr.complexity() {
+                    *slot.get_mut() = expr;
+                }
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(expr);
+            }
+        }
+    }
+    lhs_map.into_values().collect()
+}
+
 /// Generate all valid expressions up to the configured limits
 pub fn generate_all(config: &GenConfig, target: f64) -> GeneratedExprs {
     generate_all_with_context(
@@ -588,36 +628,9 @@ pub fn generate_all_with_context(
     }
 
     // Deduplicate RHS by value, keeping simplest expression for each value
-    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
-    for expr in rhs_raw {
-        let key = quantize_value(expr.value);
-        rhs_map
-            .entry(key)
-            .and_modify(|existing| {
-                if expr.expr.complexity() < existing.expr.complexity() {
-                    *existing = expr.clone();
-                }
-            })
-            .or_insert(expr);
-    }
-
-    // Deduplicate LHS by (value, derivative), keeping simplest expression
-    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
-    for expr in lhs_raw {
-        let key = (quantize_value(expr.value), quantize_value(expr.derivative));
-        lhs_map
-            .entry(key)
-            .and_modify(|existing| {
-                if expr.expr.complexity() < existing.expr.complexity() {
-                    *existing = expr.clone();
-                }
-            })
-            .or_insert(expr);
-    }
-
     GeneratedExprs {
-        lhs: lhs_map.into_values().collect(),
-        rhs: rhs_map.into_values().collect(),
+        lhs: dedupe_lhs_expressions(lhs_raw),
+        rhs: dedupe_rhs_expressions(rhs_raw),
     }
 }
 
@@ -698,35 +711,9 @@ pub fn generate_all_with_limit_and_context(
     }
 
     // Deduplicate (same logic as generate_all)
-    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
-    for expr in rhs_raw {
-        let key = quantize_value(expr.value);
-        rhs_map
-            .entry(key)
-            .and_modify(|existing| {
-                if expr.expr.complexity() < existing.expr.complexity() {
-                    *existing = expr.clone();
-                }
-            })
-            .or_insert(expr);
-    }
-
-    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
-    for expr in lhs_raw {
-        let key = (quantize_value(expr.value), quantize_value(expr.derivative));
-        lhs_map
-            .entry(key)
-            .and_modify(|existing| {
-                if expr.expr.complexity() < existing.expr.complexity() {
-                    *existing = expr.clone();
-                }
-            })
-            .or_insert(expr);
-    }
-
     Some(GeneratedExprs {
-        lhs: lhs_map.into_values().collect(),
-        rhs: rhs_map.into_values().collect(),
+        lhs: dedupe_lhs_expressions(lhs_raw),
+        rhs: dedupe_rhs_expressions(rhs_raw),
     })
 }
 
@@ -820,6 +807,39 @@ pub fn generate_streaming_with_context(
             0, // current stack depth
             callbacks,
         );
+    }
+}
+
+/// Count generated expressions with an early-abort limit using streaming callbacks.
+///
+/// Returns `Some(count)` when generation completes within the limit, or `None`
+/// as soon as the count exceeds `max_expressions`.
+pub fn count_expressions_with_limit_and_context(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+    max_expressions: usize,
+) -> Option<usize> {
+    let count = std::cell::Cell::new(0usize);
+    let mut callbacks = StreamingCallbacks {
+        on_lhs: &mut |_expr| {
+            let next = count.get() + 1;
+            count.set(next);
+            next <= max_expressions
+        },
+        on_rhs: &mut |_expr| {
+            let next = count.get() + 1;
+            count.set(next);
+            next <= max_expressions
+        },
+    };
+
+    generate_streaming_with_context(config, target, eval_context, &mut callbacks);
+
+    if count.get() > max_expressions {
+        None
+    } else {
+        Some(count.get())
     }
 }
 
@@ -1645,42 +1665,16 @@ pub fn generate_all_parallel_with_context(
     }
 
     // Deduplicate RHS by value, keeping simplest expression for each value
-    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
-    for expr in rhs_raw {
-        let key = quantize_value(expr.value);
-        rhs_map
-            .entry(key)
-            .and_modify(|existing| {
-                if expr.expr.complexity() < existing.expr.complexity() {
-                    *existing = expr.clone();
-                }
-            })
-            .or_insert(expr);
-    }
-
-    // Deduplicate LHS by (value, derivative), keeping simplest expression
-    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
-    for expr in lhs_raw {
-        let key = (quantize_value(expr.value), quantize_value(expr.derivative));
-        lhs_map
-            .entry(key)
-            .and_modify(|existing| {
-                if expr.expr.complexity() < existing.expr.complexity() {
-                    *existing = expr.clone();
-                }
-            })
-            .or_insert(expr);
-    }
-
     GeneratedExprs {
-        lhs: lhs_map.into_values().collect(),
-        rhs: rhs_map.into_values().collect(),
+        lhs: dedupe_lhs_expressions(lhs_raw),
+        rhs: dedupe_rhs_expressions(rhs_raw),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     /// Create a fast test config with limited complexity and operators
     fn fast_test_config() -> GenConfig {
@@ -1711,6 +1705,19 @@ mod tests {
             user_functions: Vec::new(),
             show_pruned_arith: false,
             symbol_table: Arc::new(SymbolTable::new()),
+        }
+    }
+
+    fn expr_from_postfix(s: &str) -> Expression {
+        Expression::parse(s).expect("valid expression")
+    }
+
+    fn stub_eval_expr(postfix: &str, value: f64, derivative: f64) -> EvaluatedExpr {
+        EvaluatedExpr {
+            expr: expr_from_postfix(postfix),
+            value,
+            derivative,
+            num_type: NumType::Transcendental,
         }
     }
 
@@ -1808,10 +1815,113 @@ mod tests {
         assert!(!generated.lhs.is_empty() || !generated.rhs.is_empty());
     }
 
+    #[test]
+    fn test_count_expressions_with_limit_matches_generated_total() {
+        let mut config = fast_test_config();
+        config.max_lhs_complexity = 30;
+        config.max_rhs_complexity = 30;
+
+        let context = EvalContext::from_slices(&config.user_constants, &config.user_functions);
+        let total_generated = std::cell::Cell::new(0usize);
+        let mut callbacks = StreamingCallbacks {
+            on_lhs: &mut |_expr| {
+                total_generated.set(total_generated.get() + 1);
+                true
+            },
+            on_rhs: &mut |_expr| {
+                total_generated.set(total_generated.get() + 1);
+                true
+            },
+        };
+        generate_streaming_with_context(&config, 2.5, &context, &mut callbacks);
+        let counted = count_expressions_with_limit_and_context(
+            &config,
+            2.5,
+            &context,
+            total_generated.get() + 1,
+        );
+
+        assert_eq!(counted, Some(total_generated.get()));
+    }
+
+    #[test]
+    fn test_count_expressions_with_limit_returns_none_when_exceeded() {
+        let mut config = fast_test_config();
+        config.max_lhs_complexity = 30;
+        config.max_rhs_complexity = 30;
+
+        let context = EvalContext::from_slices(&config.user_constants, &config.user_functions);
+        let total_generated = std::cell::Cell::new(0usize);
+        let mut callbacks = StreamingCallbacks {
+            on_lhs: &mut |_expr| {
+                total_generated.set(total_generated.get() + 1);
+                true
+            },
+            on_rhs: &mut |_expr| {
+                total_generated.set(total_generated.get() + 1);
+                true
+            },
+        };
+        generate_streaming_with_context(&config, 2.5, &context, &mut callbacks);
+        let counted = count_expressions_with_limit_and_context(
+            &config,
+            2.5,
+            &context,
+            total_generated.get() / 2,
+        );
+
+        assert_eq!(counted, None);
+    }
+
     // ==================== expression_respects_constraints tests ====================
 
-    fn expr_from_postfix(s: &str) -> Expression {
-        Expression::parse(s).expect("valid expression")
+    #[test]
+    fn test_quantize_value_signed_boundary_symmetry_around_zero() {
+        let below = 0.49 / QUANTIZE_SCALE;
+        let above = 0.51 / QUANTIZE_SCALE;
+
+        assert_eq!(quantize_value(below), 0);
+        assert_eq!(quantize_value(-below), 0);
+        assert_eq!(quantize_value(above), 1);
+        assert_eq!(quantize_value(-above), -1);
+    }
+
+    #[test]
+    fn test_dedupe_rhs_keeps_simplest_expression_within_quantized_bucket() {
+        let base = 2.0;
+        let rhs = dedupe_rhs_expressions(vec![
+            stub_eval_expr("11+", base + 0.49 / QUANTIZE_SCALE, 0.0),
+            stub_eval_expr("2", base, 0.0),
+        ]);
+
+        assert_eq!(rhs.len(), 1);
+        assert_eq!(rhs[0].expr.to_postfix(), "2");
+    }
+
+    #[test]
+    fn test_dedupe_lhs_preserves_adjacent_derivative_buckets() {
+        let lhs = dedupe_lhs_expressions(vec![
+            stub_eval_expr("x", 1.0, 1.0),
+            stub_eval_expr("x1+", 1.0, 1.0 + 0.51 / QUANTIZE_SCALE),
+        ]);
+
+        assert_eq!(lhs.len(), 2);
+    }
+
+    proptest! {
+        #[test]
+        fn test_quantize_value_collapses_values_within_same_bucket(bucket in -1_000_000i64..1_000_000i64) {
+            let base = bucket as f64 / QUANTIZE_SCALE;
+            prop_assert_eq!(quantize_value(base + 0.49 / QUANTIZE_SCALE), bucket);
+            prop_assert_eq!(quantize_value(base - 0.49 / QUANTIZE_SCALE), bucket);
+        }
+
+        #[test]
+        fn test_quantize_value_separates_adjacent_buckets(bucket in -1_000_000i64..1_000_000i64) {
+            let base = bucket as f64 / QUANTIZE_SCALE;
+            prop_assert_eq!(quantize_value(base + 0.51 / QUANTIZE_SCALE), bucket + 1);
+            prop_assert_eq!(quantize_value(base - 0.51 / QUANTIZE_SCALE), bucket - 1);
+        }
     }
 
     #[test]

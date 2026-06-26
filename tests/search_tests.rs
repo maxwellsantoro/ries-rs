@@ -307,6 +307,48 @@ fn test_batch_and_streaming_agree_on_top_match_for_pi() {
 }
 
 #[test]
+fn test_batch_and_streaming_agree_on_first_five_matches_for_pi() {
+    let config = fast_config();
+    let search_config = SearchConfig {
+        target: std::f64::consts::PI,
+        max_matches: 10,
+        user_constants: config.user_constants.clone(),
+        user_functions: config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (batch_matches, _batch_stats) = search_with_stats_and_config(&config, &search_config);
+    let (streaming_matches, _streaming_stats) =
+        search_streaming_with_config(&config, &search_config);
+
+    let batch_pairs: Vec<_> = batch_matches
+        .iter()
+        .take(5)
+        .map(|m| (m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()))
+        .collect();
+    let streaming_pairs: Vec<_> = streaming_matches
+        .iter()
+        .take(5)
+        .map(|m| (m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()))
+        .collect();
+
+    assert_eq!(
+        batch_pairs.len(),
+        5,
+        "expected at least five batch matches for pi"
+    );
+    assert_eq!(
+        streaming_pairs.len(),
+        5,
+        "expected at least five streaming matches for pi"
+    );
+    assert_eq!(
+        batch_pairs, streaming_pairs,
+        "batch and streaming should agree on the first five pi matches"
+    );
+}
+
+#[test]
 fn test_search_stats_report_window_and_acceptance_metrics() {
     let config = fast_config();
     let search_config = SearchConfig {
@@ -333,6 +375,16 @@ fn test_search_stats_report_window_and_acceptance_metrics() {
         assert!(
             stats.candidate_window_max > 0,
             "expected at least one non-empty candidate window"
+        );
+        assert!(
+            stats.candidate_window_max_lhs_postfix.is_some(),
+            "expected max-window LHS details to be recorded"
+        );
+        assert!(
+            stats.candidate_window_max_lhs_value.is_some()
+                && stats.candidate_window_max_lhs_derivative.is_some()
+                && stats.candidate_window_max_lhs_complexity.is_some(),
+            "expected max-window numeric context to be recorded"
         );
         assert!(
             stats.candidate_window_avg() > 0.0,
@@ -417,6 +469,52 @@ fn test_user_constant_in_search() {
     assert!(
         has_user_constant_match,
         "Should find x = u0 as match for user constant value"
+    );
+}
+
+#[test]
+fn test_batch_and_streaming_agree_on_user_constant_top_match() {
+    let user_constants = vec![UserConstant {
+        weight: 4,
+        name: "g".to_string(),
+        description: "test constant".to_string(),
+        value: 0.57721,
+        num_type: NumType::Transcendental,
+    }];
+
+    let mut config = fast_config();
+    config.user_constants = user_constants.clone();
+    config.constants.push(Symbol::UserConstant0);
+
+    let search_config = SearchConfig {
+        target: 0.57721,
+        max_matches: 10,
+        user_constants,
+        user_functions: config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (batch_matches, _batch_stats) = search_with_stats_and_config(&config, &search_config);
+    let (streaming_matches, _streaming_stats) =
+        search_streaming_with_config(&config, &search_config);
+
+    assert!(
+        !batch_matches.is_empty() && !streaming_matches.is_empty(),
+        "expected both search paths to find user-constant matches"
+    );
+
+    let batch_top = (
+        batch_matches[0].lhs.expr.to_postfix(),
+        batch_matches[0].rhs.expr.to_postfix(),
+    );
+    let streaming_top = (
+        streaming_matches[0].lhs.expr.to_postfix(),
+        streaming_matches[0].rhs.expr.to_postfix(),
+    );
+
+    assert_eq!(
+        batch_top, streaming_top,
+        "batch and streaming should agree on the top user-constant match"
     );
 }
 

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Widest candidate-window diagnostics in JSON output and search stats, recording the
+  LHS expression that produced the maximum RHS scan window
+- Level-3 benchmark baseline artifacts dated 2026-03-20
+
+### Changed
+- **Breaking:** `SearchStats::record_candidate_window` now takes the LHS
+  `EvaluatedExpr` plus window width (was width only) so widest-window diagnostics
+  can be attributed to a specific expression
+- Adaptive search radius is capped by the pool strict-gate coarse-error envelope,
+  matching `would_accept_strict` value-space bounds; batch and streaming paths now
+  share the same radius logic
+- Parallel generation OOM preflight uses count-only streaming instead of cloning
+  full expression sets, reducing peak RSS during large runs
+- `sinpi`/`cospi`/`tanpi` at default π scale snap arguments within `1e-12` of
+  integers or half-integers to exact values and derivatives, removing pathological
+  near-singular artifacts (e.g. `1Sxn^S`) but also shifting which equations rank
+  highly; refreshed level-3 baselines show fewer Newton calls and a lower Newton
+  success rate (~92% → ~73%) alongside far fewer candidate pairs scanned
+  (~66M → ~8M)
+- Optional widest-window JSON fields are omitted when no window has been recorded
+  (`#[serde(skip_serializing_if = "Option::is_none")]`)
+
+### Fixed
+- Expression deduplication during generation no longer clones when replacing a
+  duplicate with a simpler expression in the same quantized bucket
+- Trig argument snapping guards `f64`→`i64` conversion against out-of-range values
+
 ## [1.1.1] - 2026-03-18
 
 ### Added

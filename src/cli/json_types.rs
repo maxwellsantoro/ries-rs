@@ -63,6 +63,14 @@ pub struct JsonSearchStats {
     pub candidate_window_total: usize,
     pub candidate_window_avg: f64,
     pub candidate_window_max: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_window_max_lhs_postfix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_window_max_lhs_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_window_max_lhs_derivative: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_window_max_lhs_complexity: Option<u32>,
     pub strict_gate_rejections: usize,
     pub candidates_per_pool_insertion: f64,
     pub newton_calls: usize,
@@ -231,6 +239,10 @@ pub fn build_json_output(
             candidate_window_total: stats.candidate_window_total,
             candidate_window_avg: stats.candidate_window_avg(),
             candidate_window_max: stats.candidate_window_max,
+            candidate_window_max_lhs_postfix: stats.candidate_window_max_lhs_postfix.clone(),
+            candidate_window_max_lhs_value: stats.candidate_window_max_lhs_value,
+            candidate_window_max_lhs_derivative: stats.candidate_window_max_lhs_derivative,
+            candidate_window_max_lhs_complexity: stats.candidate_window_max_lhs_complexity,
             strict_gate_rejections: stats.strict_gate_rejections,
             candidates_per_pool_insertion: stats.candidates_per_pool_insertion(),
             newton_calls: stats.newton_calls,

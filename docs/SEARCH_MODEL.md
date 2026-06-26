@@ -75,7 +75,7 @@ The engine generates candidate expressions up to complexity limits, evaluates th
 Search implementations:
 
 - sequential: `search_with_stats_and_config`
-- parallel: `search_parallel_with_stats_and_config`
+- parallel: `search_parallel_with_stats_and_config` (parallel generation, serial batch matching/Newton)
 - streaming: `search_streaming_with_config`
 - one-sided: `search_one_sided_with_stats_and_config`
 
