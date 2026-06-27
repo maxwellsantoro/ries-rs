@@ -1458,6 +1458,14 @@ pub fn search_parallel_with_stats_and_config(
         return (Vec::new(), SearchStats::default());
     }
 
+    // Parallel generation does not preserve the sequential expression order.
+    // A first-hit stop would therefore select a different match even though
+    // this mode promises byte-identical results. Use the sequential pipeline
+    // whenever the requested result depends on discovery order.
+    if config.stop_at_exact || config.stop_below.is_some() {
+        return search_with_stats_and_config(gen_config, config);
+    }
+
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 2_000_000;
     let context = SearchContext::new(config);
 
@@ -1509,6 +1517,16 @@ pub fn search_turbo_with_stats_and_config(
 
     if !config.target.is_finite() {
         return (Vec::new(), SearchStats::default());
+    }
+
+    // A first-hit stopping condition is inherently order-dependent. Letting
+    // each turbo band stop at its own first qualifying match can skip a better
+    // match in that band (or in another band), violating turbo's rank-1 parity
+    // guarantee. Preserve both the requested stopping semantics and canonical
+    // result ordering by using the parallel-generation, serial-matching search
+    // for these configurations.
+    if config.stop_at_exact || config.stop_below.is_some() {
+        return search_parallel_with_stats_and_config(gen_config, config);
     }
 
     // Turbo trades memory for speed, so it tolerates a much larger materialized

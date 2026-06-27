@@ -200,6 +200,12 @@ What turbo **does not** guarantee:
   but may differ from serial's choice among equally-ranked candidates and may
   vary with thread count.
 
+First-hit stopping options (`--stop-at-exact` and `--stop-below`) are
+order-dependent. When either is active, turbo falls back to the canonical
+serial pipeline rather than applying the stop independently in parallel bands;
+the ordinary parallel-generation path does the same to preserve its
+byte-identical contract.
+
 Turbo also trades memory for speed: it materializes a much larger expression set
 than the streaming fallback (hundreds of MB at level 3), which is what lets the
 match phase run in parallel.

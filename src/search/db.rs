@@ -418,7 +418,10 @@ impl ExprDatabase {
     /// pick among equally-ranked candidates, and it may vary with thread count.
     ///
     /// Bands are processed in ascending complexity, so the per-band
-    /// complexity-ceiling early exit in [`match_one_lhs`] stays valid.
+    /// complexity-ceiling early exit in [`match_one_lhs`] stays valid. Explicit
+    /// first-hit stopping conditions are handled by the serial matcher before
+    /// this matcher is called because they are not safe to apply independently
+    /// in parallel bands.
     #[cfg(feature = "parallel")]
     pub fn find_matches_turbo_with_stats_and_context(
         &self,

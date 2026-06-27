@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-06-27
+
+### Fixed
+- Turbo and parallel-generation searches now fall back to the canonical serial
+  pipeline for order-dependent `--stop-at-exact` and `--stop-below` searches,
+  preventing per-worker early exits from violating rank-one parity
+- Turbo CLI results are canonically sorted before display so the documented
+  best match is always presented at rank one
+
 ## [2.0.0] - 2026-06-26
 
 ### Added

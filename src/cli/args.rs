@@ -125,6 +125,8 @@ pub struct Args {
     /// byte-identical to serial), turbo also runs LHS matching on every core and
     /// uses more memory. It returns the same single best match as serial search,
     /// but the lower-ranked results may differ and may vary with thread count.
+    /// First-hit options such as `--stop-at-exact` fall back to serial search so
+    /// discovery order cannot violate that best-match guarantee.
     /// Use it for raw speed; use `--deterministic` for reproducibility.
     #[arg(long)]
     pub turbo: bool,

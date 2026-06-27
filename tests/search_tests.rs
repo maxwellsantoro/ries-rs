@@ -899,6 +899,58 @@ fn test_turbo_best_match_equals_sequential() {
 
 #[cfg(feature = "parallel")]
 #[test]
+fn test_turbo_stop_at_exact_preserves_sequential_best_match() {
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    let gen_config = fast_config();
+    let search_config = SearchConfig {
+        target: std::f64::consts::FRAC_PI_2,
+        max_matches: 20,
+        stop_at_exact: true,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (sequential, sequential_stats) = search_with_stats_and_config(&gen_config, &search_config);
+    let (turbo, turbo_stats) = search_turbo_with_stats_and_config(&gen_config, &search_config);
+
+    assert_eq!(
+        match_signatures(&sequential),
+        match_signatures(&turbo),
+        "turbo must preserve serial stopping semantics and results"
+    );
+    assert_eq!(sequential_stats.early_exit, turbo_stats.early_exit);
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_turbo_stop_below_preserves_sequential_best_match() {
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    let gen_config = fast_config();
+    let search_config = SearchConfig {
+        target: std::f64::consts::FRAC_PI_2,
+        max_matches: 20,
+        stop_below: Some(1e-10),
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (sequential, sequential_stats) = search_with_stats_and_config(&gen_config, &search_config);
+    let (turbo, turbo_stats) = search_turbo_with_stats_and_config(&gen_config, &search_config);
+
+    assert_eq!(
+        match_signatures(&sequential),
+        match_signatures(&turbo),
+        "turbo must preserve serial threshold-stopping semantics and results"
+    );
+    assert_eq!(sequential_stats.early_exit, turbo_stats.early_exit);
+}
+
+#[cfg(feature = "parallel")]
+#[test]
 fn test_turbo_results_are_valid_refined_matches() {
     use ries_rs::search::search_turbo_with_stats_and_config;
 

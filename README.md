@@ -280,7 +280,7 @@ If you use `ries-rs` in academic work, cite the project version you used.
   author       = {Santoro, Maxwell},
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
-  version      = {2.0.0},
+  version      = {2.0.1},
   url          = {https://maxwellsantoro.com/projects/ries-rs},
   license      = {MIT},
   note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}
@@ -293,7 +293,7 @@ Zenodo concept DOI for the project and its archived releases:
 The latest verified version DOI is for `v1.1.1`:
 `10.5281/zenodo.19101925`
 
-No version DOI is recorded for `v2.0.0` until its Zenodo archive has completed.
+No version DOI is recorded for `v2.0.1` until its Zenodo archive has completed.
 
 Use the concept DOI when you want a stable project-level reference that resolves
 to the latest archived release. Use the version DOI when you need to cite the

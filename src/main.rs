@@ -417,9 +417,10 @@ fn main() {
 
     let mut matches = matches;
 
-    // Deterministic mode: apply stable sorting to ensure reproducible order
-    // This handles any remaining non-determinism from pool ordering
-    if args.deterministic {
+    // Deterministic mode requires stable output throughout. Turbo's contract is
+    // narrower, but it still guarantees that the canonical best match is rank
+    // one, so normalize its merged/fallback result before presenting it.
+    if args.deterministic || args.turbo {
         matches.sort_by(|a, b| pool::compare_matches(a, b, ranking_mode));
     }
 
