@@ -1556,3 +1556,8 @@ fn test_search_adaptive_rejects_non_finite_target() {
         "non-finite targets should return no matches"
     );
 }
+
+#[test]
+fn test_adaptive_target_count_exponent_does_not_overflow() {
+    assert_eq!(super::adaptive_target_count(u32::MAX), usize::MAX);
+}

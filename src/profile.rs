@@ -71,22 +71,22 @@ impl Profile {
         // Try to load from home directory
         if let Some(home) = dirs::home_dir() {
             let home_profile = home.join(".ries_profile");
-            if home_profile.exists() {
-                if let Ok(p) = Self::from_file(&home_profile) {
-                    profile = profile.merge(p)?;
-                }
-            }
+            profile = Self::merge_if_exists(profile, &home_profile)?;
         }
 
         // Try to load from current directory
         let local_profile = PathBuf::from(".ries");
-        if local_profile.exists() {
-            if let Ok(p) = Self::from_file(&local_profile) {
-                profile = profile.merge(p)?;
-            }
-        }
+        profile = Self::merge_if_exists(profile, &local_profile)?;
 
         Ok(profile)
+    }
+
+    fn merge_if_exists(profile: Profile, path: &Path) -> Result<Profile, ProfileError> {
+        if !path.exists() {
+            return Ok(profile);
+        }
+
+        profile.merge(Self::from_file(path)?)
     }
 
     /// Add a validated user constant to this profile.
@@ -530,6 +530,30 @@ impl std::error::Error for ProfileError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_profile_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ries-rs-profile-test-{}-{}-{}.ries",
+            std::process::id(),
+            name,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should follow Unix epoch")
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn test_default_profile_merge_propagates_parse_errors() {
+        let path = temp_profile_path("invalid");
+        fs::write(&path, r#"-X "4:broken""#).expect("write invalid profile");
+
+        let result = Profile::merge_if_exists(Profile::new(), &path);
+        let _ = fs::remove_file(&path);
+
+        let err = result.expect_err("invalid default profile should not be ignored");
+        assert!(matches!(err, ProfileError::ParseError(_, 1, _)));
+    }
 
     #[test]
     fn test_parse_user_constant() {

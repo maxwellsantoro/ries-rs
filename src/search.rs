@@ -790,7 +790,7 @@ pub fn search_adaptive(
 
     // Target expression count: 2000 × 4^(2 + level)
     // Level 0 ≈ 32 K, level 1 ≈ 128 K, level 2 ≈ 512 K, level 3 ≈ 2 M
-    let target_count = 2000_usize.saturating_mul(4_usize.saturating_pow(2 + level));
+    let target_count = adaptive_target_count(level);
 
     // Iterative adaptive growth: start at complexity (1, 1) and expand the side
     // with fewer expressions until the target count is reached.  Each iteration
@@ -884,6 +884,11 @@ pub fn search_adaptive(
     stats.rhs_count = db.rhs_count();
 
     (matches, stats)
+}
+
+#[inline]
+fn adaptive_target_count(level: u32) -> usize {
+    2000_usize.saturating_mul(4_usize.saturating_pow(level.saturating_add(2)))
 }
 
 // =============================================================================
