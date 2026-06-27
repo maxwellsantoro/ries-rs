@@ -50,7 +50,6 @@
   },
   "homepage": "https://maxwellsantoro.com/projects/ries-rs",
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
-    "wasm-pack": "^0.14.0"
+    "@playwright/test": "^1.58.2"
   }
 }
