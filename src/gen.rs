@@ -1659,6 +1659,7 @@ pub fn generate_all_parallel_with_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
     use proptest::prelude::*;
 
     /// Create a fast test config with limited complexity and operators
@@ -1922,6 +1923,7 @@ mod tests {
         assert_eq!(lhs.len(), 2);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     proptest! {
         #[test]
         fn test_quantize_value_collapses_values_within_same_bucket(bucket in -1_000_000i64..1_000_000i64) {
