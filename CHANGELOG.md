@@ -7,15 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-06-26
+
 ### Added
+- Turbo mode (`--turbo`) parallelizes matching and Newton refinement across
+  available cores while preserving the same single best match as serial search
+- Shared `MatchSummary` conversion for consistent Rust, Python, and WASM match
+  representations
 - Widest candidate-window diagnostics in JSON output and search stats, recording the
   LHS expression that produced the maximum RHS scan window
 - Level-3 benchmark baseline artifacts dated 2026-03-20
+- Supported Rust-side and end-to-end Python binding test workflows using `uv`
 
 ### Changed
 - **Breaking:** `SearchStats::record_candidate_window` now takes the LHS
   `EvaluatedExpr` plus window width (was width only) so widest-window diagnostics
   can be attributed to a specific expression
+- Python wheels use the CPython stable ABI for Python 3.8 and newer instead of
+  being tied to the single interpreter version used to build them
 - Adaptive search radius is capped by the pool strict-gate coarse-error envelope,
   matching `would_accept_strict` value-space bounds; batch and streaming paths now
   share the same radius logic
@@ -29,8 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (~66M → ~8M)
 - Optional widest-window JSON fields are omitted when no window has been recorded
   (`#[serde(skip_serializing_if = "Option::is_none")]`)
+- Python and WASM APIs reject non-finite targets consistently and document their
+  bounded level scale separately from the CLI complexity scale
 
 ### Fixed
+- PSLQ relation detection, duplicate/scalar relation handling, and rational
+  fast-match classification
+- Adaptive target-count exponent overflow and profile parsing/merge error handling
+- Adaptive-growth behavior and classic streaming result ordering
 - Expression deduplication during generation no longer clones when replacing a
   duplicate with a simpler expression in the same quantized bucket
 - Trig argument snapping guards `f64`→`i64` conversion against out-of-range values

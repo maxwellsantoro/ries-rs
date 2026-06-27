@@ -17,6 +17,8 @@ JSON manifests, or the full compatibility-oriented CLI surface, use the main
 pip install ries-rs
 ```
 
+Published wheels use CPython's stable ABI and support Python 3.8 and newer.
+
 ## Quick Start
 
 ```python

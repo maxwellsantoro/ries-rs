@@ -11,6 +11,10 @@ Published package:
 pip install ries-rs
 ```
 
+Published wheels use CPython's stable ABI (`abi3`) with a Python 3.8 minimum,
+so one wheel per supported operating-system/architecture target works across
+Python 3.8 and newer.
+
 Local development build:
 
 ```bash
@@ -48,6 +52,7 @@ End-to-end Python integration tests:
 CI note:
 
 - GitHub Actions pins Python 3.11 for the `ries-py` Rust-side test lane.
+- Release wheels are built with Python 3.8 and tagged for the CPython stable ABI.
 - GitHub Actions also runs an end-to-end Python integration lane via
   `./scripts/test_ries_py_python.sh -q`.
 - Local machines may use newer interpreters; the helper script keeps that path

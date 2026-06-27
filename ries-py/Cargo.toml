@@ -1,6 +1,6 @@
 [package]
 name = "ries-py"
-version = "1.1.1"
+version = "2.0.0"
 edition = "2021"
 authors = ["Maxwell Santoro"]
 description = "Find algebraic equations given their solution - Python bindings"
@@ -33,10 +33,10 @@ crate-type = ["cdylib"]
 # internal module and test those; the binding code itself can only be tested
 # through Python (pytest / maturin develop).
 default = ["extension-module", "parallel"]
-extension-module = ["pyo3/extension-module"]
+extension-module = ["pyo3/extension-module", "pyo3/abi3-py38"]
 parallel = ["ries_core/parallel"]
 highprec = ["ries_core/highprec"]
 
 [dependencies]
-ries_core = { package = "ries", path = "..", version = "1.1.1" }
+ries_core = { package = "ries", path = "..", version = "2.0.0" }
 pyo3 = { version = "0.22" }

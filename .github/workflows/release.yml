@@ -10,8 +10,33 @@ permissions:
   id-token: write
 
 jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Check release metadata integrity
+        run: python3 scripts/check_release_integrity.py
+
+      - name: Require tag to match package version
+        shell: bash
+        run: |
+          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match package version v${VERSION}." >&2
+            exit 1
+          fi
+
   build-binaries:
     name: Build ${{ matrix.target }}
+    needs: validate-tag
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -63,6 +88,7 @@ jobs:
 
   build-wasm:
     name: Build WASM
+    needs: validate-tag
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -102,6 +128,7 @@ jobs:
 
   build-python:
     name: Build Python Wheels
+    needs: validate-tag
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -120,7 +147,9 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          # Build against the oldest supported CPython; abi3 wheels then run on
+          # CPython 3.8 and newer without a per-version wheel matrix.
+          python-version: '3.8'
 
       - name: Build wheel
         uses: PyO3/maturin-action@v1
@@ -138,6 +167,7 @@ jobs:
 
   build-python-sdist:
     name: Build Python sdist
+    needs: validate-tag
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -13,12 +13,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "python3 is required to run ries-py Rust-side tests." >&2
+if [[ -n "${PYO3_PYTHON:-}" ]]; then
+    PYTHON_BIN="$PYO3_PYTHON"
+elif command -v uv >/dev/null 2>&1; then
+    # Prefer a uv-managed interpreter when available. In particular, this
+    # avoids the non-linkable Python stubs shipped by some macOS/Xcode setups.
+    PYTHON_BIN="$(uv python find --no-project 3.11)"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+else
+    echo "Python 3 is required to run ries-py Rust-side tests." >&2
     exit 1
 fi
-
-PYTHON_BIN="${PYO3_PYTHON:-$(command -v python3)}"
 
 export PYO3_PYTHON="$PYTHON_BIN"
 

@@ -9,7 +9,7 @@ Release-process notes and templates for `ries-rs`.
 Before tagging a release:
 
 1. Run the automated integrity preflight:
-   - `python3 scripts/check_release_integrity.py`
+   - `uv run --no-project --with tomli python3 scripts/check_release_integrity.py`
 2. Run formatting and lint checks:
    - `cargo fmt --all -- --check`
    - `cargo clippy --all-targets --locked -- -D warnings`
@@ -92,7 +92,7 @@ Go only if all of the following are true:
 - Expected artifact groups are present on the GitHub release:
   - 4 CLI artifacts (Linux x86_64, macOS x86_64, macOS aarch64, Windows x86_64 zip)
   - 1 WASM tarball (`ries-rs-wasm.tar.gz`)
-  - >=1 Python wheel artifact set (platform-dependent wheel files)
+  - 3 Python stable-ABI wheels (Linux x86_64, macOS aarch64, Windows x86_64)
   - 1 Python source distribution (`ries_rs-*.tar.gz`)
 - Registry publishes completed and are externally visible:
   - crates.io package page for the tagged version
