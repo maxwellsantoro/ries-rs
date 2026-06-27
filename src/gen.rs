@@ -717,6 +717,62 @@ pub fn generate_all_with_limit_and_context(
     })
 }
 
+/// Generate expressions with an early-abort limit, preserving every LHS.
+///
+/// The streaming search path matches every generated LHS expression and only
+/// deduplicates RHS expressions for the value database. Turbo uses this helper
+/// when it wants to materialize the same LHS universe for parallel matching.
+/// Deduplicating LHS by target-local `(value, derivative)` can discard a useful
+/// non-degenerate expression in favor of a lower-complexity degenerate
+/// representative, changing the best match for flat exact roots.
+#[cfg(feature = "parallel")]
+pub fn generate_all_preserving_lhs_with_limit_and_context(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+    max_expressions: usize,
+) -> Option<GeneratedExprs> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let limit = max_expressions;
+
+    let mut lhs_raw = Vec::new();
+    let mut rhs_raw = Vec::new();
+
+    let mut callbacks = StreamingCallbacks {
+        on_lhs: &mut |expr| {
+            let current = count.fetch_add(1, Ordering::Relaxed) + 1;
+            if current > limit {
+                return false;
+            }
+            lhs_raw.push(expr.clone());
+            true
+        },
+        on_rhs: &mut |expr| {
+            let current = count.fetch_add(1, Ordering::Relaxed) + 1;
+            if current > limit {
+                return false;
+            }
+            rhs_raw.push(expr.clone());
+            true
+        },
+    };
+
+    generate_streaming_with_context(config, target, eval_context, &mut callbacks);
+
+    let final_count = count.load(Ordering::Relaxed);
+    if final_count > limit {
+        return None;
+    }
+
+    Some(GeneratedExprs {
+        lhs: lhs_raw,
+        rhs: dedupe_rhs_expressions(rhs_raw),
+    })
+}
+
 /// Generate expressions with streaming callbacks for memory-efficient processing
 ///
 /// This function is the foundation of the streaming architecture. Instead of

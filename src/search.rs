@@ -1498,10 +1498,10 @@ pub fn search_parallel_with_stats_and_config(
     (matches, stats)
 }
 
-/// Turbo search: parallel generation **and** a parallel match/Newton phase.
+/// Turbo search: canonical generation plus a parallel match/Newton phase.
 ///
-/// This trades the parallel path's byte-identical guarantee for throughput. It
-/// returns the same single best (rank-1) match as serial search (see
+/// This trades the parallel path's byte-identical full-output guarantee for
+/// throughput. It returns the same single best (rank-1) match as serial search (see
 /// [`ExprDatabase::find_matches_turbo_with_stats_and_context`] for why), but the
 /// lower-ranked tail may differ from serial and may vary with thread count.
 /// Turbo also tolerates a larger materialized expression set than the serial /
@@ -1512,7 +1512,8 @@ pub fn search_turbo_with_stats_and_config(
     config: &SearchConfig,
 ) -> (Vec<Match>, SearchStats) {
     use crate::gen::{
-        count_expressions_with_limit_and_context, generate_all_parallel_with_context,
+        count_expressions_with_limit_and_context,
+        generate_all_preserving_lhs_with_limit_and_context, generate_all_with_limit_and_context,
     };
 
     if !config.target.is_finite() {
@@ -1533,23 +1534,37 @@ pub fn search_turbo_with_stats_and_config(
     // expression set than the default batch path before falling back to the
     // serial streaming matcher. (The serial/parallel paths stream above ~2M to
     // bound memory; turbo's whole purpose is to use more resources.)
+    const SERIAL_BATCH_LIMIT: usize = 2_000_000;
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 64_000_000;
     let context = SearchContext::new(config);
 
-    // OOM-safety gate: sequential count-only preflight before committing.
-    if count_expressions_with_limit_and_context(
+    let gen_start = SearchTimer::start();
+    let generated = if count_expressions_with_limit_and_context(
         gen_config,
         config.target,
         &context.eval,
-        MAX_EXPRESSIONS_BEFORE_STREAMING,
+        SERIAL_BATCH_LIMIT,
     )
-    .is_none()
+    .is_some()
     {
-        return search_streaming_with_config(gen_config, config);
-    }
-
-    let gen_start = SearchTimer::start();
-    let generated = generate_all_parallel_with_context(gen_config, config.target, &context.eval);
+        generate_all_with_limit_and_context(
+            gen_config,
+            config.target,
+            &context.eval,
+            SERIAL_BATCH_LIMIT,
+        )
+        .expect("preflight count established serial batch generation is within limit")
+    } else {
+        let Some(generated) = generate_all_preserving_lhs_with_limit_and_context(
+            gen_config,
+            config.target,
+            &context.eval,
+            MAX_EXPRESSIONS_BEFORE_STREAMING,
+        ) else {
+            return search_streaming_with_config(gen_config, config);
+        };
+        generated
+    };
     let gen_time = gen_start.elapsed();
 
     let mut db = ExprDatabase::new();

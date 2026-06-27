@@ -76,7 +76,7 @@ Search implementations:
 
 - sequential: `search_with_stats_and_config`
 - parallel: `search_parallel_with_stats_and_config` (parallel generation, serial batch matching/Newton)
-- turbo: `search_turbo_with_stats_and_config` (parallel generation **and** parallel matching/Newton; alternative contract, see below)
+- turbo: `search_turbo_with_stats_and_config` (canonical generation, parallel matching/Newton; alternative contract, see below)
 - streaming: `search_streaming_with_config`
 - one-sided: `search_one_sided_with_stats_and_config`
 
@@ -181,9 +181,11 @@ Practical caveat:
 ## Turbo Contract (Alternative)
 
 `--turbo` deliberately opts out of the determinism contract above to parallelize
-the match/Newton phase across all cores (the `--parallel` path parallelizes only
-generation, so it stays byte-identical to serial). Turbo is for throughput, not
-reproducibility, and `--deterministic` disables it.
+the match/Newton phase across all cores. It mirrors serial generation semantics:
+small batch searches use the same target-local LHS deduplication as serial, while
+streaming-sized searches preserve the raw LHS stream before splitting matching
+work into parallel bands. Turbo is for throughput, not reproducibility, and
+`--deterministic` disables it.
 
 What turbo **guarantees**:
 

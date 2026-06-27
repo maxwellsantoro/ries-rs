@@ -899,6 +899,98 @@ fn test_turbo_best_match_equals_sequential() {
 
 #[cfg(feature = "parallel")]
 #[test]
+fn test_turbo_small_batch_generation_matches_sequential_best() {
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    // This small search stays below the serial batch limit, where canonical
+    // serial search deduplicates LHS expressions by target-local value and
+    // derivative before matching. Turbo must mirror that generation semantics,
+    // not always preserve raw streaming LHS expressions.
+    let gen_config = GenConfig {
+        max_lhs_complexity: 65,
+        max_rhs_complexity: 10,
+        max_length: 10,
+        constants: vec![Symbol::One],
+        unary_ops: vec![Symbol::Neg, Symbol::Exp, Symbol::TanPi, Symbol::CosPi],
+        binary_ops: vec![Symbol::Pow],
+        rhs_constants: Some(vec![Symbol::One]),
+        rhs_unary_ops: Some(Vec::new()),
+        rhs_binary_ops: Some(Vec::new()),
+        symbol_table: Arc::new(SymbolTable::new()),
+        ..GenConfig::default()
+    };
+    let search_config = SearchConfig {
+        target: 2.506314,
+        max_matches: 16,
+        max_error: 2.506314 * 0.01,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (sequential, _) = search_with_stats_and_config(&gen_config, &search_config);
+    let (turbo, _) = search_turbo_with_stats_and_config(&gen_config, &search_config);
+
+    assert!(!sequential.is_empty() && !turbo.is_empty());
+    assert_eq!(
+        (
+            sequential[0].lhs.expr.to_postfix(),
+            sequential[0].rhs.expr.to_postfix()
+        ),
+        (
+            turbo[0].lhs.expr.to_postfix(),
+            turbo[0].rhs.expr.to_postfix()
+        ),
+        "turbo must mirror serial batch-generation semantics below the streaming threshold"
+    );
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+#[ignore = "level-3 regression; expensive in debug builds"]
+fn test_turbo_level3_flat_exact_best_match_equals_sequential() {
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    // Regression for 2.506314: at CLI level 3, canonical serial search exceeds
+    // the batch-generation safety limit and falls back to streaming, which
+    // preserves raw LHS expressions. Batch LHS dedupe can replace xTEC
+    // (`cospi(e^tanpi(x))`) with a lower-complexity degenerate representative
+    // for the same target-local (value, derivative) bucket; turbo must preserve
+    // the streaming LHS universe in this case.
+    let gen_config = GenConfig {
+        max_lhs_complexity: 65,
+        max_rhs_complexity: 65,
+        ..GenConfig::default()
+    };
+    let search_config = SearchConfig {
+        target: 2.506314,
+        max_matches: 16,
+        max_error: 2.506314 * 0.01,
+        user_constants: gen_config.user_constants.clone(),
+        user_functions: gen_config.user_functions.clone(),
+        ..Default::default()
+    };
+
+    let (sequential, _) = search_with_stats_and_config(&gen_config, &search_config);
+    let (turbo, _) = search_turbo_with_stats_and_config(&gen_config, &search_config);
+
+    assert_eq!(sequential[0].lhs.expr.to_postfix(), "xTEC");
+    assert_eq!(sequential[0].rhs.expr.to_postfix(), "1");
+    assert_eq!(
+        (
+            sequential[0].lhs.expr.to_postfix(),
+            sequential[0].rhs.expr.to_postfix()
+        ),
+        (
+            turbo[0].lhs.expr.to_postfix(),
+            turbo[0].rhs.expr.to_postfix()
+        ),
+        "turbo and serial must agree on the flat exact level-3 best match"
+    );
+}
+
+#[cfg(feature = "parallel")]
+#[test]
 fn test_turbo_stop_at_exact_preserves_sequential_best_match() {
     use ries_rs::search::search_turbo_with_stats_and_config;
 

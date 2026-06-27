@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use ries-rs in your research, please cite it as below."
 title: "ries-rs"
-version: 2.0.1
+version: 2.0.2
 date-released: 2026-06-27
 url: "https://maxwellsantoro.com/projects/ries-rs"
 identifiers:

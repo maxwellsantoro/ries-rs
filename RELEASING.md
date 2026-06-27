@@ -167,3 +167,4 @@ has been verified in project metadata.
 - `v1.1.1`: version DOI `10.5281/zenodo.19101925`; concept DOI `10.5281/zenodo.19101924`
 - `v2.0.0`: no Zenodo DOI recorded in this repository
 - `v2.0.1`: no Zenodo DOI recorded in this repository
+- `v2.0.2`: no Zenodo DOI recorded in this repository

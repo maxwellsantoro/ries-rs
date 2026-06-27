@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-06-27
+
+### Fixed
+- Turbo now mirrors serial generation semantics before parallel matching:
+  small batch searches use the same LHS deduplication as serial, while
+  streaming-sized searches preserve the raw LHS stream. This fixes a
+  level-3 rank-one parity miss where `--turbo` could discard the serial best
+  match for `2.506314` before matching.
+- Added regressions covering both turbo's small batch-generation parity path
+  and the expensive level-3 flat-exact `2.506314` case.
+
+### Changed
+- Documented the refined turbo contract: canonical generation semantics plus
+  parallel match/Newton work, with the lower-ranked tail still allowed to differ
+  from serial.
+
 ## [2.0.1] - 2026-06-27
 
 ### Fixed
