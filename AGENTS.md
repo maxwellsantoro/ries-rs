@@ -75,5 +75,5 @@ test paths, and `cargo nextest` on Linux/macOS/Windows.
 ## Registry
 
 This project is registered in the portfolio registry as `RIES`
-(`_registry/project_registry.json`, family `formal-math`). Update the registry
+(`~/projects/registry/project_registry.json`, family `formal-math`). Update the registry
 entry there rather than describing project metadata only in code.

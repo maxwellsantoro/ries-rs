@@ -170,6 +170,109 @@ fn test_json_output_is_valid_and_machine_readable() {
 }
 
 #[test]
+fn test_manifest_success_for_text_and_json_output() {
+    for (stem, extra_args) in [("text", Vec::<&str>::new()), ("json", vec!["--json"])] {
+        let path = unique_tmp_path(stem);
+        let path_arg = path.to_string_lossy().into_owned();
+        let is_json = !extra_args.is_empty();
+        let mut args = vec![
+            "2.5",
+            "-l",
+            "0",
+            "--deterministic",
+            "--report",
+            "false",
+            "-n",
+            "1",
+            "--emit-manifest",
+            path_arg.as_str(),
+        ];
+        args.extend(extra_args.iter().copied());
+
+        let (stdout, _stderr) = run_ries(&args);
+        if !is_json {
+            assert!(stdout.contains("Search completed") || stdout.contains("="));
+        } else {
+            serde_json::from_str::<Value>(&stdout).expect("valid JSON output");
+        }
+        assert!(
+            path.is_file(),
+            "manifest was not written: {}",
+            path.display()
+        );
+        let manifest: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read manifest"))
+                .expect("valid manifest JSON");
+        assert_eq!(
+            manifest["version"].as_str(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[test]
+fn test_manifest_write_failures_return_nonzero_for_text_and_json() {
+    for (stem, extra_args) in [
+        ("missing-parent", Vec::<&str>::new()),
+        ("missing-parent-json", vec!["--json"]),
+    ] {
+        let path = unique_tmp_path(stem).join("manifest.json");
+        let path_arg = path.to_string_lossy().into_owned();
+        let mut args = vec![
+            "2.5".to_string(),
+            "-l".to_string(),
+            "0".to_string(),
+            "--deterministic".to_string(),
+            "--report".to_string(),
+            "false".to_string(),
+            "-n".to_string(),
+            "1".to_string(),
+            "--emit-manifest".to_string(),
+            path_arg,
+        ];
+        args.extend(extra_args.iter().map(|arg| (*arg).to_string()));
+        let output = run_ries_owned(&args);
+        assert!(
+            !output.status.success(),
+            "manifest write failure unexpectedly succeeded"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Error writing manifest"),
+            "unexpected stderr: {stderr}"
+        );
+    }
+
+    let destination = unique_tmp_path("directory-destination");
+    std::fs::create_dir(&destination).expect("create directory destination");
+    let destination_arg = destination.to_string_lossy().into_owned();
+    let output_args = [
+        "2.5".to_string(),
+        "-l".to_string(),
+        "0".to_string(),
+        "--deterministic".to_string(),
+        "--report".to_string(),
+        "false".to_string(),
+        "-n".to_string(),
+        "1".to_string(),
+        "--emit-manifest".to_string(),
+        destination_arg,
+    ];
+    for extra in [Vec::<String>::new(), vec!["--json".to_string()]] {
+        let mut args = output_args.to_vec();
+        args.extend(extra);
+        let output = run_ries_owned(&args);
+        assert!(
+            !output.status.success(),
+            "directory destination unexpectedly succeeded"
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Error writing manifest"));
+    }
+    let _ = std::fs::remove_dir(destination);
+}
+
+#[test]
 fn test_json_output_reports_effective_parallel_flag_in_deterministic_mode() {
     let (stdout, _stderr) = run_ries(&["2.5", "--json", "--deterministic", "--classic", "-n", "1"]);
     let parsed: Value = serde_json::from_str(&stdout).expect("valid JSON output");

@@ -72,7 +72,9 @@ pip install ries-rs
 For local source development of the bindings:
 
 ```bash
-pip install maturin
+uv venv
+source .venv/bin/activate
+uv pip install maturin
 cd ries-py
 maturin develop --release
 ```
@@ -301,6 +303,13 @@ specific archived release you used.
 
 For reproducible research runs, prefer `--deterministic` together with
 `--emit-manifest`.
+
+When `--emit-manifest` is requested, failure to serialize or write the manifest
+prints an error and exits nonzero. A parent directory must already exist, and
+the destination must be a writable file path.
+
+Manifests summarize the supported run configuration and results; they are not a
+full source-bound replay or build attestation for every custom or profile option.
 
 ## License
 

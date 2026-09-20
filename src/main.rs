@@ -535,12 +535,14 @@ fn main() {
                 Ok(json) => {
                     if let Err(e) = std::fs::write(manifest_path, json) {
                         eprintln!("Error writing manifest: {}", e);
+                        std::process::exit(1);
                     } else if !args.no_slow_messages {
                         eprintln!("Manifest written to {}", manifest_path.display());
                     }
                 }
                 Err(e) => {
                     eprintln!("Error serializing manifest: {}", e);
+                    std::process::exit(1);
                 }
             }
         }
@@ -705,12 +707,14 @@ fn main() {
             Ok(json) => {
                 if let Err(e) = std::fs::write(manifest_path, json) {
                     eprintln!("Error writing manifest: {}", e);
+                    std::process::exit(1);
                 } else if !args.no_slow_messages {
                     eprintln!("Manifest written to {}", manifest_path.display());
                 }
             }
             Err(e) => {
                 eprintln!("Error serializing manifest: {}", e);
+                std::process::exit(1);
             }
         }
     }
