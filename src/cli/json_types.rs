@@ -153,7 +153,7 @@ pub fn build_json_output(
         .iter()
         .map(|m| {
             use super::output::format_expression_for_display;
-            use crate::{canonical_expression_key, solve_for_x_rhs_expression};
+            use crate::{canonical_expression_key, solve_for_x_at};
 
             let lhs = format_expression_for_display(
                 &m.lhs.expr,
@@ -170,7 +170,7 @@ pub fn build_json_output(
 
             // Analytical solver
             let (solve_for_x, solve_for_x_postfix) = if include_solve_for_x {
-                let solved = solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
+                let solved = solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value);
                 (
                     solved
                         .as_ref()

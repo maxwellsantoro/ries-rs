@@ -27,7 +27,38 @@ struct SolveNode {
 /// This only succeeds if `x` appears exactly once in the `LHS` and the
 /// equation can be analytically inverted using supported operations.
 /// If solving fails, it returns `None`.
+///
+/// Multi-valued inverses (sine, cosine, tangent, and even roots) use the
+/// **principal branch**. Call [`solve_for_x_at`] when the matched root is
+/// known so the displayed expression evaluates to that root.
 pub fn solve_for_x_rhs_expression(lhs: &Expression, rhs: &Expression) -> Option<Expression> {
+    solve_for_x_inner(lhs, rhs, None)
+}
+
+/// Solve `lhs = rhs` for `x`, choosing the real inverse branch nearest `x_value`.
+///
+/// Sine, cosine, tangent, and even roots are multi-valued. The principal
+/// inverse (for example `asin(y)/π` or the non-negative square root) can sit
+/// a full period away from the root the search refined. Passing that root
+/// selects:
+///
+/// - square / even power: `√y` or `-√y`
+/// - sine: `asin(y)/π + 2k` or `1 - asin(y)/π + 2k`
+/// - cosine: `2k ± acos(y)/π`
+/// - tangent: `atan(y)/π + k`
+///
+/// `x_value` is the numeric root of the original equation. Non-finite values
+/// fall back to the principal branch.
+pub fn solve_for_x_at(lhs: &Expression, rhs: &Expression, x_value: f64) -> Option<Expression> {
+    let hint = x_value.is_finite().then_some(x_value);
+    solve_for_x_inner(lhs, rhs, hint)
+}
+
+fn solve_for_x_inner(
+    lhs: &Expression,
+    rhs: &Expression,
+    x_value: Option<f64>,
+) -> Option<Expression> {
     if lhs.count_symbol(Symbol::X) != 1 {
         return None;
     }
@@ -48,7 +79,8 @@ pub fn solve_for_x_rhs_expression(lhs: &Expression, rhs: &Expression) -> Option<
                 if child.x_count != 1 {
                     return None;
                 }
-                rhs_expr = unary_inverse_expression(op, &rhs_expr)?;
+                let target = x_value.and_then(|x| eval_expr(&child.expr, x));
+                rhs_expr = unary_inverse_expression(op, &rhs_expr, target)?;
                 node = *child;
             }
             SolveNodeKind::Binary(op, left, right) => {
@@ -59,7 +91,8 @@ pub fn solve_for_x_rhs_expression(lhs: &Expression, rhs: &Expression) -> Option<
                 }
 
                 if lx == 1 {
-                    rhs_expr = invert_binary_left(op, &rhs_expr, &right.expr)?;
+                    let target = x_value.and_then(|x| eval_expr(&left.expr, x));
+                    rhs_expr = invert_binary_left(op, &rhs_expr, &right.expr, target)?;
                     node = *left;
                 } else {
                     rhs_expr = invert_binary_right(op, &left.expr, &rhs_expr)?;
@@ -130,54 +163,46 @@ fn build_solve_ast(expression: &Expression) -> Option<SolveNode> {
     }
 }
 
-/// Build an expression for the inverse of `op(x) = rhs_value`, solving for `x`.
+/// Build an expression for the inverse of `op(child) = rhs_value`.
 ///
-/// For multivalued inverses (trig functions, square root), returns only the
-/// **principal branch**. The search engine finds other branches independently
-/// via Newton-Raphson starting from different initial conditions.
+/// `target` is the numeric value of `child` at the matched root. When it is
+/// `Some`, multi-valued inverses use the real branch nearest that value.
+/// When it is `None`, the principal branch is returned.
 ///
 /// Returns `None` if the operator has no supported closed-form inverse.
-fn unary_inverse_expression(op: Symbol, rhs_value: &Expression) -> Option<Expression> {
+fn unary_inverse_expression(
+    op: Symbol,
+    rhs_value: &Expression,
+    target: Option<f64>,
+) -> Option<Expression> {
     Some(match op {
         Symbol::Neg => append_unary_expression(rhs_value, Symbol::Neg),
         Symbol::Recip => append_unary_expression(rhs_value, Symbol::Recip),
-        Symbol::Square => append_unary_expression(rhs_value, Symbol::Sqrt), // x² = y ⟹ x = √y  (principal/positive root only; -√y not returned)
-        Symbol::Sqrt => append_unary_expression(rhs_value, Symbol::Square), // √x = y ⟹ x = y²  (valid for y ≥ 0, matching √ domain)
+        Symbol::Square => {
+            // x² = y ⟹ x = ±√y. The sign is the one nearest `target`.
+            let principal = append_unary_expression(rhs_value, Symbol::Sqrt);
+            choose_signed_root(principal, target)
+        }
+        Symbol::Sqrt => append_unary_expression(rhs_value, Symbol::Square), // √x = y ⟹ x = y²
         Symbol::Ln => append_unary_expression(rhs_value, Symbol::Exp),
         Symbol::Exp => append_unary_expression(rhs_value, Symbol::Ln),
         Symbol::TanPi => {
-            // tan(πx) = y ⟹ x = atan(y)/π  (principal branch: x ∈ (-½, ½))
-            // x = atan(rhs) / pi = atan2(rhs, 1) / pi
-            let one = constant_expression(Symbol::One);
-            let atan = combine_binary_expressions(rhs_value, &one, Symbol::Atan2);
-            let pi = constant_expression(Symbol::Pi);
-            combine_binary_expressions(&atan, &pi, Symbol::Div)
+            // tan(πx) = y ⟹ x = atan(y)/π + k
+            let principal = atan_over_pi(rhs_value);
+            lift_periodic(principal, target, &[(false, 1, 0)])
         }
         Symbol::SinPi => {
-            // sin(πx) = y ⟹ x = asin(y)/π  (principal branch: x ∈ [-½, ½])
-            // x = asin(rhs)/pi = atan2(rhs, sqrt(1-rhs^2))/pi
-            let one = constant_expression(Symbol::One);
-            let rhs_sq = append_unary_expression(rhs_value, Symbol::Square);
-            let inner = combine_binary_expressions(&one, &rhs_sq, Symbol::Sub);
-            let denom = append_unary_expression(&inner, Symbol::Sqrt);
-            let atan = combine_binary_expressions(rhs_value, &denom, Symbol::Atan2);
-            let pi = constant_expression(Symbol::Pi);
-            combine_binary_expressions(&atan, &pi, Symbol::Div)
+            // sin(πx) = y ⟹ x = asin(y)/π + 2k  or  x = 1 - asin(y)/π + 2k
+            let principal = asin_over_pi(rhs_value);
+            lift_periodic(principal, target, &[(false, 2, 0), (true, 2, 1)])
         }
         Symbol::CosPi => {
-            // cos(πx) = y ⟹ x = acos(y)/π  (principal branch: x ∈ [0, 1])
-            // x = acos(rhs)/pi = atan2(sqrt(1-rhs^2), rhs)/pi
-            let one = constant_expression(Symbol::One);
-            let rhs_sq = append_unary_expression(rhs_value, Symbol::Square);
-            let inner = combine_binary_expressions(&one, &rhs_sq, Symbol::Sub);
-            let numer = append_unary_expression(&inner, Symbol::Sqrt);
-            let atan = combine_binary_expressions(&numer, rhs_value, Symbol::Atan2);
-            let pi = constant_expression(Symbol::Pi);
-            combine_binary_expressions(&atan, &pi, Symbol::Div)
+            // cos(πx) = y ⟹ x = 2k ± acos(y)/π
+            let principal = acos_over_pi(rhs_value);
+            lift_periodic(principal, target, &[(false, 2, 0), (true, 2, 0)])
         }
         Symbol::LambertW => {
-            // W(y) = x ⟹ y = x·eˣ  (principal branch W₀, x ≥ -1)
-            // x = W(y)  =>  y = x * exp(x)
+            // W(x) = y ⟹ x = y·eʸ. The inverse of W is single-valued on the reals.
             let exp_rhs = append_unary_expression(rhs_value, Symbol::Exp);
             combine_binary_expressions(rhs_value, &exp_rhs, Symbol::Mul)
         }
@@ -185,17 +210,52 @@ fn unary_inverse_expression(op: Symbol, rhs_value: &Expression) -> Option<Expres
     })
 }
 
+/// `atan(y)/π = atan2(y, 1)/π`, principal value in (-1/2, 1/2).
+fn atan_over_pi(rhs_value: &Expression) -> Expression {
+    let one = constant_expression(Symbol::One);
+    let atan = combine_binary_expressions(rhs_value, &one, Symbol::Atan2);
+    let pi = constant_expression(Symbol::Pi);
+    combine_binary_expressions(&atan, &pi, Symbol::Div)
+}
+
+/// `asin(y)/π = atan2(y, sqrt(1-y²))/π`, principal value in [-1/2, 1/2].
+fn asin_over_pi(rhs_value: &Expression) -> Expression {
+    let one = constant_expression(Symbol::One);
+    let rhs_sq = append_unary_expression(rhs_value, Symbol::Square);
+    let inner = combine_binary_expressions(&one, &rhs_sq, Symbol::Sub);
+    let denom = append_unary_expression(&inner, Symbol::Sqrt);
+    let atan = combine_binary_expressions(rhs_value, &denom, Symbol::Atan2);
+    let pi = constant_expression(Symbol::Pi);
+    combine_binary_expressions(&atan, &pi, Symbol::Div)
+}
+
+/// `acos(y)/π = atan2(sqrt(1-y²), y)/π`, principal value in [0, 1].
+fn acos_over_pi(rhs_value: &Expression) -> Expression {
+    let one = constant_expression(Symbol::One);
+    let rhs_sq = append_unary_expression(rhs_value, Symbol::Square);
+    let inner = combine_binary_expressions(&one, &rhs_sq, Symbol::Sub);
+    let numer = append_unary_expression(&inner, Symbol::Sqrt);
+    let atan = combine_binary_expressions(&numer, rhs_value, Symbol::Atan2);
+    let pi = constant_expression(Symbol::Pi);
+    combine_binary_expressions(&atan, &pi, Symbol::Div)
+}
+
 fn invert_binary_left(
     op: Symbol,
     rhs_value: &Expression,
     known_right: &Expression,
+    target: Option<f64>,
 ) -> Option<Expression> {
     Some(match op {
         Symbol::Add => combine_binary_expressions(rhs_value, known_right, Symbol::Sub),
         Symbol::Sub => combine_binary_expressions(rhs_value, known_right, Symbol::Add),
         Symbol::Mul => combine_binary_expressions(rhs_value, known_right, Symbol::Div),
         Symbol::Div => combine_binary_expressions(rhs_value, known_right, Symbol::Mul),
-        Symbol::Pow => combine_binary_expressions(known_right, rhs_value, Symbol::Root),
+        // x^k = y ⟹ x = ± y^(1/k). Even integer powers have two real roots.
+        Symbol::Pow => {
+            let root = combine_binary_expressions(known_right, rhs_value, Symbol::Root);
+            choose_signed_root(root, target)
+        }
         Symbol::Root => combine_binary_expressions(rhs_value, known_right, Symbol::Log),
         Symbol::Log => combine_binary_expressions(rhs_value, known_right, Symbol::Root),
         _ => return None,
@@ -249,6 +309,179 @@ fn is_x_atom(expression: &Expression) -> bool {
             .symbols()
             .first()
             .is_some_and(|sym| *sym == Symbol::X)
+}
+
+fn eval_expr(expr: &Expression, x: f64) -> Option<f64> {
+    crate::eval::evaluate(expr, x)
+        .ok()
+        .map(|result| result.value)
+}
+
+/// Keep `principal` (a non-negative root) or its negation, whichever is nearer `target`.
+fn choose_signed_root(principal: Expression, target: Option<f64>) -> Expression {
+    let Some(target) = target else {
+        return principal;
+    };
+    let Some(positive) = eval_expr(&principal, 0.0) else {
+        return principal;
+    };
+    let negative = append_unary_expression(&principal, Symbol::Neg);
+    let Some(neg_value) = eval_expr(&negative, 0.0) else {
+        return principal;
+    };
+    // Require a strict improvement so a root at 0 stays on the principal branch.
+    if (neg_value - target).abs() + 1e-12 < (positive - target).abs() {
+        negative
+    } else {
+        principal
+    }
+}
+
+/// `(negate, period, extra)` describes the family `±principal + extra + period·k`.
+///
+/// Sine uses `(false, 2, 0)` and `(true, 2, 1)` (`asin/π + 2k` and `1 - asin/π + 2k`).
+/// Cosine uses `(false, 2, 0)` and `(true, 2, 0)` (`2k ± acos/π`).
+/// Tangent uses `(false, 1, 0)` (`atan/π + k`).
+fn lift_periodic(
+    principal: Expression,
+    target: Option<f64>,
+    families: &[(bool, i64, i64)],
+) -> Expression {
+    let Some(target) = target else {
+        return principal;
+    };
+    let Some(principal_value) = eval_expr(&principal, 0.0) else {
+        return principal;
+    };
+    if !principal_value.is_finite() {
+        return principal;
+    }
+
+    let mut best: Option<(Expression, f64)> = None;
+    for &(negate, period, extra) in families {
+        if period == 0 {
+            continue;
+        }
+        let signed = if negate {
+            -principal_value
+        } else {
+            principal_value
+        };
+        let base = signed + extra as f64;
+        let Some(k0) = nearest_branch_index((target - base) / period as f64) else {
+            continue;
+        };
+        for k in (k0 - 1)..=(k0 + 1) {
+            let Some(offset) = family_offset(period, extra, k) else {
+                continue;
+            };
+            let candidate = linear_combo(&principal, negate, offset);
+            let Some(value) = eval_expr(&candidate, 0.0) else {
+                continue;
+            };
+            if !value.is_finite() {
+                continue;
+            }
+            let err = (value - target).abs();
+            let replace = match &best {
+                None => true,
+                Some((prev, prev_err)) => {
+                    err + 1e-9 < *prev_err
+                        || ((err - prev_err).abs() <= 1e-9 && candidate.len() < prev.len())
+                }
+            };
+            if replace {
+                best = Some((candidate, err));
+            }
+        }
+    }
+
+    best.map(|(expr, _)| expr).unwrap_or(principal)
+}
+
+fn nearest_branch_index(k: f64) -> Option<i64> {
+    if !k.is_finite() || k.abs() > 1_000_000.0 {
+        return None;
+    }
+    Some(k.round() as i64)
+}
+
+fn family_offset(period: i64, extra: i64, k: i64) -> Option<i64> {
+    period.checked_mul(k)?.checked_add(extra)
+}
+
+/// `±principal + offset`, written as a sum or difference so the offset is an integer literal.
+fn linear_combo(principal: &Expression, negate: bool, offset: i64) -> Expression {
+    if !negate {
+        return add_integer(principal, offset);
+    }
+    if offset == 0 {
+        return append_unary_expression(principal, Symbol::Neg);
+    }
+    if offset > 0 {
+        let off = integer_expression(offset as u64);
+        return combine_binary_expressions(&off, principal, Symbol::Sub);
+    }
+    // offset - principal with offset < 0 is -( |offset| + principal ).
+    let magnitude = integer_expression(offset.unsigned_abs());
+    let sum = combine_binary_expressions(&magnitude, principal, Symbol::Add);
+    append_unary_expression(&sum, Symbol::Neg)
+}
+
+fn add_integer(base: &Expression, offset: i64) -> Expression {
+    if offset == 0 {
+        return base.clone();
+    }
+    if offset > 0 {
+        let off = integer_expression(offset as u64);
+        return combine_binary_expressions(base, &off, Symbol::Add);
+    }
+    let magnitude = integer_expression(offset.unsigned_abs());
+    combine_binary_expressions(base, &magnitude, Symbol::Sub)
+}
+
+/// Positive integer as a postfix expression. Digits above 9 use Horner's method with 10 = 2·5.
+fn integer_expression(n: u64) -> Expression {
+    debug_assert!(n > 0);
+    let mut digits = Vec::new();
+    let mut value = n;
+    while value > 0 {
+        digits.push((value % 10) as u32);
+        value /= 10;
+    }
+    digits.reverse();
+    let mut expr = constant_expression(digit_symbol(digits[0]));
+    for &digit in &digits[1..] {
+        let ten = combine_binary_expressions(
+            &constant_expression(Symbol::Two),
+            &constant_expression(Symbol::Five),
+            Symbol::Mul,
+        );
+        expr = combine_binary_expressions(&expr, &ten, Symbol::Mul);
+        if digit != 0 {
+            expr = combine_binary_expressions(
+                &expr,
+                &constant_expression(digit_symbol(digit)),
+                Symbol::Add,
+            );
+        }
+    }
+    expr
+}
+
+fn digit_symbol(digit: u32) -> Symbol {
+    match digit {
+        1 => Symbol::One,
+        2 => Symbol::Two,
+        3 => Symbol::Three,
+        4 => Symbol::Four,
+        5 => Symbol::Five,
+        6 => Symbol::Six,
+        7 => Symbol::Seven,
+        8 => Symbol::Eight,
+        9 => Symbol::Nine,
+        _ => unreachable!("decimal digit"),
+    }
 }
 
 fn canonical_node_key(node: &SolveNode) -> String {
@@ -535,7 +768,7 @@ mod tests {
     fn test_unary_inverse_negation() {
         // -x = y => x = -y (double negation)
         let rhs = expr("3");
-        let result = unary_inverse_expression(Symbol::Neg, &rhs);
+        let result = unary_inverse_expression(Symbol::Neg, &rhs, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "3n");
     }
@@ -544,7 +777,7 @@ mod tests {
     fn test_unary_inverse_reciprocal() {
         // 1/x = y => x = 1/y
         let rhs = expr("3");
-        let result = unary_inverse_expression(Symbol::Recip, &rhs);
+        let result = unary_inverse_expression(Symbol::Recip, &rhs, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "3r");
     }
@@ -553,12 +786,12 @@ mod tests {
     fn test_unary_inverse_square_sqrt() {
         // x^2 = y => x = sqrt(y)
         let rhs = expr("4");
-        let result = unary_inverse_expression(Symbol::Square, &rhs);
+        let result = unary_inverse_expression(Symbol::Square, &rhs, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "4q");
 
         // sqrt(x) = y => x = y^2
-        let result = unary_inverse_expression(Symbol::Sqrt, &rhs);
+        let result = unary_inverse_expression(Symbol::Sqrt, &rhs, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "4s");
     }
@@ -567,11 +800,11 @@ mod tests {
     fn test_unary_inverse_ln_exp() {
         // ln(x) = y => x = e^y
         let rhs = expr("2");
-        let result = unary_inverse_expression(Symbol::Ln, &rhs);
+        let result = unary_inverse_expression(Symbol::Ln, &rhs, None);
         assert!(result.is_some());
 
         // e^x = y => x = ln(y)
-        let result = unary_inverse_expression(Symbol::Exp, &rhs);
+        let result = unary_inverse_expression(Symbol::Exp, &rhs, None);
         assert!(result.is_some());
     }
 
@@ -582,7 +815,7 @@ mod tests {
         // x + k = y => x = y - k
         let rhs = expr("5");
         let known = expr("2");
-        let result = invert_binary_left(Symbol::Add, &rhs, &known);
+        let result = invert_binary_left(Symbol::Add, &rhs, &known, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "52-");
     }
@@ -592,7 +825,7 @@ mod tests {
         // x - k = y => x = y + k
         let rhs = expr("3");
         let known = expr("2");
-        let result = invert_binary_left(Symbol::Sub, &rhs, &known);
+        let result = invert_binary_left(Symbol::Sub, &rhs, &known, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "32+");
     }
@@ -602,7 +835,7 @@ mod tests {
         // x * k = y => x = y / k
         let rhs = expr("6");
         let known = expr("2");
-        let result = invert_binary_left(Symbol::Mul, &rhs, &known);
+        let result = invert_binary_left(Symbol::Mul, &rhs, &known, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "62/");
     }
@@ -612,7 +845,7 @@ mod tests {
         // x / k = y => x = y * k
         let rhs = expr("3");
         let known = expr("2");
-        let result = invert_binary_left(Symbol::Div, &rhs, &known);
+        let result = invert_binary_left(Symbol::Div, &rhs, &known, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "32*");
     }
@@ -670,5 +903,85 @@ mod tests {
 
         let complex = expr("x1+");
         assert!(!is_x_atom(&complex));
+    }
+
+    fn solved_value(postfix_lhs: &str, postfix_rhs: &str, x_value: f64) -> f64 {
+        let solved = solve_for_x_at(&expr(postfix_lhs), &expr(postfix_rhs), x_value)
+            .unwrap_or_else(|| panic!("expected a closed form for {postfix_lhs} = {postfix_rhs}"));
+        crate::eval::evaluate(&solved, 0.0)
+            .unwrap_or_else(|err| panic!("solved expression failed to evaluate: {err}"))
+            .value
+    }
+
+    #[test]
+    fn test_sin_inverse_uses_branch_near_target() {
+        // sin(πx) = 1. Principal asin(1)/π is 0.5; the root near √(2π) ≈ 2.5066 is 2.5.
+        let value = solved_value("xS", "1", 2.506_628_274_631);
+        assert!(
+            (value - 2.5).abs() < 1e-9,
+            "sin branch should be 2.5, got {value}"
+        );
+        let principal = solve_for_x_rhs_expression(&expr("xS"), &expr("1")).unwrap();
+        let principal_value = crate::eval::evaluate(&principal, 0.0).unwrap().value;
+        assert!(
+            (principal_value - 0.5).abs() < 1e-9,
+            "principal sine inverse stays 0.5"
+        );
+    }
+
+    #[test]
+    fn test_cos_inverse_uses_branch_near_target() {
+        // cos(πx) = ln(1) = 0. Principal acos(0)/π is 0.5; 2 + acos(0)/π = 2.5.
+        let value = solved_value("xC", "1l", 2.506_628_274_631);
+        assert!(
+            (value - 2.5).abs() < 1e-9,
+            "cos branch should be 2.5, got {value}"
+        );
+    }
+
+    #[test]
+    fn test_tan_inverse_period_near_integer() {
+        let zero = expr("11-");
+        let solved = solve_for_x_at(&expr("xT"), &zero, 3.02).expect("tan inverse");
+        let value = crate::eval::evaluate(&solved, 0.0).unwrap().value;
+        assert!(
+            (value - 3.0).abs() < 1e-9,
+            "tan branch should be 3, got {value} from {}",
+            solved.to_infix()
+        );
+    }
+
+    #[test]
+    fn test_square_inverse_uses_negative_root() {
+        let value = solved_value("xs", "4", -2.0);
+        assert!(
+            (value + 2.0).abs() < 1e-9,
+            "negative square root should be -2, got {value}"
+        );
+        let positive = solved_value("xs", "4", 2.0);
+        assert!((positive - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_even_power_inverse_uses_negative_root() {
+        // x^2 via pow, not the square operator.
+        let value = solved_value("x2^", "4", -2.0);
+        assert!(
+            (value + 2.0).abs() < 1e-9,
+            "negative even root should be -2, got {value}"
+        );
+    }
+
+    #[test]
+    fn test_integer_offset_above_nine() {
+        // sin(πx) = 0 at x = 12. Principal is 0, so the expression must add 12.
+        let zero = expr("11-");
+        let solved = solve_for_x_at(&expr("xS"), &zero, 12.01).expect("sin inverse");
+        let value = crate::eval::evaluate(&solved, 0.0).unwrap().value;
+        assert!(
+            (value - 12.0).abs() < 1e-8,
+            "expected 12, got {value} from {}",
+            solved.to_infix()
+        );
     }
 }

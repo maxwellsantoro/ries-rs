@@ -24,7 +24,9 @@ use cli::{
     DisplayFormat, ExpressionConstraintArgs, NormalizedArgs, PostProcessOptions,
     StabilityRunConfig,
 };
-use ries_rs::{canonical_expression_key, solve_for_x_rhs_expression};
+#[cfg(test)]
+use ries_rs::solve_for_x_rhs_expression;
+use ries_rs::{canonical_expression_key, solve_for_x_at};
 use std::time::Duration;
 
 // Args struct is now imported from cli::Args

@@ -61,7 +61,9 @@ Equivalent abstract grammar (stack-discipline form):
 - unary nodes apply to one valid subexpression
 - binary nodes apply to two valid subexpressions
 
-In infix form, parentheses are added according to precedence/associativity rules implemented in `src/expr.rs` (power is right-associative; multiplication/division bind tighter than addition/subtraction).
+In infix form, parentheses follow the precedence and associativity rules in `src/expr.rs`. Power (`^`, including printed `^2` and `e^`) is right-associative and binds tighter than unary minus. Unary minus binds tighter than multiplication, division, and reciprocal (`1/`). Addition and subtraction are left-associative and bind least tightly. A subexpression is parenthesized when reprinting it at the same precedence would change the value (`(a^b)^c`, `a-(b-c)`, `1/(1/x)`, `-(1/(1/(-phi)))`). Parsing that infix with the same rules evaluates to the postfix value.
+
+Solve-for-x display uses `solve_for_x_at` and the matched root. Multi-valued inverses emit the real branch nearest that root: `±√y` for squares and even powers, `asin(y)/π + 2k` or `1 - asin(y)/π + 2k` for sine, `2k ± acos(y)/π` for cosine, and `atan(y)/π + k` for tangent. `solve_for_x_rhs_expression` remains the principal-branch inverse for callers that do not have a root.
 
 ## Search Space Partition
 

@@ -1,7 +1,7 @@
 //! Shared match presentation fields for binding surfaces.
 
 use crate::search::Match;
-use crate::solver::{canonical_expression_key, solve_for_x_rhs_expression};
+use crate::solver::{canonical_expression_key, solve_for_x_at};
 use crate::thresholds::EXACT_MATCH_TOLERANCE;
 
 /// Presentation-ready fields derived from a search [`Match`].
@@ -50,7 +50,7 @@ impl MatchSummary {
         let lhs_infix = m.lhs.expr.to_infix_or_postfix();
         let rhs_infix = m.rhs.expr.to_infix_or_postfix();
 
-        let solved = solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
+        let solved = solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value);
         let solve_for_x = solved
             .as_ref()
             .map(|e| format!("x = {}", e.to_infix_or_postfix()));
