@@ -7,9 +7,9 @@ use crate::pool::TopKPool;
 
 use crate::thresholds::{
     ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
-    BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_RANGE_TOLERANCE, DEGENERATE_TEST_THRESHOLD,
-    EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR, NEWTON_FINAL_TOLERANCE,
-    STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
+    BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_TEST_THRESHOLD, EXACT_MATCH_TOLERANCE,
+    MAX_SEARCH_RADIUS_FACTOR, NEWTON_FINAL_TOLERANCE, STRICT_GATE_CAPACITY_FRACTION,
+    STRICT_GATE_FACTOR, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
 };
 
 /// Database for storing expressions sorted by value
@@ -547,11 +547,12 @@ fn match_one_lhs(
         return true;
     }
     if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-        // Derivative is non-zero at test_x, so this might be a true repeated root.
-        // Check if LHS(target) ≈ some RHS.
-        let val_error = DEGENERATE_RANGE_TOLERANCE;
-        let low = lhs.value - val_error;
-        let high = lhs.value + val_error;
+        // Flat at the target. Record a match only when the residual is
+        // actually zero (a few ulps). A wider window used to stamp near-misses
+        // as exact.
+        let half = super::flat_exact_half_width(lhs.value);
+        let low = lhs.value - half;
+        let high = lhs.value + half;
 
         stats.lhs_tested += 1;
         let rhs_slice = db.range(low, high);
@@ -567,8 +568,7 @@ fn match_one_lhs(
                     lhs.value, rhs.value
                 );
             }
-            let val_diff = (lhs.value - rhs.value).abs();
-            if val_diff < val_error && pool.would_accept(0.0, true) {
+            if super::residual_is_exact(lhs.value, rhs.value) && pool.would_accept(0.0, true) {
                 let m = Match {
                     lhs: lhs.clone(),
                     rhs: rhs.clone(),
@@ -680,6 +680,15 @@ fn match_one_lhs(
             config.show_newton,
             config.derivative_margin,
         ) {
+            if !super::newton::refined_match_is_real(
+                &lhs.expr,
+                rhs.value,
+                refined_x,
+                config.target,
+                &context.eval,
+            ) {
+                continue;
+            }
             stats.newton_success += 1;
             let refined_error = refined_x - config.target;
             let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;

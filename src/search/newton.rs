@@ -27,6 +27,37 @@ pub(super) fn newton_raphson(
     )
 }
 
+/// Residual small enough, relative to the RHS, to call the iterate a root.
+fn newton_residual_acceptable(value: f64, rhs_value: f64) -> bool {
+    let diff = (value - rhs_value).abs();
+    if diff == 0.0 {
+        return true;
+    }
+    let scale = rhs_value.abs().max(1.0);
+    diff <= NEWTON_FINAL_TOLERANCE * scale
+}
+
+/// Whether a refined root that landed on the target float really solves the equation.
+///
+/// The step test `|delta| < 1e-15 * (1 + |x|)` is wider than one ulp for large
+/// `|x|`, so Newton can return the original target for `e^sinpi(x) = 2` at
+/// `2^52` with a residual of 1. A root that moved off the target is unchanged.
+/// A root that stayed on the target is kept only when `|f(x) - rhs|` is small
+/// relative to the RHS.
+pub(super) fn refined_match_is_real(
+    lhs: &crate::expr::Expression,
+    rhs_value: f64,
+    refined_x: f64,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+) -> bool {
+    if refined_x != target {
+        return true;
+    }
+    crate::eval::evaluate_search(lhs, refined_x, eval_context)
+        .is_ok_and(|result| newton_residual_acceptable(result.value, rhs_value))
+}
+
 /// Newton-Raphson with user constants support
 #[allow(clippy::too_many_arguments)]
 pub(super) fn newton_raphson_with_constants(
@@ -75,7 +106,7 @@ pub(super) fn newton_raphson_with_constants(
 
     // Check final result
     let result = crate::eval::evaluate_search(lhs, x, eval_context).ok()?;
-    if (result.value - rhs_value).abs() < NEWTON_FINAL_TOLERANCE {
+    if newton_residual_acceptable(result.value, rhs_value) {
         Some(x)
     } else {
         if show_newton {

@@ -7,8 +7,7 @@ use crate::expr::EvaluatedExpr;
 use crate::pool::{RankingMode, TopKPool};
 use crate::profile::UserConstant;
 use crate::thresholds::{
-    DEGENERATE_DERIVATIVE, DEGENERATE_RANGE_TOLERANCE, DEGENERATE_TEST_THRESHOLD,
-    EXACT_MATCH_TOLERANCE, NEWTON_FINAL_TOLERANCE,
+    DEGENERATE_DERIVATIVE, DEGENERATE_TEST_THRESHOLD, EXACT_MATCH_TOLERANCE, NEWTON_FINAL_TOLERANCE,
 };
 use std::collections::HashSet;
 use std::time::Duration;
@@ -23,16 +22,22 @@ pub use db::{ComplexityTier, ExprDatabase, TieredExprDatabase};
 
 /// Returns true when a near-zero-derivative LHS should be skipped as degenerate.
 ///
-/// Below 2^53 the historical probe is `target + e`. That step is a real
-/// perturbation, and the old rule (unchanged value or a still-zero derivative)
-/// is kept so ordinary searches see the same LHS set.
+/// When `target + e` is still a non-integer, that step is a real perturbation
+/// and the historical rule (unchanged value or a still-zero derivative) is
+/// kept so ordinary searches see the same LHS set.
 ///
-/// At and above 2^53 every finite value is an integer, and past ~2^55
-/// `target + e` is not even a different float. `cospi` is then exactly 1 with
-/// derivative 0 at every representable sample, so the local probe looks like a
-/// constant. Those targets are sampled at small points off that lattice and
-/// skipped only when every defined sample is constant in both value and
-/// derivative.
+/// From 2^52 upward every finite float is an integer, so `target + e` lands on
+/// another integer (or does not move at all once the ulp exceeds `e`). A
+/// derivative that stays zero there is not evidence of a constant: `cospi`
+/// flips between adjacent integers, and above 2^53 every representable sample
+/// is even so the flip is invisible. Those targets are kept when a neighbor
+/// changes the value, or when the same value holds at a small integer of the
+/// same parity but not off that lattice.
+///
+/// A value that holds only because a term has underflowed (`2 + 1/x` equals 2
+/// for every large float, and equals 2.5 at 2) is skipped. Sampling off the
+/// lattice alone cannot see that: both the identity and the underflow are
+/// non-constant at 0.5.
 pub(crate) fn should_skip_degenerate_lhs(
     lhs: &EvaluatedExpr,
     target: f64,
@@ -41,26 +46,17 @@ pub(crate) fn should_skip_degenerate_lhs(
     if lhs.derivative.abs() >= DEGENERATE_TEST_THRESHOLD {
         return false;
     }
-    const LATTICE_WHERE_INTEGERS_ARE_EVEN: f64 = 9007199254740992.0; // 2^53
     let standard = target + std::f64::consts::E;
-    if standard.is_finite() && standard != target && target.abs() < LATTICE_WHERE_INTEGERS_ARE_EVEN
-    {
+    if standard.is_finite() && standard != target && standard.fract() != 0.0 {
         return probe_matches_legacy_degenerate_rule(lhs, standard, eval);
     }
-    let probes = [0.5_f64, 1.0, -0.5, target.next_up(), target.next_down()];
-    for probe in probes {
-        if !probe.is_finite() || probe == target {
-            continue;
-        }
-        if let Ok(test_result) = crate::eval::evaluate_search(&lhs.expr, probe, eval) {
-            let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
-            let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
-            if !value_unchanged || !deriv_still_zero {
-                return false;
-            }
-        }
+    if !locally_constant_on_integer_neighbors(lhs, target, eval) {
+        return false;
     }
-    true
+    if reduced_parity_value_differs(lhs, target, eval) {
+        return true;
+    }
+    !off_lattice_sample_moves(lhs, eval)
 }
 
 fn probe_matches_legacy_degenerate_rule(
@@ -76,6 +72,88 @@ fn probe_matches_legacy_degenerate_rule(
         }
         Err(_) => true,
     }
+}
+
+fn probe_moves(lhs: &EvaluatedExpr, probe: f64, eval: &EvalContext<'_>) -> bool {
+    if !probe.is_finite() {
+        return false;
+    }
+    match crate::eval::evaluate_search(&lhs.expr, probe, eval) {
+        Ok(test_result) => {
+            let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+            let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
+            !value_unchanged || !deriv_still_zero
+        }
+        Err(_) => false,
+    }
+}
+
+fn locally_constant_on_integer_neighbors(
+    lhs: &EvaluatedExpr,
+    target: f64,
+    eval: &EvalContext<'_>,
+) -> bool {
+    let neighbors = [target.next_up(), target.next_down()];
+    for probe in neighbors {
+        if probe == target {
+            continue;
+        }
+        if probe_moves(lhs, probe, eval) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Small integer with the same sign and parity as `target`.
+///
+/// Large finite floats are integers. An identity that is really about that
+/// integer (`cospi` on evens) still holds here; a term that only vanished
+/// because `|x|` is huge (`1/x` added to a constant) does not.
+fn reduced_parity_probe(target: f64) -> f64 {
+    let even = crate::eval::f64_exact_integer_is_even(target).unwrap_or(true);
+    let magnitude = if even { 2.0 } else { 1.0 };
+    if target.is_sign_negative() {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+fn reduced_parity_value_differs(lhs: &EvaluatedExpr, target: f64, eval: &EvalContext<'_>) -> bool {
+    let probe = reduced_parity_probe(target);
+    if probe == target {
+        return false;
+    }
+    match crate::eval::evaluate_search(&lhs.expr, probe, eval) {
+        Ok(test_result) => (test_result.value - lhs.value).abs() >= DEGENERATE_TEST_THRESHOLD,
+        Err(_) => false,
+    }
+}
+
+fn off_lattice_sample_moves(lhs: &EvaluatedExpr, eval: &EvalContext<'_>) -> bool {
+    [0.5_f64, 1.0, -0.5]
+        .into_iter()
+        .any(|probe| probe_moves(lhs, probe, eval))
+}
+
+/// Half-width of the window in which a flat LHS may be paired with an RHS.
+///
+/// The residual has to be only a few ulps. A wider window used to stamp
+/// near-misses (`cospi(sqrt(x)) ≈ 0.997`) as exact.
+pub(crate) fn flat_exact_half_width(lhs_value: f64) -> f64 {
+    let scale = lhs_value.abs().max(1.0);
+    (8.0 * f64::EPSILON * scale).max(f64::EPSILON)
+}
+
+/// True when `lhs_value` and `rhs_value` agree to a few ulps.
+pub(crate) fn residual_is_exact(lhs_value: f64, rhs_value: f64) -> bool {
+    let diff = (lhs_value - rhs_value).abs();
+    if diff == 0.0 {
+        return true;
+    }
+    let scale = lhs_value.abs().max(rhs_value.abs()).max(1.0);
+    diff <= (8.0 * f64::EPSILON * scale).max(f64::EPSILON)
 }
 #[cfg(test)]
 use newton::newton_raphson;
@@ -1149,17 +1227,12 @@ pub fn search_streaming_with_config(
                 }
                 if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
                     stats.lhs_tested += 1;
+                    let half = flat_exact_half_width(lhs.value);
                     stats.record_candidate_window(
                         lhs,
-                        rhs_db.count_in_range(
-                            lhs.value - DEGENERATE_RANGE_TOLERANCE,
-                            lhs.value + DEGENERATE_RANGE_TOLERANCE,
-                        ),
+                        rhs_db.count_in_range(lhs.value - half, lhs.value + half),
                     );
-                    for rhs in rhs_db.iter_tiers_in_range(
-                        lhs.value - DEGENERATE_RANGE_TOLERANCE,
-                        lhs.value + DEGENERATE_RANGE_TOLERANCE,
-                    ) {
+                    for rhs in rhs_db.iter_tiers_in_range(lhs.value - half, lhs.value + half) {
                         if !search_config.rhs_symbol_allowed(&rhs.expr) {
                             continue;
                         }
@@ -1170,8 +1243,7 @@ pub fn search_streaming_with_config(
                                 lhs.value, rhs.value
                             );
                         }
-                        let val_diff = (lhs.value - rhs.value).abs();
-                        if val_diff < DEGENERATE_RANGE_TOLERANCE && pool.would_accept(0.0, true) {
+                        if residual_is_exact(lhs.value, rhs.value) && pool.would_accept(0.0, true) {
                             let m = Match {
                                 lhs: lhs.clone(),
                                 rhs: rhs.clone(),
@@ -1264,6 +1336,15 @@ pub fn search_streaming_with_config(
                         search_config.show_newton,
                         search_config.derivative_margin,
                     ) {
+                        if !newton::refined_match_is_real(
+                            &lhs.expr,
+                            rhs.value,
+                            refined_x,
+                            search_config.target,
+                            &context.eval,
+                        ) {
+                            continue;
+                        }
                         stats.newton_success += 1;
                         let refined_error = refined_x - search_config.target;
                         let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;

@@ -64,6 +64,38 @@ fn test_simple_search() {
 }
 
 #[test]
+fn test_newton_raphson_keeps_steep_phi_root() {
+    use crate::eval::evaluate;
+    use crate::expr::Expression;
+    let target = 1.6180339887_f64;
+    let lhs = Expression::parse("fx-rq").unwrap();
+    let rhs = Expression::parse("2ps+E").unwrap();
+    let l = evaluate(&lhs, target).unwrap();
+    let r = evaluate(&rhs, target).unwrap();
+    let initial = target + -(l.value - r.value) / l.derivative;
+    let got =
+        newton_raphson(&lhs, r.value, initial, 15).expect("steep phi match must still refine");
+    assert!(
+        (got - 1.6180339887008952).abs() < 1e-18,
+        "refined root moved: {got}"
+    );
+
+    // A steep but genuine near-root. The historical refine lands within an ulp
+    // of the target; rejecting it reorders ordinary top-N.
+    let target = 0.123_456_789_f64;
+    let lhs = Expression::parse("x9vC").unwrap();
+    let rhs = Expression::parse("21p-/").unwrap();
+    let l = evaluate(&lhs, target).unwrap();
+    let r = evaluate(&rhs, target).unwrap();
+    let initial = target + -(l.value - r.value) / l.derivative;
+    let got = newton_raphson(&lhs, r.value, initial, 15);
+    assert!(
+        got.is_some(),
+        "x9vC vs 21p-/ should refine (initial {initial}, target {target})"
+    );
+}
+
+#[test]
 fn test_newton_raphson() {
     use crate::expr::Expression;
 
@@ -1609,6 +1641,226 @@ fn test_large_targets_keep_cospi_identity_and_still_drop_constants() {
                 .join(", ")
         );
     }
+}
+
+fn integer_lattice_config() -> crate::gen::GenConfig {
+    use crate::symbol::Symbol;
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = 55;
+    config.max_rhs_complexity = 40;
+    config.max_length = 8;
+    config.constants = vec![
+        Symbol::One,
+        Symbol::Two,
+        Symbol::Pi,
+        Symbol::E,
+        Symbol::Phi,
+        Symbol::Catalan,
+        Symbol::Plastic,
+    ];
+    config.unary_ops = vec![
+        Symbol::Neg,
+        Symbol::Recip,
+        Symbol::Sqrt,
+        Symbol::Square,
+        Symbol::Exp,
+        Symbol::SinPi,
+        Symbol::CosPi,
+    ];
+    config.binary_ops = vec![Symbol::Add, Symbol::Sub];
+    config
+}
+
+fn is_exact_equation(matches: &[super::Match], lhs: &str, rhs: &str) -> bool {
+    matches.iter().any(|m| {
+        m.error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE
+            && m.lhs.expr.to_postfix() == lhs
+            && m.rhs.expr.to_postfix() == rhs
+    })
+}
+
+fn equation_list(matches: &[super::Match]) -> String {
+    matches
+        .iter()
+        .map(|m| {
+            format!(
+                "{} = {} err={:.3e}",
+                m.lhs.expr.to_postfix(),
+                m.rhs.expr.to_postfix(),
+                m.error
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[test]
+fn test_large_integer_flat_near_misses_are_not_exact() {
+    // 2^63. cospi(sqrt(x)) is about 0.997 with a tiny derivative, and 2+1/x
+    // equals 2 only because 1/x underflows. Neither is an exact root.
+    let target = 2.0_f64.powi(63);
+    let config = integer_lattice_config();
+    for (label, matches) in [
+        ("batch", super::search(target, &config, 12)),
+        (
+            "streaming",
+            super::search_streaming(target, &config, 12, false, None).0,
+        ),
+    ] {
+        assert!(
+            !is_exact_equation(&matches, "xqC", "1"),
+            "{label} stamped cospi(sqrt(x)) = 1 exact: {}",
+            equation_list(&matches)
+        );
+        assert!(
+            !is_exact_equation(&matches, "2xr+", "2") && !is_exact_equation(&matches, "xr2+", "2"),
+            "{label} stamped 2+1/x = 2 exact: {}",
+            equation_list(&matches)
+        );
+        assert!(
+            is_exact_equation(&matches, "xC", "1"),
+            "{label} dropped the real identity cospi(x) = 1: {}",
+            equation_list(&matches)
+        );
+    }
+}
+
+#[test]
+fn test_newton_does_not_call_a_sub_ulp_step_exact() {
+    use crate::expr::Expression;
+
+    let two_52 = 2.0_f64.powi(52);
+    let ctx = crate::eval::EvalContext::default();
+    let exp_sinpi = Expression::parse("xSE").expect("e^sinpi(x)");
+    let stuck = newton_raphson(&exp_sinpi, 2.0, two_52, 15);
+    assert_eq!(stuck, Some(two_52));
+    assert!(
+        !super::newton::refined_match_is_real(&exp_sinpi, 2.0, two_52, two_52, &ctx),
+        "e^sinpi(x) = 2 is not a root at 2^52 (value is 1)"
+    );
+    let root = newton_raphson(&exp_sinpi, 1.0, two_52, 15).expect("e^sinpi(x) = 1");
+    assert!(
+        (root - two_52).abs() < 1.0,
+        "true root should stay on 2^52, got {root}"
+    );
+    assert!(super::newton::refined_match_is_real(
+        &exp_sinpi, 1.0, two_52, two_52, &ctx
+    ));
+
+    // The same early-accept used to stamp these on main. sinpi(x^2) is 0,
+    // cospi(x^2) is 1.
+    let sin_square = Expression::parse("xsS").expect("sinpi(x^2)");
+    assert!(!super::newton::refined_match_is_real(
+        &sin_square,
+        1.0,
+        two_52,
+        two_52,
+        &ctx
+    ));
+    let cos_square = Expression::parse("xsC").expect("cospi(x^2)");
+    assert!(newton_raphson(&cos_square, 2.0, two_52, 15).is_none());
+
+    let one_e15 = 1.0e15;
+    let catalan = 0.915_965_594_177_219;
+    assert!(
+        !super::newton::refined_match_is_real(&exp_sinpi, catalan, one_e15, one_e15, &ctx),
+        "e^sinpi(x) = catalan leaves a residual of about 0.084 at 1e15"
+    );
+}
+
+#[test]
+fn test_squared_trig_false_exacts_stay_out() {
+    use crate::symbol::Symbol;
+    // cospi(x^2) at 2^52 is really 1 with derivative 0, so LHS dedup keeps the
+    // simpler cospi(x). sinpi(x^2) is 0. Neither may show up as = 1 or = 2
+    // the way main's Newton step used to.
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = 50;
+    config.max_rhs_complexity = 20;
+    config.constants = vec![Symbol::One, Symbol::Two];
+    config.unary_ops = vec![Symbol::Square, Symbol::CosPi, Symbol::SinPi];
+    config.binary_ops = vec![];
+    let target = 2.0_f64.powi(52);
+    for matches in [
+        super::search(target, &config, 20),
+        super::search_streaming(target, &config, 20, false, None).0,
+    ] {
+        let list = equation_list(&matches);
+        assert!(
+            is_exact_equation(&matches, "xC", "1"),
+            "cospi(x) = 1 missing: {list}"
+        );
+        assert!(!is_exact_equation(&matches, "xsC", "2"), "{list}");
+        assert!(!is_exact_equation(&matches, "xsS", "1"), "{list}");
+        assert!(!is_exact_equation(&matches, "xsS", "2"), "{list}");
+    }
+}
+
+#[test]
+fn test_false_exact_identities_stay_out_of_large_integer_results() {
+    let config = integer_lattice_config();
+
+    let two_52 = 2.0_f64.powi(52);
+    let at_two_52 = super::search(two_52, &config, 8);
+    assert!(
+        !is_exact_equation(&at_two_52, "xSE", "2"),
+        "e^sinpi(x) = 2 was exact at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+    assert!(
+        !is_exact_equation(&at_two_52, "xsS", "1"),
+        "sinpi(x^2) = 1 was exact at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+    assert!(
+        !is_exact_equation(&at_two_52, "xsC", "2"),
+        "cospi(x^2) = 2 was exact at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+    assert!(
+        is_exact_equation(&at_two_52, "xC", "1"),
+        "cospi(x) = 1 missing at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+    assert!(
+        is_exact_equation(&at_two_52, "xSE", "1"),
+        "e^sinpi(x) = 1 should stay exact at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+
+    // 2^53 - 1 is the last odd integer. cospi is -1 there, not +1; the bug
+    // was the LHS being dropped because target+e is the next integer.
+    let two_53_minus = 2.0_f64.powi(53) - 1.0;
+    let at_odd = super::search(two_53_minus, &config, 8);
+    assert!(
+        at_odd.iter().any(|m| {
+            m.error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE
+                && m.lhs.expr.to_postfix() == "xC"
+                && (m.rhs.value + 1.0).abs() == 0.0
+        }),
+        "cospi(x) = -1 missing at 2^53-1: {}",
+        equation_list(&at_odd)
+    );
+    assert!(
+        !is_exact_equation(&at_odd, "xC", "1"),
+        "cospi(x) = 1 is false at odd 2^53-1: {}",
+        equation_list(&at_odd)
+    );
+
+    let at_1e15 = super::search(1.0e15, &config, 8);
+    assert!(
+        at_1e15
+            .iter()
+            .take(8)
+            .all(|m| m.rhs.expr.to_postfix() != "G"),
+        "catalan ranked in the top 8 at 1e15: {}",
+        equation_list(&at_1e15)
+    );
+    assert!(
+        !is_exact_equation(&at_1e15, "xSE", "G"),
+        "e^sinpi(x) = catalan was exact at 1e15: {}",
+        equation_list(&at_1e15)
+    );
 }
 
 #[test]
