@@ -22,6 +22,17 @@ use db::calculate_adaptive_search_radius;
 pub use db::{ComplexityTier, ExprDatabase, TieredExprDatabase};
 
 /// Returns true when a near-zero-derivative LHS should be skipped as degenerate.
+///
+/// Below 2^53 the historical probe is `target + e`. That step is a real
+/// perturbation, and the old rule (unchanged value or a still-zero derivative)
+/// is kept so ordinary searches see the same LHS set.
+///
+/// At and above 2^53 every finite value is an integer, and past ~2^55
+/// `target + e` is not even a different float. `cospi` is then exactly 1 with
+/// derivative 0 at every representable sample, so the local probe looks like a
+/// constant. Those targets are sampled at small points off that lattice and
+/// skipped only when every defined sample is constant in both value and
+/// derivative.
 pub(crate) fn should_skip_degenerate_lhs(
     lhs: &EvaluatedExpr,
     target: f64,
@@ -30,8 +41,34 @@ pub(crate) fn should_skip_degenerate_lhs(
     if lhs.derivative.abs() >= DEGENERATE_TEST_THRESHOLD {
         return false;
     }
-    let test_x = target + std::f64::consts::E;
-    match crate::eval::evaluate_fast_with_context(&lhs.expr, test_x, eval) {
+    const LATTICE_WHERE_INTEGERS_ARE_EVEN: f64 = 9007199254740992.0; // 2^53
+    let standard = target + std::f64::consts::E;
+    if standard.is_finite() && standard != target && target.abs() < LATTICE_WHERE_INTEGERS_ARE_EVEN
+    {
+        return probe_matches_legacy_degenerate_rule(lhs, standard, eval);
+    }
+    let probes = [0.5_f64, 1.0, -0.5, target.next_up(), target.next_down()];
+    for probe in probes {
+        if !probe.is_finite() || probe == target {
+            continue;
+        }
+        if let Ok(test_result) = crate::eval::evaluate_search(&lhs.expr, probe, eval) {
+            let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+            let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
+            if !value_unchanged || !deriv_still_zero {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn probe_matches_legacy_degenerate_rule(
+    lhs: &EvaluatedExpr,
+    probe: f64,
+    eval: &EvalContext<'_>,
+) -> bool {
+    match crate::eval::evaluate_search(&lhs.expr, probe, eval) {
         Ok(test_result) => {
             let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
             let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;

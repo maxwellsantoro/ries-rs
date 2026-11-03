@@ -263,7 +263,11 @@ pub fn evaluate_with_workspace(
     x: f64,
     workspace: &mut EvalWorkspace,
 ) -> Result<EvalResult, EvalError> {
-    evaluate_with_workspace_and_context(expr, x, workspace, &EvalContext::new())
+    let context = EvalContext::new();
+    if expr.has_decimal_literals() {
+        return evaluate_decimal_literal_expression(expr, x, workspace, &context);
+    }
+    evaluate_with_workspace_and_context(expr, x, workspace, &context)
 }
 
 /// Evaluate an expression with user constants, using a reusable workspace.
@@ -281,6 +285,9 @@ pub fn evaluate_with_workspace_and_constants(
     user_constants: &[UserConstant],
 ) -> Result<EvalResult, EvalError> {
     let context = EvalContext::from_slices(user_constants, &[]);
+    if expr.has_decimal_literals() {
+        return evaluate_decimal_literal_expression(expr, x, workspace, &context);
+    }
     evaluate_with_workspace_and_context(expr, x, workspace, &context)
 }
 
@@ -298,6 +305,9 @@ pub fn evaluate_with_workspace_and_constants_and_functions(
     user_functions: &[UserFunction],
 ) -> Result<EvalResult, EvalError> {
     let context = EvalContext::from_slices(user_constants, user_functions);
+    if expr.has_decimal_literals() {
+        return evaluate_decimal_literal_expression(expr, x, workspace, &context);
+    }
     evaluate_with_workspace_and_context(expr, x, workspace, &context)
 }
 
@@ -315,19 +325,7 @@ pub fn evaluate_with_workspace_and_context(
     workspace.clear();
     let stack = &mut workspace.stack;
 
-    let mut index = 0;
-    while index < expr.len() {
-        // Solver integers are exact f64s. The postfix under the span is only a
-        // scaffold: decimal Horner products are not exact for every integer
-        // (2^58 through 2^61 among them), and magnitudes past 2^63 do not fit
-        // in i64. Push the recorded value and skip the span.
-        if let Some((len, value)) = expr.decimal_literal_at(index) {
-            stack.push(StackEntry::constant(value, NumType::Integer));
-            index += len;
-            continue;
-        }
-        let sym = expr.symbols()[index];
-        index += 1;
+    for &sym in expr.symbols() {
         match sym.seft() {
             Seft::A => {
                 let entry = eval_constant_with_user(sym, x, context.user_constants)?;
@@ -392,6 +390,87 @@ pub fn evaluate_with_workspace_and_context(
     })
 }
 
+/// Evaluate a solver expression whose postfix contains an exact integer span.
+///
+/// The postfix under the span is only a scaffold. Decimal Horner products are
+/// not exact for every integer (2^58 through 2^61 among them), and magnitudes
+/// past 2^63 do not fit in i64. Push the recorded value and skip the span.
+#[cold]
+#[inline(never)]
+fn evaluate_decimal_literal_expression(
+    expr: &Expression,
+    x: f64,
+    workspace: &mut EvalWorkspace,
+    context: &EvalContext<'_>,
+) -> Result<EvalResult, EvalError> {
+    workspace.clear();
+    let stack = &mut workspace.stack;
+    let mut index = 0;
+    while index < expr.len() {
+        if let Some((len, value)) = expr.decimal_literal_at(index) {
+            stack.push(StackEntry::constant(value, NumType::Integer));
+            index += len;
+            continue;
+        }
+        let sym = expr.symbols()[index];
+        index += 1;
+        match sym.seft() {
+            Seft::A => {
+                let entry = eval_constant_with_user(sym, x, context.user_constants)?;
+                stack.push(entry);
+            }
+            Seft::B => {
+                if matches!(
+                    sym,
+                    Symbol::UserFunction0
+                        | Symbol::UserFunction1
+                        | Symbol::UserFunction2
+                        | Symbol::UserFunction3
+                        | Symbol::UserFunction4
+                        | Symbol::UserFunction5
+                        | Symbol::UserFunction6
+                        | Symbol::UserFunction7
+                        | Symbol::UserFunction8
+                        | Symbol::UserFunction9
+                        | Symbol::UserFunction10
+                        | Symbol::UserFunction11
+                        | Symbol::UserFunction12
+                        | Symbol::UserFunction13
+                        | Symbol::UserFunction14
+                        | Symbol::UserFunction15
+                ) {
+                    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
+                    let result = eval_user_function(sym, a, context, x)?;
+                    stack.push(result);
+                } else {
+                    let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
+                    let result = eval_unary(sym, a, context.trig_argument_scale)?;
+                    stack.push(result);
+                }
+            }
+            Seft::C => {
+                let b = stack.pop().ok_or(EvalError::StackUnderflow)?;
+                let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
+                let result = eval_binary(sym, a, b)?;
+                stack.push(result);
+            }
+        }
+    }
+
+    if stack.len() != 1 {
+        return Err(EvalError::Invalid);
+    }
+    let result = stack.pop().unwrap();
+    if result.val.is_nan() || result.val.is_infinite() {
+        return Err(EvalError::Overflow);
+    }
+    Ok(EvalResult {
+        value: result.val,
+        derivative: result.deriv,
+        num_type: result.num_type,
+    })
+}
+
 /// Evaluate an expression at a given value of x.
 ///
 /// Convenience wrapper that allocates a new workspace. For hot loops,
@@ -437,6 +516,9 @@ pub fn evaluate_with_context(
     context: &EvalContext<'_>,
 ) -> Result<EvalResult, EvalError> {
     let mut workspace = EvalWorkspace::new();
+    if expr.has_decimal_literals() {
+        return evaluate_decimal_literal_expression(expr, x, &mut workspace, context);
+    }
     evaluate_with_workspace_and_context(expr, x, &mut workspace, context)
 }
 
@@ -518,6 +600,22 @@ pub fn evaluate_fast_with_constants_and_functions(
 /// Evaluate an expression using a thread-local workspace and explicit context.
 #[inline]
 pub fn evaluate_fast_with_context(
+    expr: &Expression,
+    x: f64,
+    context: &EvalContext<'_>,
+) -> Result<EvalResult, EvalError> {
+    if expr.has_decimal_literals() {
+        let mut workspace = EvalWorkspace::new();
+        return evaluate_decimal_literal_expression(expr, x, &mut workspace, context);
+    }
+    evaluate_search(expr, x, context)
+}
+
+/// Search evaluation. Generated expressions have no exact-integer annotation,
+/// so this skips that test. The check lives on the public entry points; leaving
+/// it here kept release search a few percent slower.
+#[inline]
+pub(crate) fn evaluate_search(
     expr: &Expression,
     x: f64,
     context: &EvalContext<'_>,
@@ -728,79 +826,66 @@ fn eval_unary(
         (scale - DEFAULT_TRIG_ARGUMENT_SCALE).abs() <= f64::EPSILON
     }
 
-    /// `(-1)^n` for an integer argument. `even` is the parity of `n`.
+    /// `i64::MAX as f64` is 2^63, which is not an i64. `as i64` saturates it
+    /// to `i64::MAX` (odd) and made `tanpi(2^62)` look like a pole.
     #[inline]
-    fn integer_sign(even: bool) -> f64 {
-        if even {
-            1.0
-        } else {
-            -1.0
-        }
-    }
-
-    /// Cast an integer-valued float that is strictly inside the i64 range.
-    ///
-    /// `i64::MAX as f64` is 2^63, so a comparison against that bound accepts
-    /// 2^63 and the cast saturates to `i64::MAX` (odd). Values at or beyond
-    /// 2^63 are rejected here; their parity is read from the exponent instead.
-    #[inline]
-    fn f64_to_i64_exact(rounded: f64) -> Option<i64> {
-        const TWO_63: f64 = 9223372036854775808.0;
-        if !rounded.is_finite() || rounded <= -TWO_63 || rounded >= TWO_63 {
+    fn rounded_f64_to_i64(rounded: f64) -> Option<i64> {
+        if !rounded.is_finite() {
             return None;
         }
-        let n = rounded as i64;
-        (n as f64 == rounded).then_some(n)
-    }
-
-    /// `Some(even)` when `value` is within the snap tolerance of an integer.
-    ///
-    /// At magnitude >= 2^52 every finite f64 is already an integer (ulp >= 1),
-    /// and at magnitude >= 2^53 every one of them is even (ulp >= 2).
-    #[inline]
-    fn snap_integer_even(value: f64) -> Option<bool> {
-        const TWO_52: f64 = 4503599627370496.0;
-        const TWO_53: f64 = 9007199254740992.0;
-        if !value.is_finite() {
+        if rounded < i64::MIN as f64 || rounded >= i64::MAX as f64 {
             return None;
         }
-        if value.abs() >= TWO_53 {
-            return Some(true);
-        }
-        if value.abs() >= TWO_52 {
-            return f64_exact_integer_is_even(value);
-        }
+        Some(rounded as i64)
+    }
+
+    /// Integer classification that keeps the small-argument tests in the same
+    /// order as a plain `Option` snap. Non-integers return [`IntegerSnap::NotInteger`]
+    /// at the tolerance check and do not inspect magnitude.
+    enum IntegerSnap {
+        Small(i64),
+        /// Finite integer with magnitude >= 2^63. The ulp is at least 2048, so
+        /// the value is even and not a half-integer.
+        LargeEven,
+        NotInteger,
+    }
+
+    #[inline]
+    fn snap_integer(value: f64) -> IntegerSnap {
         let rounded = value.round();
         if (value - rounded).abs() > TRIG_EXACT_ARGUMENT_TOLERANCE {
-            return None;
+            return IntegerSnap::NotInteger;
         }
-        let n = f64_to_i64_exact(rounded)?;
-        Some(n.rem_euclid(2) == 0)
+        if !rounded.is_finite() {
+            return IntegerSnap::NotInteger;
+        }
+        if rounded < i64::MIN as f64 || rounded >= i64::MAX as f64 {
+            return IntegerSnap::LargeEven;
+        }
+        IntegerSnap::Small(rounded as i64)
     }
 
-    /// Sign `(-1)^n` when `value` is within tolerance of the half-integer `n+0.5`.
-    ///
-    /// Half-integers stop being representable once the ulp exceeds 0.5, which
-    /// is every finite value with magnitude >= 2^52. Doubling those values and
-    /// casting to i64 saturates (2 * 2^62 = 2^63 becomes `i64::MAX`, which is
-    /// odd) and used to treat an ordinary integer as a tangent pole.
     #[inline]
-    fn snap_half_integer_sign(value: f64) -> Option<f64> {
-        const TWO_52: f64 = 4503599627370496.0;
-        if !value.is_finite() || value.abs() >= TWO_52 {
-            return None;
-        }
+    fn snap_half_integer_index(value: f64) -> Option<i64> {
         let doubled = value * 2.0;
         let rounded = doubled.round();
         if (doubled - rounded).abs() > TRIG_EXACT_ARGUMENT_TOLERANCE {
             return None;
         }
-        let n = f64_to_i64_exact(rounded)?;
-        if n.rem_euclid(2) == 0 {
+        let rounded_i = rounded_f64_to_i64(rounded)?;
+        if rounded_i.rem_euclid(2) == 0 {
             return None;
         }
-        let index = (n - 1) / 2;
-        Some(integer_sign(index.rem_euclid(2) == 0))
+        Some((rounded_i - 1) / 2)
+    }
+
+    #[inline]
+    fn alternating_sign(n: i64) -> f64 {
+        if n.rem_euclid(2) == 0 {
+            1.0
+        } else {
+            -1.0
+        }
     }
 
     let (val, deriv, num_type) = match sym {
@@ -871,18 +956,25 @@ fn eval_unary(
         // sin(π*a), d(sin(πa))/dx = π*cos(πa)*da/dx
         SinPi => {
             if is_default_trig_scale(trig_argument_scale) {
-                if let Some(even) = snap_integer_even(a.val) {
-                    (
+                match snap_integer(a.val) {
+                    IntegerSnap::Small(n) => (
                         0.0,
-                        trig_argument_scale * integer_sign(even) * a.deriv,
+                        trig_argument_scale * alternating_sign(n) * a.deriv,
                         NumType::Transcendental,
-                    )
-                } else if let Some(sign) = snap_half_integer_sign(a.val) {
-                    (sign, 0.0, NumType::Transcendental)
-                } else {
-                    let val = (trig_argument_scale * a.val).sin();
-                    let deriv = trig_argument_scale * (trig_argument_scale * a.val).cos() * a.deriv;
-                    (val, deriv, NumType::Transcendental)
+                    ),
+                    IntegerSnap::LargeEven => {
+                        (0.0, trig_argument_scale * a.deriv, NumType::Transcendental)
+                    }
+                    IntegerSnap::NotInteger => {
+                        if let Some(n) = snap_half_integer_index(a.val) {
+                            (alternating_sign(n), 0.0, NumType::Transcendental)
+                        } else {
+                            let val = (trig_argument_scale * a.val).sin();
+                            let deriv =
+                                trig_argument_scale * (trig_argument_scale * a.val).cos() * a.deriv;
+                            (val, deriv, NumType::Transcendental)
+                        }
+                    }
                 }
             } else {
                 let val = (trig_argument_scale * a.val).sin();
@@ -894,19 +986,24 @@ fn eval_unary(
         // cos(π*a), d(cos(πa))/dx = -π*sin(πa)*da/dx
         CosPi => {
             if is_default_trig_scale(trig_argument_scale) {
-                if let Some(even) = snap_integer_even(a.val) {
-                    (integer_sign(even), 0.0, NumType::Transcendental)
-                } else if let Some(sign) = snap_half_integer_sign(a.val) {
-                    (
-                        0.0,
-                        -trig_argument_scale * sign * a.deriv,
-                        NumType::Transcendental,
-                    )
-                } else {
-                    let val = (trig_argument_scale * a.val).cos();
-                    let deriv =
-                        -trig_argument_scale * (trig_argument_scale * a.val).sin() * a.deriv;
-                    (val, deriv, NumType::Transcendental)
+                match snap_integer(a.val) {
+                    IntegerSnap::Small(n) => (alternating_sign(n), 0.0, NumType::Transcendental),
+                    IntegerSnap::LargeEven => (1.0, 0.0, NumType::Transcendental),
+                    IntegerSnap::NotInteger => {
+                        if let Some(n) = snap_half_integer_index(a.val) {
+                            (
+                                0.0,
+                                -trig_argument_scale * alternating_sign(n) * a.deriv,
+                                NumType::Transcendental,
+                            )
+                        } else {
+                            let val = (trig_argument_scale * a.val).cos();
+                            let deriv = -trig_argument_scale
+                                * (trig_argument_scale * a.val).sin()
+                                * a.deriv;
+                            (val, deriv, NumType::Transcendental)
+                        }
+                    }
                 }
             } else {
                 let val = (trig_argument_scale * a.val).cos();
@@ -918,19 +1015,22 @@ fn eval_unary(
         // tan(π*a), d(tan(πa))/dx = π*sec²(πa)*da/dx
         TanPi => {
             if is_default_trig_scale(trig_argument_scale) {
-                if snap_half_integer_sign(a.val).is_some() {
+                if snap_half_integer_index(a.val).is_some() {
                     return Err(EvalError::Overflow);
                 }
-                if snap_integer_even(a.val).is_some() {
-                    (0.0, trig_argument_scale * a.deriv, NumType::Transcendental)
-                } else {
-                    let cos_val = (trig_argument_scale * a.val).cos();
-                    if cos_val.abs() < 1e-10 {
-                        return Err(EvalError::Overflow);
+                match snap_integer(a.val) {
+                    IntegerSnap::Small(_) | IntegerSnap::LargeEven => {
+                        (0.0, trig_argument_scale * a.deriv, NumType::Transcendental)
                     }
-                    let val = (trig_argument_scale * a.val).tan();
-                    let deriv = trig_argument_scale * a.deriv / (cos_val * cos_val);
-                    (val, deriv, NumType::Transcendental)
+                    IntegerSnap::NotInteger => {
+                        let cos_val = (trig_argument_scale * a.val).cos();
+                        if cos_val.abs() < 1e-10 {
+                            return Err(EvalError::Overflow);
+                        }
+                        let val = (trig_argument_scale * a.val).tan();
+                        let deriv = trig_argument_scale * a.deriv / (cos_val * cos_val);
+                        (val, deriv, NumType::Transcendental)
+                    }
                 }
             } else {
                 let cos_val = (trig_argument_scale * a.val).cos();
@@ -1077,10 +1177,17 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
                     return Err(EvalError::SqrtDomain);
                 }
 
-                // Odd roots of negatives are real. Parity comes from the
-                // significand: `rounded as i64` saturates at 2^63 to
-                // `i64::MAX` (odd) and would accept an even root index.
-                if f64_exact_integer_is_even(rounded) != Some(false) {
+                // Odd roots of negatives are real. Below 2^52 the index fits in
+                // i64 exactly. At and above 2^52, `as i64` saturates (2^63
+                // becomes i64::MAX, which is odd) so parity comes from the
+                // significand instead.
+                let even = if rounded.abs() >= 4503599627370496.0 {
+                    f64_exact_integer_is_even(rounded) != Some(false)
+                } else {
+                    let int_val = rounded as i64;
+                    int_val % 2 == 0
+                };
+                if even {
                     return Err(EvalError::SqrtDomain);
                 }
             }

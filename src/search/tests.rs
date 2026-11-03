@@ -1542,6 +1542,76 @@ fn test_should_skip_degenerate_lhs_skips_when_probe_fails() {
 }
 
 #[test]
+fn test_large_targets_keep_cospi_identity_and_still_drop_constants() {
+    use crate::eval::{evaluate_fast_with_context, EvalContext};
+    use crate::expr::{EvaluatedExpr, Expression};
+    use crate::symbol::{NumType, Symbol};
+
+    let ctx = EvalContext::default();
+    let evaluated_at = |postfix: &str, target: f64| {
+        let expr = Expression::parse(postfix).unwrap_or_else(|| panic!("parse {postfix}"));
+        let at = evaluate_fast_with_context(&expr, target, &ctx)
+            .unwrap_or_else(|err| panic!("eval {postfix} at {target}: {err:?}"));
+        EvaluatedExpr::new(expr, at.value, at.derivative, NumType::Transcendental)
+    };
+    let targets = [1e16, 1e20, 2.0_f64.powi(63), 2.0_f64.powi(100)];
+    for target in targets {
+        let cospi = evaluated_at("xC", target);
+        assert_eq!(cospi.value, 1.0, "cospi({target})");
+        assert!(
+            cospi.derivative.abs() < 1e-10,
+            "cospi({target}) derivative {}",
+            cospi.derivative
+        );
+        assert!(
+            !super::should_skip_degenerate_lhs(&cospi, target, &ctx),
+            "cospi(x) = 1 is an identity at {target}, not a constant expression"
+        );
+
+        for postfix in ["1", "1x^", "p"] {
+            let constant = evaluated_at(postfix, target);
+            assert!(
+                super::should_skip_degenerate_lhs(&constant, target, &ctx),
+                "{postfix} should stay degenerate at {target}"
+            );
+        }
+    }
+
+    // The historical probe is unchanged for ordinary targets, including a
+    // constant and a genuinely flat-at-a-point function whose value moves.
+    let constant = evaluated_at("1x^", 2.5);
+    assert!(super::should_skip_degenerate_lhs(&constant, 2.5, &ctx));
+    let square = evaluated_at("xs", 0.0);
+    assert!(
+        !super::should_skip_degenerate_lhs(&square, 0.0, &ctx),
+        "x^2 is flat at 0 but not constant"
+    );
+
+    // The identity has to survive the actual search filter, not only the helper.
+    let mut config = fast_test_config();
+    config.constants = vec![Symbol::One];
+    config.unary_ops = vec![Symbol::CosPi];
+    config.binary_ops = vec![];
+    config.max_lhs_complexity = 40;
+    config.max_rhs_complexity = 20;
+    config.max_length = 4;
+    for target in targets {
+        let matches = super::search(target, &config, 10);
+        assert!(
+            matches
+                .iter()
+                .any(|m| { m.lhs.expr.to_postfix() == "xC" && m.rhs.expr.to_postfix() == "1" }),
+            "missing cospi(x) = 1 for {target}: {}",
+            matches
+                .iter()
+                .map(|m| format!("{} = {}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+}
+
+#[test]
 fn test_search_adaptive_rejects_non_finite_target() {
     let config = fast_test_config();
     let search_config = SearchConfig {

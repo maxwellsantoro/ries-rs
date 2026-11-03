@@ -5,6 +5,7 @@
 use crate::symbol::{NumType, Seft, Symbol};
 use smallvec::SmallVec;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 /// Maximum expression length (matching C version's MAX_ELEN)
 pub const MAX_EXPR_LEN: usize = 21;
@@ -24,7 +25,13 @@ pub enum OutputFormat {
 }
 
 /// A symbolic expression in postfix notation
-#[derive(Clone, PartialEq, Eq, Hash)]
+///
+/// Exact integer annotations live in a process-wide table keyed by
+/// [`Expression::literal_id`], not in this struct. Search clones and scans
+/// millions of expressions that never carry an annotation; an inline list
+/// here doubled the struct and showed up in search time. `literal_id == 0`
+/// means "no annotation" and never takes the lock. The id fits in the padding
+/// after `contains_x`, so a search expression is the same size as before.
 pub struct Expression {
     /// Symbols in postfix order
     symbols: SmallVec<[Symbol; MAX_EXPR_LEN]>,
@@ -32,14 +39,8 @@ pub struct Expression {
     complexity: u32,
     /// Whether this expression contains the variable x
     contains_x: bool,
-    /// Solver-inserted integers, as `(start_symbol, symbol_count, bits)`.
-    ///
-    /// `bits` is `f64::to_bits()` of a finite integer. Evaluation pushes that
-    /// exact float instead of walking the span, so the printed root stays exact
-    /// when a decimal Horner product is not. Printers render the span as a
-    /// decimal literal (`+2000002`, not a tower of `2*5` factors).
-    /// Search-generated expressions leave this empty.
-    decimal_literals: SmallVec<[(u32, u32, u64); 2]>,
+    /// Key into [`literal_store`]. Zero when this expression has no solver integer.
+    literal_id: u16,
 }
 
 /// Whether `child` must be parenthesized under `parent`.
@@ -173,7 +174,7 @@ impl Expression {
             symbols: SmallVec::new(),
             complexity: 0,
             contains_x: false,
-            decimal_literals: SmallVec::new(),
+            literal_id: 0,
         }
     }
 
@@ -190,7 +191,7 @@ impl Expression {
             symbols: SmallVec::from_slice(symbols),
             complexity,
             contains_x,
-            decimal_literals: SmallVec::new(),
+            literal_id: 0,
         }
     }
 
@@ -217,7 +218,7 @@ impl Expression {
             symbols,
             complexity,
             contains_x,
-            decimal_literals: SmallVec::new(),
+            literal_id: 0,
         })
     }
 
@@ -303,28 +304,38 @@ impl Expression {
         if len == 0 || len > u32::MAX as usize {
             return;
         }
-        self.decimal_literals.push((0, len as u32, value.to_bits()));
+        self.literal_id =
+            literal_store::push_span(self.literal_id, (0, len as u32, value.to_bits()));
     }
 
     pub(crate) fn append_decimal_literals(&mut self, other: &Expression, shift: u32) {
-        for &(start, len, bits) in &other.decimal_literals {
-            self.decimal_literals.push((start + shift, len, bits));
+        if other.literal_id == 0 {
+            return;
         }
+        self.literal_id = literal_store::append_spans(self.literal_id, other.literal_id, shift);
     }
 
     fn trim_decimal_literals(&mut self) {
+        if self.literal_id == 0 {
+            return;
+        }
         let n = self.symbols.len() as u32;
-        self.decimal_literals
-            .retain(|(start, len, _)| start.saturating_add(*len) <= n);
+        self.literal_id = literal_store::retain_spans(self.literal_id, n);
+    }
+
+    /// Solver-inserted integers are rare. Search expressions leave this empty,
+    /// and the evaluator skips the literal scan in that case.
+    #[inline(always)]
+    pub(crate) fn has_decimal_literals(&self) -> bool {
+        self.literal_id != 0
     }
 
     /// When a decimal literal starts at `index`, its symbol length and value.
     pub(crate) fn decimal_literal_at(&self, index: usize) -> Option<(usize, f64)> {
-        self.decimal_literals
-            .iter()
-            .find_map(|&(start, len, bits)| {
-                (start as usize == index && len > 0).then_some((len as usize, f64::from_bits(bits)))
-            })
+        if self.literal_id == 0 {
+            return None;
+        }
+        literal_store::span_at(self.literal_id, index)
     }
 
     /// If a decimal literal starts at `index`, return its text and advance past it.
@@ -343,7 +354,10 @@ impl Expression {
         if sym == Symbol::X {
             self.contains_x = self.symbols.contains(&Symbol::X);
         }
-        self.trim_decimal_literals();
+        // Search never annotates integers. Skip the table unless one is present.
+        if self.literal_id != 0 {
+            self.trim_decimal_literals();
+        }
         Some(sym)
     }
 
@@ -372,7 +386,9 @@ impl Expression {
         if sym == Symbol::X {
             self.contains_x = self.symbols.contains(&Symbol::X);
         }
-        self.trim_decimal_literals();
+        if self.literal_id != 0 {
+            self.trim_decimal_literals();
+        }
         Some(sym)
     }
 
@@ -998,9 +1014,268 @@ impl Expression {
     }
 }
 
+impl Clone for Expression {
+    fn clone(&self) -> Self {
+        Self {
+            symbols: self.symbols.clone(),
+            complexity: self.complexity,
+            contains_x: self.contains_x,
+            literal_id: literal_store::clone_id(self.literal_id),
+        }
+    }
+}
+
+impl Drop for Expression {
+    fn drop(&mut self) {
+        literal_store::release(self.literal_id);
+    }
+}
+
+impl PartialEq for Expression {
+    fn eq(&self, other: &Self) -> bool {
+        self.symbols == other.symbols
+            && self.complexity == other.complexity
+            && self.contains_x == other.contains_x
+            && literal_store::same_spans(self.literal_id, other.literal_id)
+    }
+}
+
+impl Eq for Expression {}
+
+impl Hash for Expression {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Match the field hash of an expression with no integer annotation so
+        // search dedup keys stay identical to a build that has no side table.
+        self.symbols.hash(state);
+        self.complexity.hash(state);
+        self.contains_x.hash(state);
+        if self.literal_id != 0 {
+            literal_store::hash_spans(self.literal_id, state);
+        }
+    }
+}
+
 impl Default for Expression {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Exact integer spans for solver-built expressions.
+///
+/// Search expressions use id 0 and never lock. Ids are reference-counted so a
+/// cloned closed form keeps its value after the original is dropped, including
+/// across threads (reporting can run off the search pool).
+mod literal_store {
+    use std::hash::{Hash, Hasher};
+    use std::sync::Mutex;
+
+    struct Slot {
+        refs: u32,
+        spans: Vec<(u32, u32, u64)>,
+    }
+
+    struct Store {
+        /// Index 0 is unused so a zero id means "no annotation".
+        entries: Vec<Option<Slot>>,
+        free: Vec<u16>,
+    }
+
+    impl Store {
+        fn new() -> Self {
+            Self {
+                entries: vec![None],
+                free: Vec::new(),
+            }
+        }
+
+        fn alloc(&mut self, spans: Vec<(u32, u32, u64)>) -> u16 {
+            let slot = Slot { refs: 1, spans };
+            if let Some(id) = self.free.pop() {
+                self.entries[id as usize] = Some(slot);
+                return id;
+            }
+            let id = self.entries.len();
+            assert!(
+                id <= u16::MAX as usize,
+                "exact integer literal table exhausted"
+            );
+            self.entries.push(Some(slot));
+            id as u16
+        }
+
+        fn release_locked(&mut self, id: u16) {
+            if id == 0 {
+                return;
+            }
+            let slot = self.entries[id as usize]
+                .as_mut()
+                .expect("literal id released twice");
+            slot.refs -= 1;
+            if slot.refs == 0 {
+                self.entries[id as usize] = None;
+                self.free.push(id);
+            }
+        }
+
+        /// Unique slot the caller may mutate. Shared slots are copied first.
+        fn detach(&mut self, id: u16) -> u16 {
+            if id == 0 {
+                return self.alloc(Vec::new());
+            }
+            let refs = self.entries[id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .refs;
+            if refs == 1 {
+                return id;
+            }
+            let spans = self.entries[id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans
+                .clone();
+            self.release_locked(id);
+            self.alloc(spans)
+        }
+    }
+
+    fn with_store<R>(f: impl FnOnce(&mut Store) -> R) -> R {
+        static STORE: Mutex<Option<Store>> = Mutex::new(None);
+        let mut guard = STORE.lock().unwrap_or_else(|err| err.into_inner());
+        if guard.is_none() {
+            *guard = Some(Store::new());
+        }
+        f(guard.as_mut().expect("literal store"))
+    }
+
+    #[inline(always)]
+    pub(super) fn clone_id(id: u16) -> u16 {
+        if id == 0 {
+            return 0;
+        }
+        with_store(|store| {
+            store.entries[id as usize]
+                .as_mut()
+                .expect("literal id missing")
+                .refs += 1;
+            id
+        })
+    }
+
+    #[inline(always)]
+    pub(super) fn release(id: u16) {
+        if id == 0 {
+            return;
+        }
+        with_store(|store| store.release_locked(id));
+    }
+
+    pub(super) fn push_span(id: u16, span: (u32, u32, u64)) -> u16 {
+        with_store(|store| {
+            let id = store.detach(id);
+            store.entries[id as usize]
+                .as_mut()
+                .expect("literal id missing")
+                .spans
+                .push(span);
+            id
+        })
+    }
+
+    pub(super) fn append_spans(self_id: u16, other_id: u16, shift: u32) -> u16 {
+        if other_id == 0 {
+            return self_id;
+        }
+        with_store(|store| {
+            let extra: Vec<(u32, u32, u64)> = store.entries[other_id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans
+                .iter()
+                .map(|&(start, len, bits)| (start.saturating_add(shift), len, bits))
+                .collect();
+            let mut id = self_id;
+            for span in extra {
+                id = store.detach(id);
+                store.entries[id as usize]
+                    .as_mut()
+                    .expect("literal id missing")
+                    .spans
+                    .push(span);
+            }
+            id
+        })
+    }
+
+    pub(super) fn retain_spans(id: u16, n: u32) -> u16 {
+        if id == 0 {
+            return 0;
+        }
+        with_store(|store| {
+            let id = store.detach(id);
+            let spans = &mut store.entries[id as usize]
+                .as_mut()
+                .expect("literal id missing")
+                .spans;
+            spans.retain(|(start, len, _)| start.saturating_add(*len) <= n);
+            if spans.is_empty() {
+                store.release_locked(id);
+                0
+            } else {
+                id
+            }
+        })
+    }
+
+    pub(super) fn span_at(id: u16, index: usize) -> Option<(usize, f64)> {
+        if id == 0 {
+            return None;
+        }
+        with_store(|store| {
+            store.entries[id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans
+                .iter()
+                .find_map(|&(start, len, bits)| {
+                    (start as usize == index && len > 0)
+                        .then_some((len as usize, f64::from_bits(bits)))
+                })
+        })
+    }
+
+    pub(super) fn same_spans(left: u16, right: u16) -> bool {
+        if left == right {
+            return true;
+        }
+        if left == 0 || right == 0 {
+            return false;
+        }
+        with_store(|store| {
+            let a = &store.entries[left as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans;
+            let b = &store.entries[right as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans;
+            a == b
+        })
+    }
+
+    pub(super) fn hash_spans<H: Hasher>(id: u16, state: &mut H) {
+        if id == 0 {
+            return;
+        }
+        with_store(|store| {
+            store.entries[id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans
+                .hash(state);
+        });
     }
 }
 
@@ -1047,6 +1322,33 @@ impl EvaluatedExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_expression_stays_the_size_of_its_symbol_buffer() {
+        // The integer-annotation id sits in the padding after `contains_x`.
+        // Growing past this makes every search clone and the RHS value scan
+        // touch extra bytes.
+        let symbols = std::mem::size_of::<SmallVec<[Symbol; MAX_EXPR_LEN]>>();
+        let expr = std::mem::size_of::<Expression>();
+        assert!(
+            expr <= symbols + 8,
+            "Expression is {expr} bytes, symbol buffer is {symbols}"
+        );
+        assert_eq!(expr, 40, "search Expression grew to {expr} bytes");
+    }
+
+    #[test]
+    fn decimal_literal_survives_clone_and_drop() {
+        let mut expr = Expression::parse("2").unwrap();
+        let big = 2.0_f64.powi(63);
+        expr.mark_decimal_literal(big);
+        let cloned = expr.clone();
+        drop(expr);
+        assert_eq!(cloned.decimal_literal_at(0), Some((1, big)));
+        let again = cloned.clone();
+        assert_eq!(again, cloned);
+        assert_eq!(again.to_infix(), "9223372036854775808");
+    }
 
     #[test]
     fn test_parse_expression() {

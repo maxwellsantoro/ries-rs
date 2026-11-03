@@ -13,7 +13,7 @@
 //! Streaming reduces memory from O(expressions) to O(depth) by processing expressions
 //! as they're generated rather than accumulating them.
 
-use crate::eval::{evaluate_fast_with_context, EvalContext};
+use crate::eval::{evaluate_search, EvalContext};
 use crate::profile::{Profile, UserConstant, MAX_USER_SYMBOLS};
 use crate::symbol_table::SymbolTable;
 use crate::thresholds::QUANTIZE_SCALE;
@@ -986,7 +986,7 @@ fn generate_recursive_streaming(
     // Check if we have a complete expression
     if stack_depth == 1 && !current.is_empty() {
         // Try to evaluate it with user constants and functions support
-        match evaluate_fast_with_context(current, target, &eval_context) {
+        match evaluate_search(current, target, &eval_context) {
             Ok(result) => {
                 // Use shared validation helper
                 if should_include_expression(
@@ -1176,7 +1176,7 @@ fn generate_recursive(
     // Check if we have a complete expression
     if stack_depth == 1 && !current.is_empty() {
         // Try to evaluate it with user constants and functions support
-        match evaluate_fast_with_context(current, target, &eval_context) {
+        match evaluate_search(current, target, &eval_context) {
             Ok(result) => {
                 // Use shared validation helper
                 if should_include_expression(
@@ -1607,7 +1607,7 @@ pub fn generate_all_parallel_with_context(
         }
 
         // 1. Evaluate length-1 prefix (simulate top of generate_recursive)
-        if let Ok(result) = evaluate_fast_with_context(&expr1, target, eval_context) {
+        if let Ok(result) = evaluate_search(&expr1, target, eval_context) {
             if result.value.is_finite()
                 && result.value.abs() <= MAX_GENERATED_VALUE
                 && result.num_type >= config.min_num_type

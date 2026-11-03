@@ -42,7 +42,7 @@ pub(super) fn newton_raphson_with_constants(
     let tolerance = NEWTON_TOLERANCE;
 
     for iter in 0..max_iterations {
-        let result = crate::eval::evaluate_fast_with_context(lhs, x, eval_context).ok()?;
+        let result = crate::eval::evaluate_search(lhs, x, eval_context).ok()?;
         let f = result.value - rhs_value;
         let df = result.derivative;
 
@@ -74,7 +74,7 @@ pub(super) fn newton_raphson_with_constants(
     }
 
     // Check final result
-    let result = crate::eval::evaluate_fast_with_context(lhs, x, eval_context).ok()?;
+    let result = crate::eval::evaluate_search(lhs, x, eval_context).ok()?;
     if (result.value - rhs_value).abs() < NEWTON_FINAL_TOLERANCE {
         Some(x)
     } else {
