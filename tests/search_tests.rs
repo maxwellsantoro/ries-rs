@@ -1126,3 +1126,98 @@ fn test_parallel_rhs_override_matches_sequential() {
         "parallel RHS-override fallback should match sequential results"
     );
 }
+
+fn api_level_configs(level: u32, target: f64) -> (GenConfig, SearchConfig) {
+    let (max_lhs, max_rhs) = ries_rs::search::level_to_complexity(level);
+    let gen = GenConfig {
+        max_lhs_complexity: max_lhs,
+        max_rhs_complexity: max_rhs,
+        ..GenConfig::default()
+    };
+    let search = SearchConfig {
+        target,
+        max_matches: 100,
+        max_error: (target.abs() * 0.01).max(1e-12),
+        ranking_mode: ries_rs::pool::RankingMode::Parity,
+        zero_value_threshold: 1e-4,
+        newton_iterations: 15,
+        refine_with_newton: true,
+        ..SearchConfig::default()
+    };
+    (gen, search)
+}
+
+fn has_exact_postfix(matches: &[ries_rs::search::Match], lhs: &str, rhs: &str) -> bool {
+    matches
+        .iter()
+        .any(|m| m.exact && m.lhs.expr.to_postfix() == lhs && m.rhs.expr.to_postfix() == rhs)
+}
+
+#[test]
+fn test_api_level_budgets() {
+    for level in 0..=5 {
+        let budget = 40 + 2 * level;
+        assert_eq!(
+            ries_rs::search::level_to_complexity(level),
+            (budget, budget),
+            "level {level}"
+        );
+    }
+    // Out-of-range levels saturate instead of wrapping.
+    assert_eq!(
+        ries_rs::search::level_to_complexity(u32::MAX),
+        (u32::MAX, u32::MAX)
+    );
+}
+
+#[test]
+fn test_default_api_level_finds_plain_equations() {
+    // Demo-shaped search: level 3, parity ranking, 1% error floor, 100-match pool.
+    let expectations = [
+        (2.5, &[("2x*", "5"), ("x", "52/")][..]),
+        (1.5, &[("2x*", "3"), ("x", "32/")]),
+        (12.0, &[("x", "26*")][..]),
+        (42.0, &[("x", "67*")][..]),
+    ];
+    for (target, equations) in expectations {
+        let (gen, cfg) = api_level_configs(3, target);
+        let (matches, _) = search_with_stats_and_config(&gen, &cfg);
+        for (lhs, rhs) in equations {
+            assert!(
+                has_exact_postfix(&matches, lhs, rhs),
+                "level 3 missing exact {lhs} = {rhs} for {target}"
+            );
+        }
+        if target == 2.5 {
+            assert!(
+                matches.iter().all(|m| m.lhs.value.abs() >= 1e-4),
+                "a non-zero target must still drop LHS values under 1e-4"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_target_zero_finds_x_equals_ln_one() {
+    // `1-1` is a zero, but RHS dedupe keeps the cheaper `ln(1)` (complexity
+    // 23 vs 25). The near-zero prune used to drop `x` itself, so that identity
+    // could not be formed. Keeping `x` when the target is 0 surfaces it.
+    let (gen, cfg) = api_level_configs(3, 0.0);
+    let (batch, _) = search_with_stats_and_config(&gen, &cfg);
+    assert!(
+        has_exact_postfix(&batch, "x", "1l"),
+        "batch search for 0 should find exact x = ln(1)"
+    );
+
+    // Streaming sees LHS out of complexity order and, under parity ranking,
+    // can fill the 100-match pool with other exacts before `x = ln(1)` holds
+    // a slot. Complexity ranking keeps the cheap identity, which is what shows
+    // the LHS was not pruned.
+    let mut streaming_cfg = cfg.clone();
+    streaming_cfg.ranking_mode = ries_rs::pool::RankingMode::Complexity;
+    let (streaming, _) = search_streaming_with_config(&gen, &streaming_cfg);
+    assert!(
+        has_exact_postfix(&streaming, "x", "1l"),
+        "streaming search for 0 should find exact x = ln(1)"
+    );
+}

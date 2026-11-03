@@ -538,41 +538,59 @@ impl SearchStats {
 ///
 /// # Formula
 ///
-/// - Base LHS complexity: 10
-/// - Base RHS complexity: 12
-/// - Level multiplier: 4
-/// - `max_lhs = 10 + 4 * level`
-/// - `max_rhs = 12 + 4 * level`
+/// Both sides use the same budget:
+///
+/// - Base complexity: 40
+/// - Level step: 2
+/// - `max_lhs = max_rhs = 40 + 2 * level`
 ///
 /// # Level Guidelines
 ///
-/// | Level | LHS Max | RHS Max | Expression Count (approx) |
-/// |-------|---------|---------|---------------------------|
-/// | 0     | 10      | 12      | ~35K                      |
-/// | 1     | 14      | 16      | ~130K                     |
-/// | 2     | 18      | 20      | ~500K                     |
-/// | 3     | 22      | 24      | ~2M                       |
-/// | 4     | 26      | 28      | ~6M                       |
-/// | 5     | 30      | 32      | ~15M                      |
+/// Counts are right-hand sides generated on a full scan (a target with no
+/// cheap exact match). Left-hand side counts are a few hundred to a few
+/// thousand and depend on the target.
+///
+/// | Level | Both sides | RHS count (approx) |
+/// |-------|------------|--------------------|
+/// | 0     | 40         | ~1.0K              |
+/// | 1     | 42         | ~1.6K              |
+/// | 2     | 44         | ~2.6K              |
+/// | 3     | 46         | ~4.2K              |
+/// | 4     | 48         | ~6.7K              |
+/// | 5     | 50         | ~11K               |
+///
+/// Level 3 covers plain equations such as `2*x = 5` (solved `x = 5/2`),
+/// `x = 3/2`, `x = 2*6`, and `x = 6*7`, plus one extra add or multiply past
+/// the heaviest single-digit product (`9*9`, complexity 42). Level 5 is the
+/// top of the interactive range: a full scan stays within a few seconds.
 ///
 /// # Note
 ///
-/// The CLI uses a different formula with higher bases (35/35) and multiplier (10)
-/// to match the original RIES command-line behavior. This function is for
-/// programmatic API consumers.
+/// The CLI uses a separate formula (`35 + 10*L` on each side). That scale is
+/// not shared here. CLI level 3 is already large enough that a target with no
+/// cheap exact match runs for minutes, which is the wrong budget for the
+/// browser demo. Callers that want the CLI bounds should pass them to
+/// [`GenConfig`](crate::gen::GenConfig) directly.
 #[inline]
 pub fn level_to_complexity(level: u32) -> (u32, u32) {
-    const BASE_LHS: u32 = 10;
-    const BASE_RHS: u32 = 12;
-    const LEVEL_MULTIPLIER: u32 = 4;
+    const BASE: u32 = 40;
+    const LEVEL_STEP: u32 = 2;
 
     // Saturating arithmetic avoids panics/wraparound if an API caller passes
     // an out-of-range level without validation.
-    let level_factor = LEVEL_MULTIPLIER.saturating_mul(level);
-    (
-        BASE_LHS.saturating_add(level_factor),
-        BASE_RHS.saturating_add(level_factor),
-    )
+    let budget = BASE.saturating_add(LEVEL_STEP.saturating_mul(level));
+    (budget, budget)
+}
+
+/// Whether an LHS value should be dropped before matching.
+///
+/// Values under `threshold` match every constant near zero and flood the pool
+/// (`cospi(2.5) = 0` against many tiny right-hand sides). Target zero is the
+/// exception: `x` evaluates to 0, and dropping it makes `x = ln(1)` unreachable.
+/// `-0.0` compares equal to `0.0`, so a signed zero target is kept too.
+#[inline]
+pub(crate) fn prune_near_zero_lhs(value: f64, target: f64, threshold: f64) -> bool {
+    value.abs() < threshold && target != 0.0
 }
 
 /// A matched equation
@@ -696,7 +714,8 @@ pub struct SearchConfig {
     ///
     /// LHS expressions with absolute values below this threshold are pruned
     /// to prevent flooding results with trivial matches like `cospi(2.5) = 0`.
-    /// Set to 0.0 to disable this filtering.
+    /// The prune is skipped when the target itself is zero, so `x = ln(1)` can
+    /// be found. Set to 0.0 to disable this filtering for every target.
     ///
     /// Default: 1e-4
     pub zero_value_threshold: f64,
@@ -1355,8 +1374,13 @@ pub fn search_streaming_with_config(
             on_lhs: &mut |lhs| {
                 stats.lhs_count += 1;
 
-                // Skip LHS with value too close to 0
-                if lhs.value.abs() < search_config.zero_value_threshold {
+                // Skip LHS with value too close to 0. Target 0 is exempt so
+                // `x = ln(1)` is reachable. See `prune_near_zero_lhs`.
+                if prune_near_zero_lhs(
+                    lhs.value,
+                    search_config.target,
+                    search_config.zero_value_threshold,
+                ) {
                     if search_config.show_pruned_range {
                         eprintln!(
                             "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",

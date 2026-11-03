@@ -191,9 +191,9 @@ fn build_gen_config(
 ///     The target value to find equations for
 /// level : int, optional
 ///     Search level (default 2). Accepted range: 0..=5.
-///     Uses the library API complexity mapping ``(10 + 4*L, 12 + 4*L)``,
-///     not the heavier CLI ``-l/--level`` mapping ``(35 + 10*L, 35 + 10*L)``.
-///     Example API bounds: level 0 → (10, 12), level 2 → (18, 20), level 5 → (30, 32).
+///     Uses the library API complexity mapping ``(40 + 2*L, 40 + 2*L)``,
+///     not the CLI ``-l/--level`` mapping ``(35 + 10*L, 35 + 10*L)``.
+///     Example API bounds: level 0 → (40, 40), level 3 → (46, 46), level 5 → (50, 50).
 /// max_matches : int, optional
 ///     Maximum number of matches to return (default 16).
 ///     Note: Internally, the search requests 2*max_matches candidates
