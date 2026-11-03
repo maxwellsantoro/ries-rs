@@ -168,3 +168,4 @@ has been verified in project metadata.
 - `v2.0.0`: no Zenodo DOI recorded in this repository
 - `v2.0.1`: no Zenodo DOI recorded in this repository
 - `v2.0.2`: no Zenodo DOI recorded in this repository
+- `v2.0.3`: no Zenodo DOI recorded in this repository
