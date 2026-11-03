@@ -50,7 +50,8 @@ pub fn solve_for_x_rhs_expression(lhs: &Expression, rhs: &Expression) -> Option<
 /// `x_value` is the numeric root of the original equation. The result is
 /// `None` when `x_value` is not finite, the inverse is not real, or no
 /// closed form evaluates to that root. A non-finite hint does not fall back
-/// to the principal branch.
+/// to the principal branch. Integer shifts are exact for every finite integer
+/// `f64`, including magnitudes past 2^63.
 pub fn solve_for_x_at(lhs: &Expression, rhs: &Expression, x_value: f64) -> Option<Expression> {
     if !x_value.is_finite() {
         return None;
@@ -446,16 +447,14 @@ fn lift_periodic(
         let Some(k0) = nearest_branch_index((target - base) / period as f64) else {
             continue;
         };
-        for k in [k0.checked_sub(1), Some(k0), k0.checked_add(1)]
-            .into_iter()
-            .flatten()
-        {
+        for delta in [-1.0_f64, 0.0, 1.0] {
+            let k = k0 + delta;
+            if !k.is_finite() {
+                continue;
+            }
             let Some(offset) = family_offset(period, extra, k) else {
                 continue;
             };
-            if !f64_exact_i64(offset) {
-                continue;
-            }
             let Some(candidate) = linear_combo(&principal, principal_value, negate, offset) else {
                 continue;
             };
@@ -484,30 +483,18 @@ fn lift_periodic(
     best.map(|(expr, _)| expr)
 }
 
-/// Largest magnitude at which every integer is an exact f64.
-const MAX_EXACT_F64_INT: f64 = 9_007_199_254_740_992.0; // 2^53
-
-fn nearest_branch_index(k: f64) -> Option<i64> {
+fn nearest_branch_index(k: f64) -> Option<f64> {
     if !k.is_finite() {
         return None;
     }
     let rounded = k.round();
-    // 2^63 is not an exact i64, and integers past 2^53 are not all exact f64s.
-    // `f64_exact_i64` accepts the powers of two that remain exact past 2^53.
-    if rounded.abs() >= 9_223_372_036_854_775_808.0 {
-        return None;
-    }
-    let n = rounded as i64;
-    f64_exact_i64(n).then_some(n)
+    rounded.is_finite().then_some(rounded)
 }
 
-fn f64_exact_i64(n: i64) -> bool {
-    let f = n as f64;
-    f.is_finite() && f as i64 == n
-}
-
-fn family_offset(period: i64, extra: i64, k: i64) -> Option<i64> {
-    period.checked_mul(k)?.checked_add(extra)
+/// `period·k + extra` when that sum is a finite integer-valued float.
+fn family_offset(period: i64, extra: i64, k: f64) -> Option<f64> {
+    let offset = (period as f64).mul_add(k, extra as f64);
+    (offset.is_finite() && offset == offset.trunc()).then_some(offset)
 }
 
 /// `±principal + offset`. A zero principal is omitted so the shift prints as
@@ -516,7 +503,7 @@ fn linear_combo(
     principal: &Expression,
     principal_value: f64,
     negate: bool,
-    offset: i64,
+    offset: f64,
 ) -> Option<Expression> {
     if principal_value == 0.0 {
         return signed_integer(offset);
@@ -524,46 +511,129 @@ fn linear_combo(
     if !negate {
         return add_integer(principal, offset);
     }
-    if offset == 0 {
+    if offset == 0.0 {
         return Some(append_unary_expression(principal, Symbol::Neg));
     }
-    if offset > 0 {
-        let off = integer_expression(offset as u64)?;
+    if offset > 0.0 {
+        let off = integer_expression(offset)?;
         return Some(combine_binary_expressions(&off, principal, Symbol::Sub));
     }
     // offset - principal with offset < 0 is -( |offset| + principal ).
-    let magnitude = integer_expression(offset.unsigned_abs())?;
+    let magnitude = integer_expression(-offset)?;
     let sum = combine_binary_expressions(&magnitude, principal, Symbol::Add);
     Some(append_unary_expression(&sum, Symbol::Neg))
 }
 
-fn add_integer(base: &Expression, offset: i64) -> Option<Expression> {
-    if offset == 0 {
+fn add_integer(base: &Expression, offset: f64) -> Option<Expression> {
+    if offset == 0.0 {
         return Some(base.clone());
     }
-    if offset > 0 {
-        let off = integer_expression(offset as u64)?;
+    if offset > 0.0 {
+        let off = integer_expression(offset)?;
         return Some(combine_binary_expressions(base, &off, Symbol::Add));
     }
-    let magnitude = integer_expression(offset.unsigned_abs())?;
+    let magnitude = integer_expression(-offset)?;
     Some(combine_binary_expressions(base, &magnitude, Symbol::Sub))
 }
 
-fn signed_integer(offset: i64) -> Option<Expression> {
-    if offset == 0 {
+fn signed_integer(offset: f64) -> Option<Expression> {
+    if offset == 0.0 {
         return Some(zero_expression());
     }
-    let magnitude = integer_expression(offset.unsigned_abs())?;
-    if offset > 0 {
+    let magnitude = integer_expression(offset.abs())?;
+    if offset > 0.0 {
         Some(magnitude)
     } else {
         Some(append_unary_expression(&magnitude, Symbol::Neg))
     }
 }
 
-/// Positive integer as postfix. The printer shows the decimal digits; the
-/// postfix is Horner's method in base 10 (`10 = 2·5`) and must evaluate to `n`.
-fn integer_expression(n: u64) -> Option<Expression> {
+/// Positive finite integer. The printer shows its decimal digits.
+///
+/// The postfix scaffold is `mantissa * 2^shift` (or just the power of two).
+/// Evaluation does not trust that scaffold: the span is marked with `n` and
+/// [`crate::eval`] pushes that exact float. A base-10 Horner product is not
+/// an exact f64 for every integer (2^58 through 2^61), and an `i64` branch
+/// index cannot name 2^63 or anything larger.
+fn integer_expression(n: f64) -> Option<Expression> {
+    // Prefer the decimal Horner scaffold when it is an exact f64. That keeps
+    // single-digit offsets (2, 3, …) one symbol long, so a tie between
+    // `principal + 2` and `3 - principal` still prefers the form found first.
+    // 2^58..2^61 are exact integers whose Horner products are not, and anything
+    // at or above 2^63 is not an i64; those use `mantissa * 2^shift` plus the
+    // recorded literal.
+    if n > 0.0 && n < 9223372036854775808.0 && n == n.trunc() {
+        let as_u64 = n as u64;
+        if as_u64 as f64 == n {
+            if let Some(mut expr) = horner_u64(as_u64) {
+                expr.mark_decimal_literal(n);
+                let got = eval_expr(&expr, 0.0)?;
+                return (got == n).then_some(expr);
+            }
+        }
+    }
+    let (mantissa, shift) = split_positive_integer(n)?;
+    let mut expr = if mantissa == 1 && shift > 0 {
+        power_of_two(shift)?
+    } else if shift == 0 {
+        horner_u64(mantissa)?
+    } else {
+        let magnitude = horner_u64(mantissa)?;
+        let power = power_of_two(shift)?;
+        combine_binary_expressions(&magnitude, &power, Symbol::Mul)
+    };
+    expr.mark_decimal_literal(n);
+    let got = eval_expr(&expr, 0.0)?;
+    (got == n).then_some(expr)
+}
+
+/// `n = mantissa * 2^shift` with `mantissa` odd (or `shift == 0`) and `mantissa <= 2^53`.
+fn split_positive_integer(n: f64) -> Option<(u64, u32)> {
+    if !n.is_finite() || n <= 0.0 || n != n.trunc() {
+        return None;
+    }
+    let bits = n.to_bits();
+    let biased = ((bits >> 52) & 0x7ff) as i32;
+    if biased == 0 {
+        return None;
+    }
+    let mut mantissa = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
+    let mut shift = biased - 1023 - 52;
+    if shift < 0 {
+        let down = (-shift) as u32;
+        if mantissa & ((1u64 << down) - 1) != 0 {
+            return None;
+        }
+        mantissa >>= down;
+        shift = 0;
+    }
+    let trailing = mantissa.trailing_zeros();
+    mantissa >>= trailing;
+    shift += trailing as i32;
+    if shift < 0 || mantissa == 0 {
+        return None;
+    }
+    Some((mantissa, shift as u32))
+}
+
+fn power_of_two(shift: u32) -> Option<Expression> {
+    if shift == 0 {
+        return Some(constant_expression(Symbol::One));
+    }
+    let exponent = horner_u64(u64::from(shift))?;
+    Some(combine_binary_expressions(
+        &constant_expression(Symbol::Two),
+        &exponent,
+        Symbol::Pow,
+    ))
+}
+
+/// Positive integer whose value is an exact f64, as a base-10 Horner scaffold.
+///
+/// Every integer up to 2^53 is an exact f64, and each Horner step stays inside
+/// that range, so this scaffold evaluates to `n` on its own. Larger integers
+/// go through [`integer_expression`], which records the exact value.
+fn horner_u64(n: u64) -> Option<Expression> {
     if n == 0 || (n as f64) as u64 != n {
         return None;
     }
@@ -590,7 +660,6 @@ fn integer_expression(n: u64) -> Option<Expression> {
             );
         }
     }
-    expr.mark_decimal_literal(n);
     let got = eval_expr(&expr, 0.0)?;
     (got == n as f64).then_some(expr)
 }
@@ -663,21 +732,22 @@ fn is_odd_integer_value(value: f64) -> bool {
     integer_parity(value).is_some_and(|even| !even)
 }
 
-/// `Some(true)` even, `Some(false)` odd, `None` when `value` is not an
-/// exactly representable integer.
+/// `Some(true)` even, `Some(false)` odd, `None` when `value` is not an integer.
+///
+/// Exact integers of any finite magnitude use the significand. A value within
+/// `1e-8` of an integer still counts, which is only possible below 2^52.
 fn integer_parity(value: f64) -> Option<bool> {
-    if !value.is_finite() || value.abs() > MAX_EXACT_F64_INT {
+    if let Some(even) = crate::eval::f64_exact_integer_is_even(value) {
+        return Some(even);
+    }
+    if !value.is_finite() {
         return None;
     }
     let rounded = value.round();
     if (value - rounded).abs() > 1e-8 {
         return None;
     }
-    let n = rounded as i64;
-    if n as f64 != rounded {
-        return None;
-    }
-    Some(n % 2 == 0)
+    crate::eval::f64_exact_integer_is_even(rounded)
 }
 
 /// Closed form versus the refined root.
@@ -1226,6 +1296,118 @@ mod tests {
             .unwrap()
             .value;
         assert_eq!(value, past_mantissa as f64);
+    }
+
+    #[test]
+    fn test_choose_signed_root_picks_the_nearer_sign() {
+        // Direct call: the equation gate must not be what rejects a flipped odd root
+        // or a tiny negative root. Reintroducing an absolute 1e-12 margin, or
+        // applying this helper to an odd power, fails here.
+        let principal = expr("4q");
+        let chosen = choose_signed_root(principal, Some(-2.0)).expect("even root");
+        let value = eval_expr(&chosen, 0.0).unwrap();
+        assert!(
+            value < 0.0,
+            "expected the negative square root, got {value}"
+        );
+
+        let tiny = expr("2125**25**n^q");
+        let hint = -2.0_f64.powi(-50);
+        let chosen = choose_signed_root(tiny, Some(hint)).expect("tiny root");
+        let value = eval_expr(&chosen, 0.0).unwrap();
+        assert!(
+            value < 0.0 && (value - hint).abs() <= hint.abs() * 1e-6,
+            "relative sign choice failed: {value} vs {hint}"
+        );
+
+        let odd = invert_power(&expr("8"), &expr("3"), Some(-2.0)).expect("odd root");
+        let odd_value = eval_expr(&odd, 0.0).unwrap();
+        assert!(
+            odd_value > 0.0 && (odd_value - 2.0).abs() < 1e-9,
+            "odd power grew a sign choice: {odd_value} from {}",
+            odd.to_infix()
+        );
+        assert!(
+            !odd.to_infix().starts_with('-'),
+            "odd root expression was negated: {}",
+            odd.to_infix()
+        );
+    }
+
+    #[test]
+    fn test_unit_interval_argument_rejects_asin_outside_domain() {
+        // `solve_for_x_at` also returns None for these, but that is the later
+        // equation gate. This asserts the domain check itself.
+        assert!(
+            unit_interval_argument(&expr("2")).is_none(),
+            "asin/acos argument 2 is not real"
+        );
+        assert!(unit_interval_argument(&expr("1")).is_some());
+        assert!(unit_interval_argument(&expr("1n")).is_some());
+        assert!(unary_inverse_expression(Symbol::SinPi, &expr("2"), Some(0.5)).is_none());
+        assert!(unary_inverse_expression(Symbol::CosPi, &expr("2"), None).is_none());
+    }
+
+    #[test]
+    fn test_exact_integer_roots_include_large_powers_of_two() {
+        // 2^58..2^61 used to be dropped because the base-10 Horner product is
+        // not an exact f64. 2^63 and above used to be dropped because the
+        // branch index was an i64. +2^62 additionally made tanpi overflow.
+        let exponents = [
+            1, 10, 52, 53, 58, 59, 60, 61, 62, 63, 64, 100, 127, 200, 1023,
+        ];
+        for exp in exponents {
+            let magnitude = 2.0_f64.powi(exp);
+            for hint in [magnitude, -magnitude] {
+                for (lhs, rhs) in [("xC", "1"), ("xS", "11-"), ("xT", "11-")] {
+                    let solved =
+                        solve_for_x_at(&expr(lhs), &expr(rhs), hint).unwrap_or_else(|| {
+                            panic!("expected a closed form for {lhs} = {rhs} at 2^{exp} ({hint})")
+                        });
+                    let value = crate::eval::evaluate(&solved, 0.0)
+                        .unwrap_or_else(|err| panic!("{lhs} at {hint} failed: {err}"))
+                        .value;
+                    assert_eq!(
+                        value,
+                        hint,
+                        "{lhs} = {rhs} printed {} for {hint}",
+                        solved.to_infix()
+                    );
+                    let digits = solved.to_infix();
+                    let body = digits.strip_prefix('-').unwrap_or(digits.as_str());
+                    assert!(
+                        !body.is_empty() && body.bytes().all(|b| b.is_ascii_digit()),
+                        "expected a decimal integer, got {digits}"
+                    );
+                }
+            }
+        }
+        // Exact even integer that is not a pure power of two, past 2^63.
+        let mixed = 2.0_f64.powi(70) + 2.0_f64.powi(20);
+        let solved = solve_for_x_at(&expr("xC"), &expr("1"), mixed).expect("mixed integer");
+        assert_eq!(
+            crate::eval::evaluate(&solved, 0.0).unwrap().value,
+            mixed,
+            "{}",
+            solved.to_infix()
+        );
+        let solved = solve_for_x_at(&expr("xT"), &expr("11-"), mixed).expect("tan at mixed");
+        assert_eq!(crate::eval::evaluate(&solved, 0.0).unwrap().value, mixed);
+        // 2^52 + 1 is an exact odd integer: sine and tangent are 0, cosine is -1.
+        let odd = 2.0_f64.powi(52) + 1.0;
+        assert!(solve_for_x_at(&expr("xC"), &expr("1"), odd).is_none());
+        let solved = solve_for_x_at(&expr("xS"), &expr("11-"), odd).expect("sin at odd integer");
+        assert_eq!(crate::eval::evaluate(&solved, 0.0).unwrap().value, odd);
+        let solved = solve_for_x_at(&expr("xT"), &expr("11-"), odd).expect("tan at odd integer");
+        assert_eq!(crate::eval::evaluate(&solved, 0.0).unwrap().value, odd);
+        // Largest finite f64 is an even integer.
+        let solved = solve_for_x_at(&expr("xC"), &expr("1"), f64::MAX).expect("cos at f64::MAX");
+        assert_eq!(crate::eval::evaluate(&solved, 0.0).unwrap().value, f64::MAX);
+        let solved = solve_for_x_at(&expr("xT"), &expr("11-"), -f64::MAX).expect("tan at -MAX");
+        assert_eq!(
+            crate::eval::evaluate(&solved, 0.0).unwrap().value,
+            -f64::MAX
+        );
     }
 
     #[test]

@@ -32,11 +32,13 @@ pub struct Expression {
     complexity: u32,
     /// Whether this expression contains the variable x
     contains_x: bool,
-    /// Solver-inserted integers, as `(start_symbol, symbol_count, value)`.
+    /// Solver-inserted integers, as `(start_symbol, symbol_count, bits)`.
     ///
-    /// The postfix still evaluates to `value`. Printers render the span as a
-    /// decimal literal so a period shift is `+2000002` rather than a tower of
-    /// `2*5` factors. Search-generated expressions leave this empty.
+    /// `bits` is `f64::to_bits()` of a finite integer. Evaluation pushes that
+    /// exact float instead of walking the span, so the printed root stays exact
+    /// when a decimal Horner product is not. Printers render the span as a
+    /// decimal literal (`+2000002`, not a tower of `2*5` factors).
+    /// Search-generated expressions leave this empty.
     decimal_literals: SmallVec<[(u32, u32, u64); 2]>,
 }
 
@@ -80,6 +82,71 @@ fn infix_group_log_base(s: &str, prec: u8) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// Decimal digits of a finite integer `f64`, with no exponent and no rounding.
+///
+/// Every finite value with magnitude at least 2^52 is an integer. Powers of two
+/// past 2^53 are exact too, but `Display` would print them in scientific
+/// notation and a `u64` cannot hold 2^64. The digits are the integer value of
+/// the significand, shifted by the unbiased exponent.
+pub(crate) fn format_exact_f64_integer(value: f64) -> String {
+    if !value.is_finite() {
+        return "0".to_string();
+    }
+    if value == 0.0 {
+        return "0".to_string();
+    }
+    let negative = value.is_sign_negative();
+    let bits = value.abs().to_bits();
+    let biased = ((bits >> 52) & 0x7ff) as i32;
+    if biased == 0 {
+        return "0".to_string();
+    }
+    let mut significand = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
+    // Little-endian decimal digits of the 53-bit significand.
+    let mut digits = Vec::new();
+    while significand > 0 {
+        digits.push((significand % 10) as u8);
+        significand /= 10;
+    }
+    let shift = biased - 1023 - 52;
+    if shift > 0 {
+        for _ in 0..shift {
+            let mut carry = 0u8;
+            for digit in &mut digits {
+                let scaled = *digit * 2 + carry;
+                *digit = scaled % 10;
+                carry = scaled / 10;
+            }
+            if carry > 0 {
+                digits.push(carry);
+            }
+        }
+    } else if shift < 0 {
+        for _ in 0..(-shift) {
+            let mut remainder = 0u8;
+            for digit in digits.iter_mut().rev() {
+                let scaled = remainder * 10 + *digit;
+                *digit = scaled / 2;
+                remainder = scaled % 2;
+            }
+            while digits.last() == Some(&0) && digits.len() > 1 {
+                digits.pop();
+            }
+        }
+    }
+    while digits.last() == Some(&0) && digits.len() > 1 {
+        digits.pop();
+    }
+    let mut text = String::with_capacity(digits.len() + usize::from(negative));
+    if negative {
+        text.push('-');
+    }
+    for digit in digits.iter().rev() {
+        text.push(char::from(b'0' + *digit));
+    }
+    text
 }
 
 fn infix_maybe_paren(
@@ -224,21 +291,24 @@ impl Expression {
         self.symbols.push(sym);
     }
 
-    /// Remember that the whole expression is the decimal integer `value`.
+    /// Remember that the whole expression is the finite integer `value`.
     ///
-    /// Call this only on the postfix that evaluates to `value`. Later
-    /// combinations shift the recorded span with the symbols.
-    pub(crate) fn mark_decimal_literal(&mut self, value: u64) {
+    /// Later combinations shift the recorded span with the symbols. Evaluation
+    /// and printing use this value, not the postfix scaffold under the span.
+    pub(crate) fn mark_decimal_literal(&mut self, value: f64) {
+        if !value.is_finite() {
+            return;
+        }
         let len = self.symbols.len();
         if len == 0 || len > u32::MAX as usize {
             return;
         }
-        self.decimal_literals.push((0, len as u32, value));
+        self.decimal_literals.push((0, len as u32, value.to_bits()));
     }
 
     pub(crate) fn append_decimal_literals(&mut self, other: &Expression, shift: u32) {
-        for &(start, len, value) in &other.decimal_literals {
-            self.decimal_literals.push((start + shift, len, value));
+        for &(start, len, bits) in &other.decimal_literals {
+            self.decimal_literals.push((start + shift, len, bits));
         }
     }
 
@@ -248,16 +318,20 @@ impl Expression {
             .retain(|(start, len, _)| start.saturating_add(*len) <= n);
     }
 
+    /// When a decimal literal starts at `index`, its symbol length and value.
+    pub(crate) fn decimal_literal_at(&self, index: usize) -> Option<(usize, f64)> {
+        self.decimal_literals
+            .iter()
+            .find_map(|&(start, len, bits)| {
+                (start as usize == index && len > 0).then_some((len as usize, f64::from_bits(bits)))
+            })
+    }
+
     /// If a decimal literal starts at `index`, return its text and advance past it.
     fn take_decimal_literal(&self, index: &mut usize) -> Option<String> {
-        let (len, value) = self
-            .decimal_literals
-            .iter()
-            .find_map(|&(start, len, value)| {
-                (start as usize == *index && len > 0).then_some((len, value))
-            })?;
-        *index += len as usize;
-        Some(value.to_string())
+        let (len, value) = self.decimal_literal_at(*index)?;
+        *index += len;
+        Some(format_exact_f64_integer(value))
     }
 
     /// Remove the last symbol
@@ -995,6 +1069,31 @@ mod tests {
 
         // Invalid: 3 2 (two values left on stack)
         assert!(Expression::parse("32").is_none());
+    }
+
+    #[test]
+    fn test_format_exact_f64_integer_digits() {
+        assert_eq!(format_exact_f64_integer(0.0), "0");
+        assert_eq!(format_exact_f64_integer(2000002.0), "2000002");
+        assert_eq!(format_exact_f64_integer(-12.0), "-12");
+        // Independent of the digit-shift formatter: primitive integers.
+        for exp in [1_u32, 10, 53, 58, 59, 60, 61, 62, 63, 64, 100, 127] {
+            let text = format_exact_f64_integer(2.0_f64.powi(exp as i32));
+            let reference = (1_u128 << exp).to_string();
+            assert_eq!(text, reference, "2^{exp}");
+        }
+        let huge = format_exact_f64_integer(2.0_f64.powi(1023));
+        assert_eq!(huge.parse::<f64>().unwrap(), 2.0_f64.powi(1023));
+        assert_eq!(huge.len(), 308);
+        let mut mod_billion = 1u64;
+        for _ in 0..1023 {
+            mod_billion = (mod_billion * 2) % 1_000_000_000;
+        }
+        let tail: u64 = huge[huge.len() - 9..].parse().unwrap();
+        assert_eq!(tail, mod_billion);
+        let max_digits = format_exact_f64_integer(f64::MAX);
+        assert_eq!(max_digits.parse::<f64>().unwrap(), f64::MAX);
+        assert!(max_digits.bytes().all(|b| b.is_ascii_digit()));
     }
 
     #[test]

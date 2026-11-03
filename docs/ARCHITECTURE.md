@@ -24,7 +24,7 @@ ranking, and reporting logic in `src/`.
 - `src/gen.rs`: expression generation
 - `src/search.rs`: search orchestration and match discovery
 - `src/pool.rs`: bounded match collection, ranking, and ordering
-- `src/solver.rs`: solve-for-x presentation helpers and canonicalization. `solve_for_x_at` picks the real inverse branch nearest the matched root and returns nothing when that branch is not real or not representable; `solve_for_x_rhs_expression` stays on the principal branch
+- `src/solver.rs`: solve-for-x presentation helpers and canonicalization. `solve_for_x_at` picks the real inverse branch nearest the matched root, including every exactly representable integer period, and returns nothing when that branch is not real or not representable; `solve_for_x_rhs_expression` stays on the principal branch
 - `src/symbol.rs` and `src/symbol_table.rs`: built-in symbols plus profile overrides
 - `src/profile.rs`, `src/presets.rs`, `src/udf.rs`: user customization surfaces
 

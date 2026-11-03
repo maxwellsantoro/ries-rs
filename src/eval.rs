@@ -315,7 +315,19 @@ pub fn evaluate_with_workspace_and_context(
     workspace.clear();
     let stack = &mut workspace.stack;
 
-    for &sym in expr.symbols() {
+    let mut index = 0;
+    while index < expr.len() {
+        // Solver integers are exact f64s. The postfix under the span is only a
+        // scaffold: decimal Horner products are not exact for every integer
+        // (2^58 through 2^61 among them), and magnitudes past 2^63 do not fit
+        // in i64. Push the recorded value and skip the span.
+        if let Some((len, value)) = expr.decimal_literal_at(index) {
+            stack.push(StackEntry::constant(value, NumType::Integer));
+            index += len;
+            continue;
+        }
+        let sym = expr.symbols()[index];
+        index += 1;
         match sym.seft() {
             Seft::A => {
                 let entry = eval_constant_with_user(sym, x, context.user_constants)?;
@@ -665,6 +677,44 @@ fn eval_user_function(
     })
 }
 
+/// `Some(true)` when `value` is an even integer, `Some(false)` when it is odd,
+/// `None` when it is not a finite integer.
+///
+/// Magnitudes at or above 2^53 are multiples of at least 2, so every finite
+/// value there is even. The low bit is taken from the significand. This never
+/// casts to `i64`: that cast saturates, and `i64::MAX` is odd, so 2^63 and
+/// every larger finite value would be reported as odd.
+pub(crate) fn f64_exact_integer_is_even(value: f64) -> Option<bool> {
+    if !value.is_finite() {
+        return None;
+    }
+    let bits = value.abs().to_bits();
+    let biased = ((bits >> 52) & 0x7ff) as i32;
+    if biased == 0 {
+        return (value == 0.0).then_some(true);
+    }
+    let unbiased = biased - 1023;
+    if unbiased >= 53 {
+        return Some(true);
+    }
+    if unbiased < 0 {
+        return None;
+    }
+    let mantissa = bits & ((1u64 << 52) - 1);
+    if unbiased < 52 {
+        let fraction_bits = (52 - unbiased) as u32;
+        if mantissa & ((1u64 << fraction_bits) - 1) != 0 {
+            return None;
+        }
+    }
+    if unbiased == 0 {
+        return Some(false);
+    }
+    let parity_shift = (52 - unbiased) as u32;
+    let odd = ((mantissa >> parity_shift) & 1) == 1;
+    Some(!odd)
+}
+
 /// Evaluate a unary operator with derivative
 fn eval_unary(
     sym: Symbol,
@@ -678,48 +728,79 @@ fn eval_unary(
         (scale - DEFAULT_TRIG_ARGUMENT_SCALE).abs() <= f64::EPSILON
     }
 
+    /// `(-1)^n` for an integer argument. `even` is the parity of `n`.
     #[inline]
-    fn rounded_f64_to_i64(rounded: f64) -> Option<i64> {
-        if !rounded.is_finite() {
-            return None;
-        }
-        if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
-            return None;
-        }
-        Some(rounded as i64)
-    }
-
-    #[inline]
-    fn snap_integer(value: f64) -> Option<i64> {
-        let rounded = value.round();
-        if (value - rounded).abs() <= TRIG_EXACT_ARGUMENT_TOLERANCE {
-            rounded_f64_to_i64(rounded)
+    fn integer_sign(even: bool) -> f64 {
+        if even {
+            1.0
         } else {
-            None
+            -1.0
         }
     }
 
+    /// Cast an integer-valued float that is strictly inside the i64 range.
+    ///
+    /// `i64::MAX as f64` is 2^63, so a comparison against that bound accepts
+    /// 2^63 and the cast saturates to `i64::MAX` (odd). Values at or beyond
+    /// 2^63 are rejected here; their parity is read from the exponent instead.
     #[inline]
-    fn snap_half_integer_index(value: f64) -> Option<i64> {
+    fn f64_to_i64_exact(rounded: f64) -> Option<i64> {
+        const TWO_63: f64 = 9223372036854775808.0;
+        if !rounded.is_finite() || rounded <= -TWO_63 || rounded >= TWO_63 {
+            return None;
+        }
+        let n = rounded as i64;
+        (n as f64 == rounded).then_some(n)
+    }
+
+    /// `Some(even)` when `value` is within the snap tolerance of an integer.
+    ///
+    /// At magnitude >= 2^52 every finite f64 is already an integer (ulp >= 1),
+    /// and at magnitude >= 2^53 every one of them is even (ulp >= 2).
+    #[inline]
+    fn snap_integer_even(value: f64) -> Option<bool> {
+        const TWO_52: f64 = 4503599627370496.0;
+        const TWO_53: f64 = 9007199254740992.0;
+        if !value.is_finite() {
+            return None;
+        }
+        if value.abs() >= TWO_53 {
+            return Some(true);
+        }
+        if value.abs() >= TWO_52 {
+            return f64_exact_integer_is_even(value);
+        }
+        let rounded = value.round();
+        if (value - rounded).abs() > TRIG_EXACT_ARGUMENT_TOLERANCE {
+            return None;
+        }
+        let n = f64_to_i64_exact(rounded)?;
+        Some(n.rem_euclid(2) == 0)
+    }
+
+    /// Sign `(-1)^n` when `value` is within tolerance of the half-integer `n+0.5`.
+    ///
+    /// Half-integers stop being representable once the ulp exceeds 0.5, which
+    /// is every finite value with magnitude >= 2^52. Doubling those values and
+    /// casting to i64 saturates (2 * 2^62 = 2^63 becomes `i64::MAX`, which is
+    /// odd) and used to treat an ordinary integer as a tangent pole.
+    #[inline]
+    fn snap_half_integer_sign(value: f64) -> Option<f64> {
+        const TWO_52: f64 = 4503599627370496.0;
+        if !value.is_finite() || value.abs() >= TWO_52 {
+            return None;
+        }
         let doubled = value * 2.0;
         let rounded = doubled.round();
         if (doubled - rounded).abs() > TRIG_EXACT_ARGUMENT_TOLERANCE {
             return None;
         }
-        let rounded_i = rounded_f64_to_i64(rounded)?;
-        if rounded_i.rem_euclid(2) == 0 {
+        let n = f64_to_i64_exact(rounded)?;
+        if n.rem_euclid(2) == 0 {
             return None;
         }
-        Some((rounded_i - 1) / 2)
-    }
-
-    #[inline]
-    fn alternating_sign(n: i64) -> f64 {
-        if n.rem_euclid(2) == 0 {
-            1.0
-        } else {
-            -1.0
-        }
+        let index = (n - 1) / 2;
+        Some(integer_sign(index.rem_euclid(2) == 0))
     }
 
     let (val, deriv, num_type) = match sym {
@@ -790,14 +871,14 @@ fn eval_unary(
         // sin(π*a), d(sin(πa))/dx = π*cos(πa)*da/dx
         SinPi => {
             if is_default_trig_scale(trig_argument_scale) {
-                if let Some(n) = snap_integer(a.val) {
+                if let Some(even) = snap_integer_even(a.val) {
                     (
                         0.0,
-                        trig_argument_scale * alternating_sign(n) * a.deriv,
+                        trig_argument_scale * integer_sign(even) * a.deriv,
                         NumType::Transcendental,
                     )
-                } else if let Some(n) = snap_half_integer_index(a.val) {
-                    (alternating_sign(n), 0.0, NumType::Transcendental)
+                } else if let Some(sign) = snap_half_integer_sign(a.val) {
+                    (sign, 0.0, NumType::Transcendental)
                 } else {
                     let val = (trig_argument_scale * a.val).sin();
                     let deriv = trig_argument_scale * (trig_argument_scale * a.val).cos() * a.deriv;
@@ -813,12 +894,12 @@ fn eval_unary(
         // cos(π*a), d(cos(πa))/dx = -π*sin(πa)*da/dx
         CosPi => {
             if is_default_trig_scale(trig_argument_scale) {
-                if let Some(n) = snap_integer(a.val) {
-                    (alternating_sign(n), 0.0, NumType::Transcendental)
-                } else if let Some(n) = snap_half_integer_index(a.val) {
+                if let Some(even) = snap_integer_even(a.val) {
+                    (integer_sign(even), 0.0, NumType::Transcendental)
+                } else if let Some(sign) = snap_half_integer_sign(a.val) {
                     (
                         0.0,
-                        -trig_argument_scale * alternating_sign(n) * a.deriv,
+                        -trig_argument_scale * sign * a.deriv,
                         NumType::Transcendental,
                     )
                 } else {
@@ -837,10 +918,10 @@ fn eval_unary(
         // tan(π*a), d(tan(πa))/dx = π*sec²(πa)*da/dx
         TanPi => {
             if is_default_trig_scale(trig_argument_scale) {
-                if snap_half_integer_index(a.val).is_some() {
+                if snap_half_integer_sign(a.val).is_some() {
                     return Err(EvalError::Overflow);
                 }
-                if snap_integer(a.val).is_some() {
+                if snap_integer_even(a.val).is_some() {
                     (0.0, trig_argument_scale * a.deriv, NumType::Transcendental)
                 } else {
                     let cos_val = (trig_argument_scale * a.val).cos();
@@ -996,13 +1077,12 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
                     return Err(EvalError::SqrtDomain);
                 }
 
-                // Check if the integer is odd (odd roots of negatives are real)
-                let int_val = rounded as i64;
-                if int_val % 2 == 0 {
-                    // Even integer root of negative - no real value
+                // Odd roots of negatives are real. Parity comes from the
+                // significand: `rounded as i64` saturates at 2^63 to
+                // `i64::MAX` (odd) and would accept an even root index.
+                if f64_exact_integer_is_even(rounded) != Some(false) {
                     return Err(EvalError::SqrtDomain);
                 }
-                // Odd integer root of negative is OK
             }
 
             let val = if b.val < 0.0 {
@@ -1263,6 +1343,95 @@ mod tests {
             evaluate(&half_integer_expr, 0.0),
             Err(EvalError::Overflow)
         ));
+    }
+
+    #[test]
+    fn test_trig_pi_large_integers_keep_parity_without_saturating_casts() {
+        let sin_expr = Expression::parse("xS").unwrap();
+        let cos_expr = Expression::parse("xC").unwrap();
+        let tan_expr = Expression::parse("xT").unwrap();
+        // +2^62 used to make tanpi overflow: 2 * 2^62 saturates to i64::MAX,
+        // which is odd, so the half-integer snap treated it as a pole.
+        // -2^62 saturated to i64::MIN (even) and was accepted.
+        for exp in [52, 53, 58, 62, 63, 64, 100, 1023] {
+            let magnitude = 2.0_f64.powi(exp);
+            for x in [magnitude, -magnitude] {
+                let sin_result = evaluate(&sin_expr, x).unwrap();
+                assert_eq!(sin_result.value, 0.0, "sinpi(2^{exp}) at {x}");
+                assert!(
+                    approx_eq(sin_result.derivative, constants::PI),
+                    "sinpi derivative at {x}: {}",
+                    sin_result.derivative
+                );
+                let cos_result = evaluate(&cos_expr, x).unwrap();
+                assert_eq!(cos_result.value, 1.0, "cospi at {x}");
+                assert_eq!(cos_result.derivative, 0.0);
+                let tan_result = evaluate(&tan_expr, x).unwrap();
+                assert_eq!(tan_result.value, 0.0, "tanpi at {x}");
+                assert!(approx_eq(tan_result.derivative, constants::PI));
+            }
+        }
+        // 2^52 + 1 is the last odd integer that is an exact f64.
+        let odd = 2.0_f64.powi(52) + 1.0;
+        assert_eq!(evaluate(&sin_expr, odd).unwrap().value, 0.0);
+        assert!(approx_eq(
+            evaluate(&sin_expr, odd).unwrap().derivative,
+            -constants::PI
+        ));
+        assert_eq!(evaluate(&cos_expr, odd).unwrap().value, -1.0);
+        assert_eq!(evaluate(&tan_expr, odd).unwrap().value, 0.0);
+        // A real half-integer is still a pole. A large finite value is not.
+        assert!(matches!(
+            evaluate(&tan_expr, 10.5),
+            Err(EvalError::Overflow)
+        ));
+        assert!(matches!(
+            evaluate(&tan_expr, -1.5),
+            Err(EvalError::Overflow)
+        ));
+    }
+
+    #[test]
+    fn test_even_root_index_of_negative_is_rejected_past_i64() {
+        // 3rd root of -8 is -2.
+        let cube = Expression::parse("38nv").unwrap();
+        let cube_root = evaluate(&cube, 0.0).unwrap().value;
+        assert!((cube_root + 2.0).abs() < 1e-9, "{cube_root}");
+
+        // Index is x. 2^63 is even, but `as i64` saturates to i64::MAX (odd)
+        // and used to accept the root.
+        let indexed = Expression::parse("x8nv").unwrap();
+        assert!(matches!(
+            evaluate(&indexed, 2.0_f64.powi(63)),
+            Err(EvalError::SqrtDomain)
+        ));
+        assert!(matches!(
+            evaluate(&indexed, -(2.0_f64.powi(62))),
+            Err(EvalError::SqrtDomain)
+        ));
+        let odd = evaluate(&indexed, 2.0_f64.powi(52) + 1.0).unwrap().value;
+        assert!(odd < 0.0, "odd root of a negative stays real, got {odd}");
+        assert!(matches!(
+            evaluate(&indexed, 4.0),
+            Err(EvalError::SqrtDomain)
+        ));
+    }
+
+    #[test]
+    fn test_f64_integer_parity_matches_small_values_and_large_powers_of_two() {
+        assert_eq!(f64_exact_integer_is_even(0.0), Some(true));
+        assert_eq!(f64_exact_integer_is_even(1.0), Some(false));
+        assert_eq!(f64_exact_integer_is_even(-7.0), Some(false));
+        assert_eq!(f64_exact_integer_is_even(8.0), Some(true));
+        assert_eq!(f64_exact_integer_is_even(2.5), None);
+        assert_eq!(f64_exact_integer_is_even(0.5), None);
+        let odd = 2.0_f64.powi(52) + 1.0;
+        assert_eq!(f64_exact_integer_is_even(odd), Some(false));
+        assert_eq!(f64_exact_integer_is_even(-odd), Some(false));
+        assert_eq!(f64_exact_integer_is_even(2.0_f64.powi(53)), Some(true));
+        assert_eq!(f64_exact_integer_is_even(2.0_f64.powi(63)), Some(true));
+        assert_eq!(f64_exact_integer_is_even(f64::MAX), Some(true));
+        assert_eq!(f64_exact_integer_is_even(f64::INFINITY), None);
     }
 
     #[test]

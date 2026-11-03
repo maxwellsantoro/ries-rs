@@ -190,7 +190,18 @@ fn evaluate_highprec(
 
     let mut stack: Vec<HighPrec> = Vec::with_capacity(32);
 
-    for sym in expr.symbols() {
+    let mut index = 0;
+    while index < expr.len() {
+        if let Some((len, value)) = expr.decimal_literal_at(index) {
+            stack.push(HighPrec::from_str_with_prec(
+                &crate::expr::format_exact_f64_integer(value),
+                precision_bits,
+            ));
+            index += len;
+            continue;
+        }
+        let sym = expr.symbols()[index];
+        index += 1;
         match sym {
             // Numbers - use string-based construction for consistency
             Symbol::One => stack.push(one.clone()),

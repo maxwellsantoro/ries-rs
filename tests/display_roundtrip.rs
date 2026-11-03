@@ -321,65 +321,91 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn snap_integer(value: f64) -> Option<i64> {
+/// Integer parity without a saturating `as i64` cast.
+///
+/// `i64::MAX as f64` is 2^63, so that comparison accepts 2^63 and the cast
+/// becomes `i64::MAX` (odd). Past 2^53 every finite value is an even integer.
+fn snap_integer_even(value: f64) -> Option<bool> {
+    const TWO_52: f64 = 4503599627370496.0;
+    const TWO_53: f64 = 9007199254740992.0;
+    const TWO_63: f64 = 9223372036854775808.0;
     if !value.is_finite() {
         return None;
     }
+    if value.abs() >= TWO_53 {
+        return Some(true);
+    }
     let rounded = value.round();
-    if (value - rounded).abs() <= 1e-12 {
-        Some(rounded as i64)
-    } else {
-        None
-    }
-}
-
-fn snap_half_index(value: f64) -> Option<i64> {
-    let doubled = value * 2.0;
-    let rounded = doubled.round();
-    if !rounded.is_finite() || (doubled - rounded).abs() > 1e-12 {
+    if value.abs() < TWO_52 && (value - rounded).abs() > 1e-12 {
         return None;
     }
-    let rounded_i = rounded as i64;
-    if rounded_i.rem_euclid(2) == 0 {
+    if rounded.abs() >= TWO_63 {
+        return Some(true);
+    }
+    let n = rounded as i64;
+    if n as f64 != rounded {
         return None;
     }
-    Some((rounded_i - 1) / 2)
+    Some(n.rem_euclid(2) == 0)
 }
 
-fn alternating_sign(n: i64) -> f64 {
-    if n.rem_euclid(2) == 0 {
+fn integer_sign(even: bool) -> f64 {
+    if even {
         1.0
     } else {
         -1.0
     }
 }
 
+/// Sign `(-1)^n` for a half-integer `n + 0.5`. None when the value is not one.
+///
+/// Half-integers are not representable at magnitude >= 2^52. Doubling 2^62 and
+/// casting saturates to an odd `i64::MAX`, which is not a pole.
+fn snap_half_sign(value: f64) -> Option<f64> {
+    const TWO_52: f64 = 4503599627370496.0;
+    const TWO_63: f64 = 9223372036854775808.0;
+    if !value.is_finite() || value.abs() >= TWO_52 {
+        return None;
+    }
+    let doubled = value * 2.0;
+    let rounded = doubled.round();
+    if !rounded.is_finite() || (doubled - rounded).abs() > 1e-12 || rounded.abs() >= TWO_63 {
+        return None;
+    }
+    let n = rounded as i64;
+    if n as f64 != rounded || n.rem_euclid(2) == 0 {
+        return None;
+    }
+    let index = (n - 1) / 2;
+    Some(integer_sign(index.rem_euclid(2) == 0))
+}
+
 /// Match the engine's exact-integer snaps for `sinpi` / `cospi` / `tanpi`.
 fn sin_pi(arg: f64) -> Result<f64, String> {
-    if snap_integer(arg).is_some() {
+    if snap_integer_even(arg).is_some() {
         return Ok(0.0);
     }
-    if let Some(n) = snap_half_index(arg) {
-        return Ok(alternating_sign(n));
+    if let Some(sign) = snap_half_sign(arg) {
+        return Ok(sign);
     }
     Ok((constants::PI * arg).sin())
 }
 
 fn cos_pi(arg: f64) -> Result<f64, String> {
-    if let Some(n) = snap_integer(arg) {
-        return Ok(alternating_sign(n));
+    if let Some(even) = snap_integer_even(arg) {
+        return Ok(integer_sign(even));
     }
-    if snap_half_index(arg).is_some() {
+    if snap_half_sign(arg).is_some() {
         return Ok(0.0);
     }
     Ok((constants::PI * arg).cos())
 }
 
 fn tan_pi(arg: f64) -> Result<f64, String> {
-    if snap_half_index(arg).is_some() {
+    if snap_half_sign(arg).is_some() {
         return Err("tan pole".to_string());
     }
-    if snap_integer(arg).is_some() {
+    if snap_integer_even(arg).is_some() {
         return Ok(0.0);
     }
     let cosine = (constants::PI * arg).cos();
@@ -404,7 +430,7 @@ fn real_pow(base: f64, exp: f64) -> Result<f64, String> {
     if base < 0.0 {
         let rounded = exp.round();
         let magnitude = (-base).powf(rounded);
-        let odd = (rounded as i64) % 2 != 0;
+        let odd = snap_integer_even(rounded) == Some(false);
         let value = if odd { -magnitude } else { magnitude };
         if !value.is_finite() {
             return Err("power overflow".to_string());
@@ -699,5 +725,78 @@ fn solved_expressions_match_reported_roots_across_targets() {
     assert!(
         saw_nonprincipal,
         "the target spread never produced a non-principal solved expression"
+    );
+}
+
+/// Periods above 1_000_000 and exact powers of two through and past 2^63.
+///
+/// Each case must return `Some` and print an integer that evaluates to that
+/// root. "No wrong Some" is not enough: these roots are exactly representable.
+#[test]
+fn solved_expressions_match_exact_integer_roots_past_one_million() {
+    let exponents = [
+        1, 10, 52, 53, 58, 59, 60, 61, 62, 63, 64, 100, 127, 200, 1023,
+    ];
+    for exp in exponents {
+        let magnitude = 2.0_f64.powi(exp);
+        for hint in [magnitude, -magnitude] {
+            assert_exact_integer_root("xC", "1", hint);
+            assert_exact_integer_root("xS", "11-", hint);
+            assert_exact_integer_root("xT", "11-", hint);
+        }
+    }
+    assert_exact_integer_root("xC", "1", 2_000_002.0);
+    assert_exact_integer_root("xS", "11-", -5_000_000.0);
+    assert_exact_integer_root("xT", "11-", 1_000_001.0);
+    let mixed = 2.0_f64.powi(70) + 2.0_f64.powi(20);
+    assert_exact_integer_root("xC", "1", mixed);
+    assert_exact_integer_root("xT", "11-", -mixed);
+    // Odd exact integer: not a cosine-1 root, but sine and tangent are 0.
+    let odd = 2.0_f64.powi(52) + 1.0;
+    let cosine = Expression::parse("xC").unwrap();
+    let one = Expression::parse("1").unwrap();
+    assert!(
+        solve_for_x_at(&cosine, &one, odd).is_none(),
+        "cospi(x) = 1 has no root at the odd integer {odd}"
+    );
+    assert_exact_integer_root("xS", "11-", odd);
+    assert_exact_integer_root("xT", "11-", odd);
+    assert_exact_integer_root("xC", "1", f64::MAX);
+    assert_exact_integer_root("xT", "11-", -f64::MAX);
+}
+
+fn assert_exact_integer_root(lhs: &str, rhs: &str, hint: f64) {
+    let lhs_expr = Expression::parse(lhs).unwrap();
+    let rhs_expr = Expression::parse(rhs).unwrap();
+    let solved = solve_for_x_at(&lhs_expr, &rhs_expr, hint).unwrap_or_else(|| {
+        panic!("expected Some for {lhs} = {rhs} at {hint}, not a missing closed form")
+    });
+    let value = evaluate(&solved, 0.0)
+        .unwrap_or_else(|err| panic!("{lhs} = {rhs} at {hint} did not evaluate: {err}"))
+        .value;
+    assert_eq!(value, hint, "{}", solved.to_infix());
+    let printed = solved.to_infix();
+    let digits = printed.strip_prefix('-').unwrap_or(printed.as_str());
+    assert!(
+        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()),
+        "expected a decimal integer, got {printed}"
+    );
+    let parsed = Parser::eval(&printed, 0.0)
+        .unwrap_or_else(|err| panic!("printed {printed} did not parse: {err}"));
+    assert_eq!(parsed, hint, "{printed}");
+    let left = evaluate(&lhs_expr, parsed)
+        .unwrap_or_else(|err| panic!("lhs {lhs} at {parsed}: {err}"))
+        .value;
+    let right = evaluate(&rhs_expr, parsed)
+        .unwrap_or_else(|err| panic!("rhs {rhs} at {parsed}: {err}"))
+        .value;
+    assert_eq!(left, right, "{lhs} = {rhs} at {printed}");
+    let parsed_left = Parser::eval(&lhs_expr.to_infix(), parsed)
+        .unwrap_or_else(|err| panic!("parser {} at {parsed}: {err}", lhs_expr.to_infix()));
+    assert!(
+        (parsed_left - right).abs() <= 1e-9,
+        "parser {}({}) = {parsed_left}, rhs {right}",
+        lhs_expr.to_infix(),
+        parsed
     );
 }
