@@ -19,9 +19,13 @@ jobs:
       - name: Install tarpaulin
         uses: taiki-e/install-action@cargo-tarpaulin
 
+      # Ptrace single-steps Expression::drop and dies with SIGSEGV there.
+      # The same binary exits 0, including under valgrind. LLVM coverage
+      # instruments the binary at compile time, so the spawned ries-rs is
+      # still counted and --follow-exec does not have to ptrace it.
       - name: Generate coverage
         run: >-
-          cargo tarpaulin --locked --out Xml --output-dir ./coverage
+          cargo tarpaulin --locked --engine Llvm --out Xml --output-dir ./coverage
           --timeout 1200 --follow-exec --fail-under 50
 
       - name: Report coverage summary
