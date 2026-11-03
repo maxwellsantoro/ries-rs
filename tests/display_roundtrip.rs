@@ -528,6 +528,8 @@ fn eval_solved_infix(solved: &Expression) -> f64 {
 
 #[test]
 fn reported_targets_print_the_branch_they_claim() {
+    // Ten-digit phi probe, not std::f64::consts::GOLDEN_RATIO.
+    #[allow(clippy::approx_constant)]
     let phi = 1.618_033_988_7;
 
     // sin(πx) = 1. The principal inverse is 0.5; the refined root near √(2π) is 2.5.
@@ -570,6 +572,8 @@ fn reported_targets_print_the_branch_they_claim() {
 }
 
 #[test]
+// Ten-digit phi probe mixed with other sample points, not GOLDEN_RATIO.
+#[allow(clippy::approx_constant)]
 fn infix_printing_round_trips_operator_combinations() {
     let probes = [
         "x", "1", "p", "e", "f", "xn", "xr", "xs", "xq", "xl", "xE", "xS", "xC", "xT", "fnrrn",
@@ -615,6 +619,8 @@ fn infix_printing_round_trips_operator_combinations() {
     }
 }
 
+// Limited-digit phi and sqrt(2) probes, not GOLDEN_RATIO or SQRT_2.
+#[allow(clippy::approx_constant)]
 fn search_targets() -> Vec<f64> {
     vec![
         2.506_628_274_631,

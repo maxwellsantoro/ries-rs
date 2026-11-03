@@ -79,7 +79,7 @@ pub fn standard_constants() -> Vec<(String, f64)> {
         ("√2".to_string(), std::f64::consts::SQRT_2),
         ("√π".to_string(), PI.sqrt()),
         ("φ".to_string(), (1.0 + 5.0f64.sqrt()) / 2.0), // Golden ratio
-        ("γ".to_string(), 0.5772156649015329),          // Euler-Mascheroni
+        ("γ".to_string(), std::f64::consts::EULER_GAMMA), // Euler-Mascheroni
         ("ζ(2)".to_string(), PI * PI / 6.0),            // Basel problem
         ("ζ(3)".to_string(), 1.202056903159594),        // Apéry's constant
         ("G".to_string(), 0.915965594177219),           // Catalan's constant

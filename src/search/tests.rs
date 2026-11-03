@@ -67,6 +67,8 @@ fn test_simple_search() {
 fn test_newton_raphson_keeps_steep_phi_root() {
     use crate::eval::evaluate;
     use crate::expr::Expression;
+    // Ten-digit phi probe; refinement is checked against this value, not GOLDEN_RATIO.
+    #[allow(clippy::approx_constant)]
     let target = 1.6180339887_f64;
     let lhs = Expression::parse("fx-rq").unwrap();
     let rhs = Expression::parse("2ps+E").unwrap();

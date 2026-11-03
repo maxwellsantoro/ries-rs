@@ -105,9 +105,9 @@ impl EvalError {
 pub mod constants {
     pub const PI: f64 = std::f64::consts::PI;
     pub const E: f64 = std::f64::consts::E;
-    pub const PHI: f64 = 1.618_033_988_749_895; // Golden ratio
+    pub const PHI: f64 = std::f64::consts::GOLDEN_RATIO; // Golden ratio
     /// Euler-Mascheroni constant γ
-    pub const GAMMA: f64 = 0.577_215_664_901_532_9;
+    pub const GAMMA: f64 = std::f64::consts::EULER_GAMMA;
     /// Plastic constant ρ (root of x³ = x + 1)
     pub const PLASTIC: f64 = 1.324_717_957_244_746;
     /// Apéry's constant ζ(3)
@@ -1561,6 +1561,8 @@ mod tests {
     }
 
     #[test]
+    // Ten-digit user-constant fixture, not std::f64::consts::EULER_GAMMA.
+    #[allow(clippy::approx_constant)]
     fn test_user_constant_evaluation() {
         use crate::profile::UserConstant;
 

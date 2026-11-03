@@ -27,16 +27,16 @@ crate-type = ["cdylib"]
 # For a supported Rust-side test workflow, use `./scripts/test_ries_py_rust.sh`.
 # That disables `extension-module`, selects `python3`, and enables
 # `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` when the local interpreter is newer
-# than the PyO3 release bundled here officially supports.
+# than the CPython versions PyO3 0.30 officially supports (3.9 and newer).
 #
 # Full fix: extract pure-Rust helpers from the PyO3 wrappers into a separate
 # internal module and test those; the binding code itself can only be tested
 # through Python (pytest / maturin develop).
 default = ["extension-module", "parallel"]
-extension-module = ["pyo3/extension-module", "pyo3/abi3-py38"]
+extension-module = ["pyo3/extension-module", "pyo3/abi3-py39"]
 parallel = ["ries_core/parallel"]
 highprec = ["ries_core/highprec"]
 
 [dependencies]
 ries_core = { package = "ries", path = "..", version = "2.0.3" }
-pyo3 = { version = "0.22" }
+pyo3 = { version = "0.30.1" }

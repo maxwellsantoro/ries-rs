@@ -56,7 +56,7 @@ fn bench_different_targets(c: &mut Criterion) {
         ("pi", std::f64::consts::PI),
         ("e", std::f64::consts::E),
         ("sqrt2", std::f64::consts::SQRT_2),
-        ("golden", 1.618_033_988_749_895),
+        ("golden", std::f64::consts::GOLDEN_RATIO),
         ("arbitrary", 2.345_678),
     ];
 

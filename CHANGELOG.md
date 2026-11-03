@@ -29,11 +29,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Newton keeps a refined root only when the residual is small. A tiny step
   that leaves the two sides apart is rejected. Steep roots with a small
   relative residual are still kept.
+- Clippy is clean.
 
 ### Changed
 - Coverage now runs on LLVM. The coverage job no longer uses tarpaulin's
   ptrace engine, which crashed while dropping an expression after a passing
   manifest test.
+- PyO3 was upgraded to 0.30.1. The Python API is unchanged.
+
+### Security
+- Updated `crossbeam-epoch`, `anyhow`, `rand`, and `pyo3`. These updates cover
+  RUSTSEC-2026-0204, RUSTSEC-2026-0190, RUSTSEC-2026-0097, RUSTSEC-2026-0177,
+  and RUSTSEC-2025-0020.
+
+### Compatibility
+- Python 3.8 support is dropped. The Python package now requires Python 3.9 or
+  newer (`abi3-py39`) because PyO3 0.30 dropped 3.8.
 
 ## [2.0.2] - 2026-06-27
 
