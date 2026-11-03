@@ -195,6 +195,7 @@ mod tests {
             x_value: 2.5,
             error,
             complexity: 10,
+            exact: error.abs() < ries_rs::EXACT_MATCH_TOLERANCE,
         }
     }
 

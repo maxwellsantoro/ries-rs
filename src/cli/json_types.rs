@@ -6,7 +6,7 @@
 use ries_rs::expr::OutputFormat;
 use ries_rs::pool::RankingMode;
 use ries_rs::search::SearchStats;
-use ries_rs::{SymbolTable, EXACT_MATCH_TOLERANCE};
+use ries_rs::SymbolTable;
 use serde::Serialize;
 
 use super::DisplayFormat;
@@ -210,7 +210,7 @@ pub fn build_json_output(
                 canonical_key,
                 x_value: m.x_value,
                 error: m.error,
-                exact: m.error.abs() < EXACT_MATCH_TOLERANCE,
+                exact: m.exact,
                 complexity: m.complexity,
                 operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
                 tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),

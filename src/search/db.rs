@@ -575,6 +575,7 @@ fn match_one_lhs(
                     x_value: config.target,
                     error: 0.0,
                     complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    exact: true,
                 };
                 pool.try_insert(m);
             }
@@ -652,6 +653,7 @@ fn match_one_lhs(
                     x_value: refined_x,
                     error: refined_error,
                     complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    exact: is_exact,
                 };
 
                 pool.try_insert(m);
@@ -686,7 +688,7 @@ fn match_one_lhs(
             let refined_x = hit.x;
             stats.newton_success += 1;
             let refined_error = refined_x - config.target;
-            let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+            let is_exact = hit.is_exact_for(refined_error);
 
             if pool.would_accept(refined_error.abs(), is_exact) {
                 let m = Match {
@@ -695,6 +697,7 @@ fn match_one_lhs(
                     x_value: refined_x,
                     error: refined_error,
                     complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    exact: is_exact,
                 };
 
                 pool.try_insert(m);

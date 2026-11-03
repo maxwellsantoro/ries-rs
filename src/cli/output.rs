@@ -3,7 +3,7 @@
 //! This module provides functions for formatting expressions, matches,
 //! and other output for display to the user.
 
-use ries_rs::{expr, search, symbol, EvalContext, SymbolTable, EXACT_MATCH_TOLERANCE};
+use ries_rs::{expr, search, symbol, EvalContext, SymbolTable};
 
 /// Display format for expression output.
 #[derive(Debug, Clone, Copy)]
@@ -165,7 +165,7 @@ pub fn print_match_relative(
     let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply, table);
     let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply, table);
 
-    let error_str = if m.error.abs() < EXACT_MATCH_TOLERANCE {
+    let error_str = if m.exact {
         "('exact' match)".to_string()
     } else {
         let sign = if m.error >= 0.0 { "+" } else { "-" };

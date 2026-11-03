@@ -420,6 +420,7 @@ mod tests {
             x_value: 2.5,
             error: 0.0,
             complexity: 14,
+            exact: true,
         };
 
         let result = VerificationResult::f64_result(m);
@@ -446,6 +447,7 @@ mod tests {
             x_value: std::f64::consts::PI,
             error: 1e-10,
             complexity: 14,
+            exact: false,
         };
 
         let verified = VerificationResult {

@@ -2,8 +2,6 @@
 
 use crate::search::Match;
 use crate::solver::{canonical_expression_key, solve_for_x_at};
-use crate::thresholds::EXACT_MATCH_TOLERANCE;
-
 /// Presentation-ready fields derived from a search [`Match`].
 ///
 /// Binding surfaces (WASM, Python) convert this into their own types with
@@ -74,7 +72,7 @@ impl MatchSummary {
             complexity: m.complexity,
             operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
             tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),
-            is_exact: m.error.abs() < EXACT_MATCH_TOLERANCE,
+            is_exact: m.exact,
         }
     }
 }
@@ -95,6 +93,7 @@ mod tests {
             x_value: 2.5,
             error,
             complexity,
+            exact: error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
         }
     }
 

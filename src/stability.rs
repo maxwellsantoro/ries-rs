@@ -304,6 +304,7 @@ mod tests {
             x_value: 2.5,
             error,
             complexity: lhs_expr.complexity() + rhs_expr.complexity(),
+            exact: error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
         }
     }
 

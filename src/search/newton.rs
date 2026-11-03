@@ -31,9 +31,19 @@ pub(super) fn newton_raphson(
 /// A candidate Newton returned. The step test can fire before the residual is small.
 pub(super) struct NewtonHit {
     pub x: f64,
-    /// `|f(x) - rhs|` is small relative to the RHS, or `x` is the closest float
-    /// to a smooth root.
+    /// Accepted by the tight residual test or the loose local-root test.
     pub real: bool,
+    /// The two sides agree to a few ulps. A hit that only passed the loose
+    /// test stays false, so a close `x` is not reported as exact.
+    pub exact_residual: bool,
+}
+
+impl NewtonHit {
+    /// Exact only when the residual is a few ulps and `x` is within the
+    /// reported exact window of the target.
+    pub(super) fn is_exact_for(&self, refined_error: f64) -> bool {
+        self.exact_residual && refined_error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE
+    }
 }
 
 /// Residual small enough, relative to the RHS, to call the iterate a root.
@@ -46,8 +56,18 @@ fn newton_residual_acceptable(value: f64, rhs_value: f64) -> bool {
     diff <= NEWTON_FINAL_TOLERANCE * scale
 }
 
+/// Relative cap for a root that is only a few ulps away in `x`.
+///
+/// `max(|rhs|, 1)` made every right-hand side below 1 an absolute `1e-5`
+/// window. `sinpi(1/x) = exp(-8)` at `1.77e-11` has sides near `3.3e-4` and a
+/// gap of about `1e-5`, which is a 3% relative miss and used to pass.
+const LOOSE_RELATIVE_CAP: f64 = 1e-5;
+/// Floor so two vanished sides do not make the cap zero. Far below any value
+/// the search treats as a real magnitude.
+const LOOSE_RESIDUAL_FLOOR: f64 = 1e-300;
+
 /// True when `x` is within a few ulps of a smooth root and the residual is
-/// still small on the scale of the RHS.
+/// small relative to both sides.
 ///
 /// The plain `1e-10` test rejects a steep genuine root: sitting a fraction of
 /// an ulp off a derivative of `1e15` leaves a relative residual around `1e-6`
@@ -60,12 +80,20 @@ fn ulp_local_root(value: f64, derivative: f64, rhs_value: f64, x: f64) -> bool {
     if !derivative.is_finite() || derivative == 0.0 || !f.is_finite() {
         return false;
     }
-    let scale = rhs_value.abs().max(1.0);
-    if f.abs() > 1e-5 * scale {
+    let scale = value.abs().max(rhs_value.abs()).max(LOOSE_RESIDUAL_FLOOR);
+    if f.abs() > LOOSE_RELATIVE_CAP * scale {
         return false;
     }
     let gap = (x.next_up() - x).abs().max((x - x.next_down()).abs());
     gap > 0.0 && (f / derivative).abs() <= 8.0 * gap
+}
+
+fn hit_from_sample(x: f64, value: f64, derivative: f64, rhs_value: f64) -> NewtonHit {
+    NewtonHit {
+        x,
+        real: sample_is_root(value, derivative, rhs_value, x),
+        exact_residual: super::residual_is_exact(value, rhs_value),
+    }
 }
 
 fn sample_is_root(value: f64, derivative: f64, rhs_value: f64, x: f64) -> bool {
@@ -128,15 +156,19 @@ pub(super) fn newton_raphson_with_constants(
             // move; otherwise evaluate the float the step actually landed on.
             // A step this small on an ordinary target is sub-ulp, so the
             // extra evaluation is the large-target case.
-            let real = if x == x_before {
-                sample_is_root(result.value, df, rhs_value, x)
+            let hit = if x == x_before {
+                hit_from_sample(x, result.value, df, rhs_value)
             } else {
                 match crate::eval::evaluate_search(lhs, x, eval_context) {
-                    Ok(at) => sample_is_root(at.value, at.derivative, rhs_value, x),
-                    Err(_) => false,
+                    Ok(at) => hit_from_sample(x, at.value, at.derivative, rhs_value),
+                    Err(_) => NewtonHit {
+                        x,
+                        real: false,
+                        exact_residual: false,
+                    },
                 }
             };
-            return Some(NewtonHit { x, real });
+            return Some(hit);
         }
 
         // Check for divergence
@@ -150,8 +182,9 @@ pub(super) fn newton_raphson_with_constants(
 
     // Check final result
     let result = crate::eval::evaluate_search(lhs, x, eval_context).ok()?;
-    if sample_is_root(result.value, result.derivative, rhs_value, x) {
-        Some(NewtonHit { x, real: true })
+    let hit = hit_from_sample(x, result.value, result.derivative, rhs_value);
+    if hit.real {
+        Some(hit)
     } else {
         if show_newton {
             eprintln!(
@@ -160,5 +193,53 @@ pub(super) fn newton_raphson_with_constants(
             );
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ulp_local_root;
+
+    /// The old cap was `1e-5 * max(|rhs|, 1)`. These gaps sit under that
+    /// absolute `1e-5` and over `1e-5` relative to the two sides.
+    #[test]
+    fn loose_cap_is_relative_to_both_sides() {
+        let x = 1.774_999_999_999_999_7e-11;
+        let df = 1.0e22;
+
+        let exp_m8 = 3.3546e-4_f64;
+        let exp_m8_lhs = 3.2565e-4_f64;
+        assert!(
+            (exp_m8 - exp_m8_lhs).abs() < 1e-5,
+            "the old absolute cap would have accepted exp(-8)"
+        );
+        assert!(
+            !ulp_local_root(exp_m8_lhs, df, exp_m8, x),
+            "sinpi(1/x) = exp(-8) is a 3% miss"
+        );
+
+        let ninth = 1.0 / 9.0;
+        assert!(!ulp_local_root(ninth * (1.0 - 6.8e-5), df, ninth, x));
+        let sixth = 1.0 / 6.0;
+        assert!(!ulp_local_root(sixth * (1.0 - 4.8e-5), df, sixth, x));
+
+        // 1/e is inside the relative cap (about 4.9e-6). Exactness is separate.
+        let inv_e = 1.0 / std::f64::consts::E;
+        assert!(ulp_local_root(inv_e * (1.0 - 4.9e-6), df, inv_e, x));
+
+        // Steep phi root, relative residual about 8.6e-7, correction under an ulp.
+        let phi = 1.618_033_988_700_895_2;
+        let phi_rhs = 142_857.713;
+        assert!(ulp_local_root(
+            phi_rhs * (1.0 - 8.6e-7),
+            1.458e15,
+            phi_rhs,
+            phi
+        ));
+
+        // 1e12 row the re-test wants kept as a non-exact match: relative 8.4e-6.
+        let huge = 1.0e12;
+        let rhs = 0.998_258_542_623_497;
+        assert!(ulp_local_root(rhs * (1.0 + 8.4e-6), 3.136, rhs, huge));
     }
 }

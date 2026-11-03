@@ -1701,11 +1701,15 @@ fn integer_lattice_config() -> crate::gen::GenConfig {
 }
 
 fn is_exact_equation(matches: &[super::Match], lhs: &str, rhs: &str) -> bool {
-    matches.iter().any(|m| {
-        m.error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE
-            && m.lhs.expr.to_postfix() == lhs
-            && m.rhs.expr.to_postfix() == rhs
-    })
+    matches
+        .iter()
+        .any(|m| m.exact && m.lhs.expr.to_postfix() == lhs && m.rhs.expr.to_postfix() == rhs)
+}
+
+fn has_equation(matches: &[super::Match], lhs: &str, rhs: &str) -> bool {
+    matches
+        .iter()
+        .any(|m| m.lhs.expr.to_postfix() == lhs && m.rhs.expr.to_postfix() == rhs)
 }
 
 fn equation_list(matches: &[super::Match]) -> String {
@@ -1713,9 +1717,10 @@ fn equation_list(matches: &[super::Match]) -> String {
         .iter()
         .map(|m| {
             format!(
-                "{} = {} err={:.3e}",
+                "{} = {} exact={} err={:.3e}",
                 m.lhs.expr.to_postfix(),
                 m.rhs.expr.to_postfix(),
+                m.exact,
                 m.error
             )
         })
@@ -1928,9 +1933,7 @@ fn test_false_exact_identities_stay_out_of_large_integer_results() {
     let at_odd = super::search(two_53_minus, &config, 8);
     assert!(
         at_odd.iter().any(|m| {
-            m.error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE
-                && m.lhs.expr.to_postfix() == "xC"
-                && (m.rhs.value + 1.0).abs() == 0.0
+            m.exact && m.lhs.expr.to_postfix() == "xC" && (m.rhs.value + 1.0).abs() == 0.0
         }),
         "cospi(x) = -1 missing at 2^53-1: {}",
         equation_list(&at_odd)
@@ -1961,6 +1964,111 @@ fn test_false_exact_identities_stay_out_of_large_integer_results() {
             .all(|m| !(m.lhs.expr.to_postfix() == "xSE" && m.rhs.expr.to_postfix() == "2")),
         "e^sinpi(x) = 2 stayed in the top 8 at 1e15 after leaving the target float: {}",
         equation_list(&at_1e15)
+    );
+}
+
+#[test]
+fn test_small_rhs_loose_roots_are_not_exact() {
+    use crate::symbol::Symbol;
+
+    // 146140d marked these exact because the loose cap was
+    // `|f-rhs| <= 1e-5 * max(|rhs|, 1)` and exactness followed `|x-target|`.
+    let target = 1.774_999_999_999_999_7e-11;
+
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = 45;
+    config.max_rhs_complexity = 45;
+    config.max_length = 6;
+    config.constants = vec![Symbol::E, Symbol::Six, Symbol::Nine];
+    config.unary_ops = vec![Symbol::Recip, Symbol::SinPi];
+    config.binary_ops = vec![];
+
+    for (label, matches) in [
+        ("batch", super::search(target, &config, 16)),
+        (
+            "streaming",
+            super::search_streaming(target, &config, 16, false, None).0,
+        ),
+    ] {
+        let list = equation_list(&matches);
+        assert!(
+            has_equation(&matches, "xrS", "er"),
+            "{label} dropped sinpi(1/x) = 1/e (relative gap about 4.9e-6 still passes the loose cap): {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xrS", "er"),
+            "{label} stamped sinpi(1/x) = 1/e exact from the loose path: {list}"
+        );
+        assert!(
+            !has_equation(&matches, "xrS", "9r"),
+            "{label} kept sinpi(1/x) = 1/9 (relative gap about 6.8e-5): {list}"
+        );
+        assert!(
+            !has_equation(&matches, "xrS", "6r"),
+            "{label} kept sinpi(1/x) = 1/6 (relative gap about 4.8e-5): {list}"
+        );
+    }
+
+    // Constant 2 with reciprocal, square, exp, and sinpi. `(1/e^(2^2))^2` is
+    // exp(-8). Sides are about 3.26e-4 and 3.35e-4.
+    let mut small = fast_test_config();
+    small.max_lhs_complexity = 55;
+    small.max_rhs_complexity = 55;
+    small.max_length = 8;
+    small.constants = vec![Symbol::Two];
+    small.unary_ops = vec![Symbol::Recip, Symbol::Square, Symbol::Exp, Symbol::SinPi];
+    small.binary_ops = vec![];
+    for (label, matches) in [
+        ("batch", super::search(target, &small, 8)),
+        (
+            "streaming",
+            super::search_streaming(target, &small, 8, false, None).0,
+        ),
+    ] {
+        let list = equation_list(&matches);
+        assert!(
+            !has_equation(&matches, "xrS", "2sErs"),
+            "{label} ranked sinpi(1/x) = exp(-8) (about 2.9% relative): {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xrS", "2sErs"),
+            "{label} stamped sinpi(1/x) = exp(-8) exact: {list}"
+        );
+        assert!(
+            !matches.is_empty(),
+            "{label} generator produced no rows to compare against exp(-8)"
+        );
+    }
+}
+
+#[test]
+fn test_tiny_target_square_sum_is_outside_the_underflow_skip() {
+    use crate::eval::{evaluate_fast_with_context, EvalContext};
+    use crate::expr::{EvaluatedExpr, Expression};
+    use crate::symbol::NumType;
+
+    // 2 + x^2 equals 2 here because x^2 is far below an ulp of 2. The
+    // underflow skip only runs once `target + e` is an integer (|x| >= 2^52).
+    // At this target the historical probe is near e, where the sum is about 9,
+    // so the LHS is kept and the flat matcher sees a zero residual.
+    let target = 1.774_999_999_999_999_7e-11;
+    let ctx = EvalContext::default();
+    let expr = Expression::parse("2xs+").expect("2 + x^2");
+    let at = evaluate_fast_with_context(&expr, target, &ctx).expect("eval");
+    assert_eq!(
+        at.value, 2.0,
+        "x^2 underflows into the add, value {}",
+        at.value
+    );
+    assert!(
+        at.derivative.abs() < crate::thresholds::DEGENERATE_TEST_THRESHOLD,
+        "derivative {}",
+        at.derivative
+    );
+    let lhs = EvaluatedExpr::new(expr, at.value, at.derivative, NumType::Transcendental);
+    assert!(
+        !super::should_skip_degenerate_lhs(&lhs, target, &ctx),
+        "the large-integer underflow skip does not apply below 2^52"
     );
 }
 

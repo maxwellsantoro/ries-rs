@@ -6,7 +6,6 @@
 use ries_rs::pool::RankingMode;
 use ries_rs::{
     Match, MatchInfo, MatchMetrics, RunManifest, SearchConfigInfo, UserConstant, UserConstantInfo,
-    EXACT_MATCH_TOLERANCE,
 };
 
 /// Build a manifest from the search results
@@ -67,7 +66,7 @@ pub fn build_manifest(
                 lhs_infix: m.lhs.expr.to_infix(),
                 rhs_infix: m.rhs.expr.to_infix(),
                 error: m.error.abs(),
-                is_exact: m.error.abs() < EXACT_MATCH_TOLERANCE,
+                is_exact: m.exact,
                 complexity: m.complexity,
                 x_value: m.x_value,
                 stability: Some(stability),

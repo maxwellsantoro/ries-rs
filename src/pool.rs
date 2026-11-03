@@ -123,22 +123,13 @@ fn compare_expr(a: &Expression, b: &Expression) -> Ordering {
 
 /// Compare two matches according to the selected ranking mode.
 pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Ordering {
-    let a_exactness = if a.error.abs() < EXACT_MATCH_TOLERANCE {
-        0_u8
-    } else {
-        1_u8
-    };
-    let b_exactness = if b.error.abs() < EXACT_MATCH_TOLERANCE {
-        0_u8
-    } else {
-        1_u8
-    };
+    let a_exactness = if a.exact { 0_u8 } else { 1_u8 };
+    let b_exactness = if b.exact { 0_u8 } else { 1_u8 };
 
-    // Matches within exact tolerance are treated as equally exact: sub-tolerance
-    // residual differences are floating-point noise, not a meaningful quality
-    // signal. Collapsing them to zero lets complexity (simplicity) decide among
-    // exact matches, which both matches the original RIES intent and keeps the
-    // bounded pool stable instead of churning on residual noise.
+    // Flagged exact matches are treated as equally exact: sub-tolerance x-error
+    // is floating-point noise, not a meaningful quality signal. Collapsing it
+    // to zero lets complexity (simplicity) decide among exact matches, which
+    // both matches the original RIES intent and keeps the bounded pool stable.
     let a_eff_err = if a_exactness == 0 { 0.0 } else { a.error.abs() };
     let b_eff_err = if b_exactness == 0 { 0.0 } else { b.error.abs() };
 
@@ -174,7 +165,7 @@ struct PoolEntry {
 
 impl PoolEntry {
     fn new(m: Match, ranking_mode: RankingMode) -> Self {
-        let is_exact = m.error.abs() < EXACT_MATCH_TOLERANCE;
+        let is_exact = m.exact;
         let exactness_rank = if is_exact { 0 } else { 1 };
         // Convert error to sortable integer, handling special values.
         // For IEEE 754 doubles, positive values' bit patterns preserve ordering
@@ -303,7 +294,7 @@ impl TopKPool {
     /// Returns true if inserted, false if rejected
     pub fn try_insert(&mut self, m: Match) -> bool {
         let error = m.error.abs();
-        let is_exact = error < EXACT_MATCH_TOLERANCE;
+        let is_exact = m.exact;
 
         // Check error threshold (must be better than accept_error)
         if !is_exact && error > self.accept_error {
@@ -406,7 +397,7 @@ impl TopKPool {
             return None;
         }
         let worst = self.heap.peek()?;
-        if worst.m.error.abs() < EXACT_MATCH_TOLERANCE {
+        if worst.m.exact {
             Some(worst.m.complexity)
         } else {
             None
@@ -482,6 +473,7 @@ mod tests {
             x_value: 2.5,
             error,
             complexity,
+            exact: error.abs() < EXACT_MATCH_TOLERANCE,
         }
     }
 

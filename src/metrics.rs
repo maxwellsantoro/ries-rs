@@ -35,7 +35,7 @@ impl MatchMetrics {
     /// Compute metrics for a match
     pub fn from_match(m: &Match, freq_map: Option<&OperatorFrequency>) -> Self {
         let error = m.error.abs();
-        let is_exact = error < EXACT_MATCH_TOLERANCE;
+        let is_exact = m.exact;
         let complexity = m.complexity;
 
         // Ugliness: penalize deep nesting and operator count
@@ -389,6 +389,7 @@ mod tests {
             x_value: 2.5,
             error,
             complexity: lhs_expr.complexity() + rhs_expr.complexity(),
+            exact: error.abs() < EXACT_MATCH_TOLERANCE,
         }
     }
 

@@ -450,6 +450,12 @@ pub struct Match {
     pub error: f64,
     /// Total complexity (LHS + RHS)
     pub complexity: u32,
+    /// Reported and ranked as an exact root.
+    ///
+    /// Requires the two sides to agree to a few ulps and `|error|` below
+    /// [`EXACT_MATCH_TOLERANCE`]. A Newton hit that only passed the loose
+    /// local-root test is false even when `x` is close to the target.
+    pub exact: bool,
 }
 
 impl Match {
@@ -459,7 +465,7 @@ impl Match {
         let lhs_str = self.lhs.expr.to_infix();
         let rhs_str = self.rhs.expr.to_infix();
 
-        let error_str = if self.error.abs() < EXACT_MATCH_TOLERANCE {
+        let error_str = if self.exact {
             "('exact' match)".to_string()
         } else {
             let sign = if self.error >= 0.0 { "+" } else { "-" };
@@ -1059,7 +1065,7 @@ pub fn search_streaming(
 }
 
 fn stop_condition_met(m: &Match, search_config: &SearchConfig) -> bool {
-    (search_config.stop_at_exact && m.error.abs() < EXACT_MATCH_TOLERANCE)
+    (search_config.stop_at_exact && m.exact)
         || search_config
             .stop_below
             .is_some_and(|threshold| m.error.abs() < threshold)
@@ -1250,6 +1256,7 @@ pub fn search_streaming_with_config(
                                 x_value: search_config.target,
                                 error: 0.0,
                                 complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                                exact: true,
                             };
                             if stop_condition_met(&m, search_config)
                                 && best_stop_match
@@ -1312,6 +1319,7 @@ pub fn search_streaming_with_config(
                                 x_value: refined_x,
                                 error: refined_error,
                                 complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                                exact: is_exact,
                             };
                             if stop_condition_met(&m, search_config)
                                 && best_stop_match
@@ -1342,7 +1350,7 @@ pub fn search_streaming_with_config(
                         let refined_x = hit.x;
                         stats.newton_success += 1;
                         let refined_error = refined_x - search_config.target;
-                        let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+                        let is_exact = hit.is_exact_for(refined_error);
 
                         if pool.would_accept(refined_error.abs(), is_exact) {
                             let m = Match {
@@ -1351,6 +1359,7 @@ pub fn search_streaming_with_config(
                                 x_value: refined_x,
                                 error: refined_error,
                                 complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                                exact: is_exact,
                             };
                             if stop_condition_met(&m, search_config)
                                 && best_stop_match
@@ -1470,6 +1479,7 @@ pub fn search_one_sided_with_stats_and_config(
             x_value: rhs.value,
             error,
             complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+            exact: is_exact,
         };
 
         pool.try_insert(m);

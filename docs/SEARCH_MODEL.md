@@ -133,16 +133,23 @@ This difference is intentional and should not be conflated in benchmark or repro
 
 The canonical comparator is `compare_matches` in `src/pool.rs`.
 
+A row is exact only when both are true: `|x_value - target| < EXACT_MATCH_TOLERANCE`,
+and the two sides agree to a few ulps (`residual_is_exact`). Newton also keeps a
+steep root whose correction is at most 8 ulps and whose residual is within
+`1e-5 * max(|f(x)|, |rhs|)`, with a floor of `1e-300` so two vanished sides do
+not collapse the cap. That looser accept is not exact. `max(|rhs|, 1)` is not
+the scale: it turned every right-hand side below 1 into an absolute `1e-5`
+window.
+
 Ordering is:
 
 1. Exactness (exact before non-exact)
 2. Absolute error (`|x_value - target|`, smaller first) — **for non-exact matches
-   only**. Matches within `EXACT_MATCH_TOLERANCE` are all treated as equally
-   exact: residual differences below that tolerance are floating-point noise, not
-   a quality signal, so they collapse to a single error rank and are decided by
-   complexity instead. This keeps the bounded pool from churning on sub-tolerance
-   residuals and matches the original RIES intent of ranking exact forms by
-   simplicity.
+   only**. Rows flagged exact are treated as equally exact: x-error below
+   `EXACT_MATCH_TOLERANCE` is floating-point noise, not a quality signal, so
+   they collapse to a single error rank and are decided by complexity instead.
+   This keeps the bounded pool from churning on sub-tolerance residuals and
+   matches the original RIES intent of ranking exact forms by simplicity.
 3. Ranking-mode tie-break:
    - `complexity`: lower `C_match` first
    - `parity`: lower legacy parity score first, then lower `C_match`
