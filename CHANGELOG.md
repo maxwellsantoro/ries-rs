@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-11-03
+
+### Fixed
+- Solved equations now use the real inverse branch nearest the reported root.
+  Sine, cosine, tangent, and even roots no longer print the principal value
+  when the search found a different real branch. Odd powers still use their
+  single real root.
+- Large period shifts work. Any finite integer, including magnitudes past
+  `2^63`, is a valid shift. If that shift cannot be represented, the solved
+  form is omitted.
+- `sinpi`, `cospi`, and `tanpi` use the correct parity at large magnitudes.
+  Finite values at `2^52` and above are integers, and finite values at `2^53`
+  and above are even, so `tanpi` of `2^62` is 0 rather than a pole.
+- An exact match now requires both sides to agree at the typed target, with
+  the solved `x` within a few ulps of that target. A nearby root is no longer
+  labeled exact.
+- Flushed `x` terms are skipped at any magnitude. When the `x` contribution
+  has disappeared into a constant, and a probe shows the expression is not a
+  true identity, that candidate is left out.
+- Newton keeps a refined root only when the residual is small. A tiny step
+  that leaves the two sides apart is rejected. Steep roots with a small
+  relative residual are still kept.
+
+### Changed
+- Coverage now runs on LLVM. The coverage job no longer uses tarpaulin's
+  ptrace engine, which crashed while dropping an expression after a passing
+  manifest test.
+
 ## [2.0.2] - 2026-06-27
 
 ### Fixed
