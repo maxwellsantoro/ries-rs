@@ -1,9 +1,7 @@
 //! Shared match presentation fields for binding surfaces.
 
 use crate::search::Match;
-use crate::solver::{canonical_expression_key, solve_for_x_rhs_expression};
-use crate::thresholds::EXACT_MATCH_TOLERANCE;
-
+use crate::solver::{canonical_expression_key, solve_for_x_at};
 /// Presentation-ready fields derived from a search [`Match`].
 ///
 /// Binding surfaces (WASM, Python) convert this into their own types with
@@ -50,7 +48,7 @@ impl MatchSummary {
         let lhs_infix = m.lhs.expr.to_infix_or_postfix();
         let rhs_infix = m.rhs.expr.to_infix_or_postfix();
 
-        let solved = solve_for_x_rhs_expression(&m.lhs.expr, &m.rhs.expr);
+        let solved = solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value);
         let solve_for_x = solved
             .as_ref()
             .map(|e| format!("x = {}", e.to_infix_or_postfix()));
@@ -74,7 +72,7 @@ impl MatchSummary {
             complexity: m.complexity,
             operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
             tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),
-            is_exact: m.error.abs() < EXACT_MATCH_TOLERANCE,
+            is_exact: m.exact,
         }
     }
 }
@@ -95,6 +93,7 @@ mod tests {
             x_value: 2.5,
             error,
             complexity,
+            exact: error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
         }
     }
 

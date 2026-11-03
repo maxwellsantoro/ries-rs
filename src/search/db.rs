@@ -7,9 +7,9 @@ use crate::pool::TopKPool;
 
 use crate::thresholds::{
     ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
-    BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_RANGE_TOLERANCE, DEGENERATE_TEST_THRESHOLD,
-    EXACT_MATCH_TOLERANCE, MAX_SEARCH_RADIUS_FACTOR, NEWTON_FINAL_TOLERANCE,
-    STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
+    BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_TEST_THRESHOLD, MAX_SEARCH_RADIUS_FACTOR,
+    NEWTON_FINAL_TOLERANCE, STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR, TIER_0_MAX,
+    TIER_1_MAX, TIER_2_MAX,
 };
 
 /// Database for storing expressions sorted by value
@@ -547,11 +547,12 @@ fn match_one_lhs(
         return true;
     }
     if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-        // Derivative is non-zero at test_x, so this might be a true repeated root.
-        // Check if LHS(target) ≈ some RHS.
-        let val_error = DEGENERATE_RANGE_TOLERANCE;
-        let low = lhs.value - val_error;
-        let high = lhs.value + val_error;
+        // Flat at the target. Record a match only when the residual is
+        // actually zero (a few ulps). A wider window used to stamp near-misses
+        // as exact.
+        let half = super::flat_exact_half_width(lhs.value);
+        let low = lhs.value - half;
+        let high = lhs.value + half;
 
         stats.lhs_tested += 1;
         let rhs_slice = db.range(low, high);
@@ -567,14 +568,19 @@ fn match_one_lhs(
                     lhs.value, rhs.value
                 );
             }
-            let val_diff = (lhs.value - rhs.value).abs();
-            if val_diff < val_error && pool.would_accept(0.0, true) {
+            // `residual_is_exact` is the named flat window. Exactness still
+            // requires the sides to agree, and the solved x is the target.
+            if super::residual_is_exact(lhs.value, rhs.value)
+                && super::match_is_exact(lhs.value, rhs.value, config.target, config.target)
+                && pool.would_accept(0.0, true)
+            {
                 let m = Match {
                     lhs: lhs.clone(),
                     rhs: rhs.clone(),
                     x_value: config.target,
                     error: 0.0,
                     complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    exact: true,
                 };
                 pool.try_insert(m);
             }
@@ -643,7 +649,7 @@ fn match_one_lhs(
         if !config.refine_with_newton {
             let refined_x = config.target + x_delta;
             let refined_error = x_delta;
-            let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+            let is_exact = super::match_is_exact(lhs.value, rhs.value, refined_x, config.target);
 
             if pool.would_accept(refined_error.abs(), is_exact) {
                 let m = Match {
@@ -652,6 +658,7 @@ fn match_one_lhs(
                     x_value: refined_x,
                     error: refined_error,
                     complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    exact: is_exact,
                 };
 
                 pool.try_insert(m);
@@ -671,7 +678,7 @@ fn match_one_lhs(
         // Refine with Newton-Raphson.
         stats.newton_calls += 1;
         let initial_guess = config.target + x_delta;
-        if let Some(refined_x) = newton_raphson_with_constants(
+        if let Some(hit) = newton_raphson_with_constants(
             &lhs.expr,
             rhs.value,
             initial_guess,
@@ -680,9 +687,13 @@ fn match_one_lhs(
             config.show_newton,
             config.derivative_margin,
         ) {
+            if !hit.real {
+                continue;
+            }
+            let refined_x = hit.x;
             stats.newton_success += 1;
             let refined_error = refined_x - config.target;
-            let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+            let is_exact = super::match_is_exact(lhs.value, rhs.value, refined_x, config.target);
 
             if pool.would_accept(refined_error.abs(), is_exact) {
                 let m = Match {
@@ -691,6 +702,7 @@ fn match_one_lhs(
                     x_value: refined_x,
                     error: refined_error,
                     complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                    exact: is_exact,
                 };
 
                 pool.try_insert(m);

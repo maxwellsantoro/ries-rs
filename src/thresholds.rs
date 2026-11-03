@@ -48,7 +48,10 @@ pub const MIN_SEARCH_RADIUS_FACTOR: f64 = 0.5;
 
 /// Convergence tolerance for Newton-Raphson iteration
 ///
-/// Iteration stops when |delta| < tolerance * (1 + |x|).
+/// A step smaller than `tolerance * (1 + |x|)` is a candidate stopping point,
+/// but only when the residual `|f(x) - rhs|` is also small relative to the
+/// RHS. The bound exceeds one ulp for large `|x|`; a correction that does not
+/// change the float is not treated as convergence.
 ///
 /// Value: 1e-15 (approximately machine epsilon)
 pub const NEWTON_TOLERANCE: f64 = 1e-15;
@@ -77,10 +80,11 @@ pub const NEWTON_FINAL_TOLERANCE: f64 = 1e-10;
 /// Value: 1e-10
 pub const DEGENERATE_TEST_THRESHOLD: f64 = 1e-10;
 
-/// Tolerance for checking degenerate matches
+/// Historical window for flat LHS/RHS pairing.
 ///
-/// If an expression is degenerate, we still check if its value matches
-/// an RHS expression within this tolerance to catch true repeated roots.
+/// Flat matches are now recorded only when the residual is within a few ulps
+/// of the RHS. This wider window stamped near-misses as exact and is no
+/// longer consulted by the matcher. It remains so older notes keep a name.
 ///
 /// Value: 0.01
 pub const DEGENERATE_RANGE_TOLERANCE: f64 = 0.01;

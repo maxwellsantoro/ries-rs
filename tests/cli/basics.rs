@@ -349,10 +349,10 @@ fn test_json_deterministic_golden_output_order_for_complexity_ranking_nonclassic
         equations,
         vec![
             "tanpi(x) = -7^2",
-            "-cospi(x) = 1/7^2",
+            "-cospi(x) = (1/7)^2",
             "1/cospi(x) = -7^2",
             "x^2 = 2 pi",
-            "-cospi(x) = 1/8^2",
+            "-cospi(x) = (1/8)^2",
         ]
     );
 }

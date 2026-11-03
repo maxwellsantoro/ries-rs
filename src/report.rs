@@ -390,7 +390,12 @@ fn print_match(
     let info = format!("{{{}}}", m.complexity);
 
     if solve {
-        println!("     x = {:40} {} {}", rhs_str, error_str, info);
+        if let Some(solved) = crate::solver::solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value) {
+            let solved_str = format_expression_for_display(&solved, format);
+            println!("     x = {:40} {} {}", solved_str, error_str, info);
+        } else {
+            println!("{:>24} = {:<24} {} {}", lhs_str, rhs_str, error_str, info);
+        }
     } else {
         println!("{:>24} = {:<24} {} {}", lhs_str, rhs_str, error_str, info);
     }
@@ -411,6 +416,7 @@ mod tests {
             x_value: 2.5,
             error,
             complexity: lhs_expr.complexity() + rhs_expr.complexity(),
+            exact: error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
         }
     }
 

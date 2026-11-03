@@ -64,6 +64,67 @@ fn test_simple_search() {
 }
 
 #[test]
+fn test_newton_raphson_keeps_steep_phi_root() {
+    use crate::eval::evaluate;
+    use crate::expr::Expression;
+    let target = 1.6180339887_f64;
+    let lhs = Expression::parse("fx-rq").unwrap();
+    let rhs = Expression::parse("2ps+E").unwrap();
+    let l = evaluate(&lhs, target).unwrap();
+    let r = evaluate(&rhs, target).unwrap();
+    let initial = target + -(l.value - r.value) / l.derivative;
+    let got =
+        newton_raphson(&lhs, r.value, initial, 15).expect("steep phi match must still refine");
+    assert!(
+        (got - 1.6180339887008952).abs() < 1e-18,
+        "refined root moved: {got}"
+    );
+    let ctx = crate::eval::EvalContext::default();
+    assert!(
+        super::newton::refined_match_is_real(&lhs, r.value, got, &ctx),
+        "steep phi root must stay (relative residual is about 1e-6)"
+    );
+
+    // A steep but genuine near-root. The historical refine lands within an ulp
+    // of the target; rejecting it reorders ordinary top-N.
+    let target = 0.123_456_789_f64;
+    let lhs = Expression::parse("x9vC").unwrap();
+    let rhs = Expression::parse("21p-/").unwrap();
+    let l = evaluate(&lhs, target).unwrap();
+    let r = evaluate(&rhs, target).unwrap();
+    let initial = target + -(l.value - r.value) / l.derivative;
+    let got = newton_raphson(&lhs, r.value, initial, 15);
+    let got = got.expect("x9vC vs 21p-/ should refine");
+    let ctx = crate::eval::EvalContext::default();
+    assert!(
+        super::newton::refined_match_is_real(&lhs, r.value, got, &ctx),
+        "steep near-root at 0.123456789 must stay"
+    );
+
+    // Identities whose value is exact. A residual gate that only looked at
+    // absolute error would be tempted to drop the huge derivatives.
+    let ctx = crate::eval::EvalContext::default();
+    let exp = Expression::parse("xE").unwrap();
+    let exp_rhs = 40.0_f64.exp();
+    let exp_root = newton_raphson(&exp, exp_rhs, 40.0, 15).expect("exp(40)");
+    assert!((exp_root - 40.0).abs() < 1e-12);
+    assert!(super::newton::refined_match_is_real(
+        &exp, exp_rhs, exp_root, &ctx
+    ));
+    let recip = Expression::parse("xr").unwrap();
+    let recip_root = newton_raphson(&recip, 1e8, 1e-8, 15).expect("1/x = 1e8");
+    assert!((recip_root - 1e-8).abs() < 1e-18);
+    assert!(super::newton::refined_match_is_real(
+        &recip, 1e8, recip_root, &ctx
+    ));
+    let exp_sinpi = Expression::parse("xSE").unwrap();
+    let one_root = newton_raphson(&exp_sinpi, 1.0, 1e15, 15).expect("e^sinpi = 1");
+    assert!(super::newton::refined_match_is_real(
+        &exp_sinpi, 1.0, one_root, &ctx
+    ));
+}
+
+#[test]
 fn test_newton_raphson() {
     use crate::expr::Expression;
 
@@ -1539,6 +1600,932 @@ fn test_should_skip_degenerate_lhs_skips_when_probe_fails() {
         super::should_skip_degenerate_lhs(&lhs, 2.5, &ctx),
         "probe failure should skip the LHS instead of falling through to value matching"
     );
+}
+
+#[test]
+fn test_large_targets_keep_cospi_identity_and_still_drop_constants() {
+    use crate::eval::{evaluate_fast_with_context, EvalContext};
+    use crate::expr::{EvaluatedExpr, Expression};
+    use crate::symbol::{NumType, Symbol};
+
+    let ctx = EvalContext::default();
+    let evaluated_at = |postfix: &str, target: f64| {
+        let expr = Expression::parse(postfix).unwrap_or_else(|| panic!("parse {postfix}"));
+        let at = evaluate_fast_with_context(&expr, target, &ctx)
+            .unwrap_or_else(|err| panic!("eval {postfix} at {target}: {err:?}"));
+        EvaluatedExpr::new(expr, at.value, at.derivative, NumType::Transcendental)
+    };
+    let targets = [1e16, 1e20, 2.0_f64.powi(63), 2.0_f64.powi(100)];
+    for target in targets {
+        let cospi = evaluated_at("xC", target);
+        assert_eq!(cospi.value, 1.0, "cospi({target})");
+        assert!(
+            cospi.derivative.abs() < 1e-10,
+            "cospi({target}) derivative {}",
+            cospi.derivative
+        );
+        assert!(
+            !super::should_skip_degenerate_lhs(&cospi, target, &ctx),
+            "cospi(x) = 1 is an identity at {target}, not a constant expression"
+        );
+
+        for postfix in ["1", "1x^", "p"] {
+            let constant = evaluated_at(postfix, target);
+            assert!(
+                super::should_skip_degenerate_lhs(&constant, target, &ctx),
+                "{postfix} should stay degenerate at {target}"
+            );
+        }
+    }
+
+    // The historical probe is unchanged for ordinary targets, including a
+    // constant and a genuinely flat-at-a-point function whose value moves.
+    let constant = evaluated_at("1x^", 2.5);
+    assert!(super::should_skip_degenerate_lhs(&constant, 2.5, &ctx));
+    let square = evaluated_at("xs", 0.0);
+    assert!(
+        !super::should_skip_degenerate_lhs(&square, 0.0, &ctx),
+        "x^2 is flat at 0 but not constant"
+    );
+
+    // The identity has to survive the actual search filter, not only the helper.
+    let mut config = fast_test_config();
+    config.constants = vec![Symbol::One];
+    config.unary_ops = vec![Symbol::CosPi];
+    config.binary_ops = vec![];
+    config.max_lhs_complexity = 40;
+    config.max_rhs_complexity = 20;
+    config.max_length = 4;
+    for target in targets {
+        let matches = super::search(target, &config, 10);
+        assert!(
+            matches
+                .iter()
+                .any(|m| { m.lhs.expr.to_postfix() == "xC" && m.rhs.expr.to_postfix() == "1" }),
+            "missing cospi(x) = 1 for {target}: {}",
+            matches
+                .iter()
+                .map(|m| format!("{} = {}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+}
+
+fn integer_lattice_config() -> crate::gen::GenConfig {
+    use crate::symbol::Symbol;
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = 55;
+    config.max_rhs_complexity = 40;
+    config.max_length = 8;
+    config.constants = vec![
+        Symbol::One,
+        Symbol::Two,
+        Symbol::Pi,
+        Symbol::E,
+        Symbol::Phi,
+        Symbol::Catalan,
+        Symbol::Plastic,
+    ];
+    config.unary_ops = vec![
+        Symbol::Neg,
+        Symbol::Recip,
+        Symbol::Sqrt,
+        Symbol::Square,
+        Symbol::Exp,
+        Symbol::SinPi,
+        Symbol::CosPi,
+    ];
+    config.binary_ops = vec![Symbol::Add, Symbol::Sub];
+    config
+}
+
+fn is_exact_equation(matches: &[super::Match], lhs: &str, rhs: &str) -> bool {
+    matches
+        .iter()
+        .any(|m| m.exact && m.lhs.expr.to_postfix() == lhs && m.rhs.expr.to_postfix() == rhs)
+}
+
+fn has_equation(matches: &[super::Match], lhs: &str, rhs: &str) -> bool {
+    matches
+        .iter()
+        .any(|m| m.lhs.expr.to_postfix() == lhs && m.rhs.expr.to_postfix() == rhs)
+}
+
+fn equation_list(matches: &[super::Match]) -> String {
+    matches
+        .iter()
+        .map(|m| {
+            format!(
+                "{} = {} exact={} err={:.3e}",
+                m.lhs.expr.to_postfix(),
+                m.rhs.expr.to_postfix(),
+                m.exact,
+                m.error
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[test]
+fn test_large_integer_flat_near_misses_are_not_exact() {
+    // 2^63. cospi(sqrt(x)) is about 0.997 with a tiny derivative, and 2+1/x
+    // equals 2 only because 1/x underflows. Neither is an exact root.
+    let target = 2.0_f64.powi(63);
+    let config = integer_lattice_config();
+    for (label, matches) in [
+        ("batch", super::search(target, &config, 12)),
+        (
+            "streaming",
+            super::search_streaming(target, &config, 12, false, None).0,
+        ),
+    ] {
+        assert!(
+            !is_exact_equation(&matches, "xqC", "1"),
+            "{label} stamped cospi(sqrt(x)) = 1 exact: {}",
+            equation_list(&matches)
+        );
+        assert!(
+            !is_exact_equation(&matches, "2xr+", "2") && !is_exact_equation(&matches, "xr2+", "2"),
+            "{label} stamped 2+1/x = 2 exact: {}",
+            equation_list(&matches)
+        );
+        assert!(
+            is_exact_equation(&matches, "xC", "1"),
+            "{label} dropped the real identity cospi(x) = 1: {}",
+            equation_list(&matches)
+        );
+    }
+}
+
+#[test]
+fn test_newton_does_not_call_a_sub_ulp_step_exact() {
+    use crate::expr::Expression;
+
+    let two_52 = 2.0_f64.powi(52);
+    let ctx = crate::eval::EvalContext::default();
+    let exp_sinpi = Expression::parse("xSE").expect("e^sinpi(x)");
+    let stuck = newton_raphson(&exp_sinpi, 2.0, two_52, 15);
+    assert_eq!(stuck, Some(two_52));
+    assert!(
+        !super::newton::refined_match_is_real(&exp_sinpi, 2.0, two_52, &ctx),
+        "e^sinpi(x) = 2 is not a root at 2^52 (value is 1)"
+    );
+    let root = newton_raphson(&exp_sinpi, 1.0, two_52, 15).expect("e^sinpi(x) = 1");
+    assert!(
+        (root - two_52).abs() < 1.0,
+        "true root should stay on 2^52, got {root}"
+    );
+    assert!(super::newton::refined_match_is_real(
+        &exp_sinpi, 1.0, root, &ctx
+    ));
+
+    // The same early-accept used to stamp these on main. sinpi(x^2) is 0,
+    // cospi(x^2) is 1.
+    let sin_square = Expression::parse("xsS").expect("sinpi(x^2)");
+    assert!(!super::newton::refined_match_is_real(
+        &sin_square,
+        1.0,
+        two_52,
+        &ctx
+    ));
+    let cos_square = Expression::parse("xsC").expect("cospi(x^2)");
+    assert!(newton_raphson(&cos_square, 2.0, two_52, 15).is_none());
+
+    let one_e15 = 1.0e15;
+    let catalan = 0.915_965_594_177_219;
+    assert!(
+        !super::newton::refined_match_is_real(&exp_sinpi, catalan, one_e15, &ctx),
+        "e^sinpi(x) = catalan leaves a residual of about 0.084 at 1e15"
+    );
+
+    // A step of about 0.32 passes the 1e-15*(1+|x|) test at |x| = 1e15 and
+    // lands one ulp away. The residual there is still O(1).
+    for target in [one_e15, -one_e15] {
+        let moved = newton_raphson(&exp_sinpi, 2.0, target, 15).expect("step test returns");
+        assert!(
+            moved != target,
+            "expected the step to leave {target}, got {moved}"
+        );
+        assert!(
+            !super::newton::refined_match_is_real(&exp_sinpi, 2.0, moved, &ctx),
+            "e^sinpi(x) = 2 at {moved} is not a root of target {target}"
+        );
+    }
+}
+
+#[test]
+fn test_residual_is_exact_rejects_the_old_flat_window() {
+    use crate::eval::evaluate;
+    use crate::expr::Expression;
+    use crate::symbol::Symbol;
+
+    // atan2(pi, 2) ≈ 1.0039. That sits inside the old ±0.01 flat window and
+    // outside a few ulps of 1. Restoring the window makes this assertion fail.
+    let atan = evaluate(&Expression::parse("p2A").unwrap(), 1.0).unwrap();
+    assert!(
+        (atan.value - 1.0).abs() < 0.01 && (atan.value - 1.0).abs() > 1e-4,
+        "atan2(pi, 2) = {}",
+        atan.value
+    );
+    assert!(super::residual_is_exact(1.0, 1.0));
+    assert!(super::residual_is_exact(1.0, 1.0 + 4.0 * f64::EPSILON));
+    assert!(
+        !super::residual_is_exact(1.0, atan.value),
+        "ulp window accepted a residual of {}",
+        (atan.value - 1.0).abs()
+    );
+    // cospi(sqrt(2^63)) ≈ 0.997, the near-miss that used to be stamped exact.
+    assert!(!super::residual_is_exact(0.997170624192306, 1.0));
+
+    // Even integer: cospi(x) is exactly 1, derivative 0, and target+e is a
+    // real perturbation so the LHS is kept. The flat matcher is what decides
+    // whether atan2(pi, 2) is an exact partner.
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = 40;
+    config.max_rhs_complexity = 40;
+    config.constants = vec![Symbol::One, Symbol::Two, Symbol::Pi];
+    config.unary_ops = vec![Symbol::CosPi];
+    config.binary_ops = vec![Symbol::Atan2];
+    for (label, matches) in [
+        ("batch", super::search(64.0, &config, 8)),
+        (
+            "streaming",
+            super::search_streaming(64.0, &config, 8, false, None).0,
+        ),
+    ] {
+        let list = equation_list(&matches);
+        assert!(
+            is_exact_equation(&matches, "xC", "1"),
+            "{label} lost cospi(x) = 1: {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xC", "p2A"),
+            "{label} stamped cospi(x) = atan2(pi, 2) exact inside ±0.01: {list}"
+        );
+    }
+}
+
+#[test]
+fn test_squared_trig_false_exacts_stay_out() {
+    use crate::symbol::Symbol;
+    // cospi(x^2) at 2^52 is really 1 with derivative 0, so LHS dedup keeps the
+    // simpler cospi(x). sinpi(x^2) is 0. Neither may show up as = 1 or = 2
+    // the way main's Newton step used to.
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = 50;
+    config.max_rhs_complexity = 20;
+    config.constants = vec![Symbol::One, Symbol::Two];
+    config.unary_ops = vec![Symbol::Square, Symbol::CosPi, Symbol::SinPi];
+    config.binary_ops = vec![];
+    let target = 2.0_f64.powi(52);
+    for matches in [
+        super::search(target, &config, 20),
+        super::search_streaming(target, &config, 20, false, None).0,
+    ] {
+        let list = equation_list(&matches);
+        assert!(
+            is_exact_equation(&matches, "xC", "1"),
+            "cospi(x) = 1 missing: {list}"
+        );
+        assert!(!is_exact_equation(&matches, "xsC", "2"), "{list}");
+        assert!(!is_exact_equation(&matches, "xsS", "1"), "{list}");
+        assert!(!is_exact_equation(&matches, "xsS", "2"), "{list}");
+    }
+}
+
+#[test]
+fn test_false_exact_identities_stay_out_of_large_integer_results() {
+    let config = integer_lattice_config();
+
+    let two_52 = 2.0_f64.powi(52);
+    let at_two_52 = super::search(two_52, &config, 8);
+    assert!(
+        !is_exact_equation(&at_two_52, "xSE", "2"),
+        "e^sinpi(x) = 2 was exact at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+    assert!(
+        !is_exact_equation(&at_two_52, "xsS", "1"),
+        "sinpi(x^2) = 1 was exact at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+    assert!(
+        !is_exact_equation(&at_two_52, "xsC", "2"),
+        "cospi(x^2) = 2 was exact at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+    assert!(
+        is_exact_equation(&at_two_52, "xC", "1"),
+        "cospi(x) = 1 missing at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+    assert!(
+        is_exact_equation(&at_two_52, "xSE", "1"),
+        "e^sinpi(x) = 1 should stay exact at 2^52: {}",
+        equation_list(&at_two_52)
+    );
+
+    // 2^53 - 1 is the last odd integer. cospi is -1 there, not +1; the bug
+    // was the LHS being dropped because target+e is the next integer.
+    let two_53_minus = 2.0_f64.powi(53) - 1.0;
+    let at_odd = super::search(two_53_minus, &config, 8);
+    assert!(
+        at_odd.iter().any(|m| {
+            m.exact && m.lhs.expr.to_postfix() == "xC" && (m.rhs.value + 1.0).abs() == 0.0
+        }),
+        "cospi(x) = -1 missing at 2^53-1: {}",
+        equation_list(&at_odd)
+    );
+    assert!(
+        !is_exact_equation(&at_odd, "xC", "1"),
+        "cospi(x) = 1 is false at odd 2^53-1: {}",
+        equation_list(&at_odd)
+    );
+
+    let at_1e15 = super::search(1.0e15, &config, 8);
+    assert!(
+        at_1e15
+            .iter()
+            .take(8)
+            .all(|m| m.rhs.expr.to_postfix() != "G"),
+        "catalan ranked in the top 8 at 1e15: {}",
+        equation_list(&at_1e15)
+    );
+    assert!(
+        !is_exact_equation(&at_1e15, "xSE", "G"),
+        "e^sinpi(x) = catalan was exact at 1e15: {}",
+        equation_list(&at_1e15)
+    );
+    assert!(
+        at_1e15
+            .iter()
+            .all(|m| !(m.lhs.expr.to_postfix() == "xSE" && m.rhs.expr.to_postfix() == "2")),
+        "e^sinpi(x) = 2 stayed in the top 8 at 1e15 after leaving the target float: {}",
+        equation_list(&at_1e15)
+    );
+}
+
+#[test]
+fn test_small_rhs_loose_roots_are_not_exact() {
+    use crate::symbol::Symbol;
+
+    // 146140d marked these exact because the loose cap was
+    // `|f-rhs| <= 1e-5 * max(|rhs|, 1)` and exactness followed `|x-target|`.
+    let target = 1.774_999_999_999_999_7e-11;
+
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = 45;
+    config.max_rhs_complexity = 45;
+    config.max_length = 6;
+    config.constants = vec![Symbol::E, Symbol::Six, Symbol::Nine];
+    config.unary_ops = vec![Symbol::Recip, Symbol::SinPi];
+    config.binary_ops = vec![];
+
+    for (label, matches) in [
+        ("batch", super::search(target, &config, 16)),
+        (
+            "streaming",
+            super::search_streaming(target, &config, 16, false, None).0,
+        ),
+    ] {
+        let list = equation_list(&matches);
+        assert!(
+            has_equation(&matches, "xrS", "er"),
+            "{label} dropped sinpi(1/x) = 1/e (relative gap about 4.9e-6 still passes the loose cap): {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xrS", "er"),
+            "{label} stamped sinpi(1/x) = 1/e exact from the loose path: {list}"
+        );
+        assert!(
+            !has_equation(&matches, "xrS", "9r"),
+            "{label} kept sinpi(1/x) = 1/9 (relative gap about 6.8e-5): {list}"
+        );
+        assert!(
+            !has_equation(&matches, "xrS", "6r"),
+            "{label} kept sinpi(1/x) = 1/6 (relative gap about 4.8e-5): {list}"
+        );
+    }
+
+    // Constant 2 with reciprocal, square, exp, and sinpi. `(1/e^(2^2))^2` is
+    // exp(-8). Sides are about 3.26e-4 and 3.35e-4.
+    let mut small = fast_test_config();
+    small.max_lhs_complexity = 55;
+    small.max_rhs_complexity = 55;
+    small.max_length = 8;
+    small.constants = vec![Symbol::Two];
+    small.unary_ops = vec![Symbol::Recip, Symbol::Square, Symbol::Exp, Symbol::SinPi];
+    small.binary_ops = vec![];
+    for (label, matches) in [
+        ("batch", super::search(target, &small, 8)),
+        (
+            "streaming",
+            super::search_streaming(target, &small, 8, false, None).0,
+        ),
+    ] {
+        let list = equation_list(&matches);
+        assert!(
+            !has_equation(&matches, "xrS", "2sErs"),
+            "{label} ranked sinpi(1/x) = exp(-8) (about 2.9% relative): {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xrS", "2sErs"),
+            "{label} stamped sinpi(1/x) = exp(-8) exact: {list}"
+        );
+        assert!(
+            !matches.is_empty(),
+            "{label} generator produced no rows to compare against exp(-8)"
+        );
+    }
+}
+
+fn restricted_config(
+    constants: Vec<crate::symbol::Symbol>,
+    unary_ops: Vec<crate::symbol::Symbol>,
+    binary_ops: Vec<crate::symbol::Symbol>,
+    complexity: u32,
+    max_length: usize,
+) -> crate::gen::GenConfig {
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = complexity;
+    config.max_rhs_complexity = complexity;
+    config.max_length = max_length;
+    config.constants = constants;
+    config.unary_ops = unary_ops;
+    config.binary_ops = binary_ops;
+    config
+}
+
+fn batch_and_streaming(
+    target: f64,
+    config: &crate::gen::GenConfig,
+    n: usize,
+) -> Vec<(&'static str, Vec<super::Match>)> {
+    vec![
+        ("batch", super::search(target, config, n)),
+        (
+            "streaming",
+            super::search_streaming(target, config, n, false, None).0,
+        ),
+    ]
+}
+
+#[test]
+fn test_exact_uses_sides_at_the_typed_target() {
+    use crate::eval::evaluate;
+    use crate::expr::Expression;
+    use crate::symbol::Symbol;
+
+    // Steep near a tiny target: Newton lands a few ulps away, where sinpi(1/x)
+    // is exactly 0 or 1, but the sides at the typed target do not agree.
+    let tiny = 1.774_999_999_999_999_7e-11;
+    let sinpi = evaluate(&Expression::parse("xrS").unwrap(), tiny).unwrap();
+    let ln_one = evaluate(&Expression::parse("1l").unwrap(), tiny).unwrap();
+    assert!(
+        sinpi.value.abs() > 1e-2 && ln_one.value == 0.0,
+        "sinpi(1/x) at the target is {}, ln(1) is {}",
+        sinpi.value,
+        ln_one.value
+    );
+    assert!(
+        !super::sides_agree_within_ulps(sinpi.value, ln_one.value),
+        "sides at the typed target must not count as exact"
+    );
+
+    // sinpi(1) is also 0 and ties ln(1) on complexity. RHS dedupe keeps one of
+    // them, so the right-hand side is generated with ln only. The left-hand
+    // side still has sinpi.
+    let mut ln_one_cfg = restricted_config(
+        vec![Symbol::One],
+        vec![Symbol::Recip, Symbol::SinPi, Symbol::Ln],
+        vec![],
+        45,
+        4,
+    );
+    ln_one_cfg.rhs_unary_ops = Some(vec![Symbol::Ln]);
+    let companions = restricted_config(
+        vec![Symbol::One],
+        vec![Symbol::Recip, Symbol::SinPi, Symbol::Exp],
+        vec![Symbol::Add, Symbol::Sub],
+        55,
+        6,
+    );
+    let cases = [
+        (&ln_one_cfg, &[("xrS", "1l")][..]),
+        (
+            &companions,
+            &[("xrSE", "1"), ("1xrS+", "1"), ("1xrS-", "1")][..],
+        ),
+    ];
+    for (config, equations) in cases {
+        for (label, matches) in batch_and_streaming(tiny, config, 16) {
+            let list = equation_list(&matches);
+            for &(lhs, rhs) in equations {
+                assert!(
+                    has_equation(&matches, lhs, rhs),
+                    "{label} lost {lhs} = {rhs}, so the exactness check would be vacuous: {list}"
+                );
+                assert!(
+                    !is_exact_equation(&matches, lhs, rhs),
+                    "{label} stamped {lhs} = {rhs} exact from a nearby root: {list}"
+                );
+                let row = matches
+                    .iter()
+                    .find(|m| m.lhs.expr.to_postfix() == lhs && m.rhs.expr.to_postfix() == rhs)
+                    .expect("row present");
+                assert!(
+                    row.error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
+                    "{label} {lhs} = {rhs} left the 1e-14 window (err {}), so this is a different match",
+                    row.error
+                );
+            }
+        }
+    }
+
+    let smaller = 1e-15;
+    let sinpi_small = evaluate(&Expression::parse("xrS").unwrap(), smaller).unwrap();
+    assert!(
+        !super::sides_agree_within_ulps(sinpi_small.value, 1.0),
+        "sinpi(1/x) at 1e-15 is {}, not 1",
+        sinpi_small.value
+    );
+    let sinpi_one = restricted_config(
+        vec![Symbol::One],
+        vec![Symbol::Recip, Symbol::SinPi],
+        vec![],
+        40,
+        4,
+    );
+    for (label, matches) in batch_and_streaming(smaller, &sinpi_one, 8) {
+        let list = equation_list(&matches);
+        assert!(
+            has_equation(&matches, "xrS", "1"),
+            "{label} lost sinpi(1/x) = 1: {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xrS", "1"),
+            "{label} stamped sinpi(1/x) = 1 exact at 1e-15: {list}"
+        );
+    }
+
+    // Flat root: cbrt(1e6) and (1+9)^2 agree to a couple of ulps of 100, but
+    // Newton stops ~8e-10 away. The old 1e-14 window dropped the row.
+    let million = 1.0e6;
+    let cbrt = evaluate(&Expression::parse("3xv").unwrap(), million).unwrap();
+    let hundred = evaluate(&Expression::parse("19+s").unwrap(), million).unwrap();
+    assert!(
+        super::sides_agree_within_ulps(cbrt.value, hundred.value),
+        "cbrt(1e6) = {}, (1+9)^2 = {}",
+        cbrt.value,
+        hundred.value
+    );
+    let roots = restricted_config(
+        vec![Symbol::One, Symbol::Three, Symbol::Nine],
+        vec![Symbol::Square],
+        vec![Symbol::Add, Symbol::Root],
+        50,
+        6,
+    );
+    for (label, matches) in batch_and_streaming(million, &roots, 16) {
+        let list = equation_list(&matches);
+        assert!(
+            is_exact_equation(&matches, "3xv", "19+s"),
+            "{label} dropped x^(1/3) = (1+9)^2: {list}"
+        );
+        let row = matches
+            .iter()
+            .find(|m| m.lhs.expr.to_postfix() == "3xv" && m.rhs.expr.to_postfix() == "19+s")
+            .expect("cube root row");
+        assert!(
+            row.error.abs() > crate::thresholds::EXACT_MATCH_TOLERANCE,
+            "{label} cube-root x-error {} is inside 1e-14; the window would not have dropped it",
+            row.error
+        );
+        assert!(
+            super::solved_x_within_ulps(row.x_value, million),
+            "{label} cube-root x {} is outside 8 ulps of 1e6",
+            row.x_value
+        );
+    }
+
+    // 64's cube root is about 2 ulps of 64 (2.84e-14), outside the old 1e-14
+    // window and inside 8 ulps. A 1-ulp cap or the absolute window drops it.
+    let sixty_four = 64.0;
+    let cbrt_64 = restricted_config(
+        vec![Symbol::Three, Symbol::Four],
+        vec![],
+        vec![Symbol::Root],
+        40,
+        4,
+    );
+    for (label, matches) in batch_and_streaming(sixty_four, &cbrt_64, 8) {
+        let list = equation_list(&matches);
+        assert!(
+            is_exact_equation(&matches, "3xv", "4"),
+            "{label} dropped x^(1/3) = 4: {list}"
+        );
+        let row = matches
+            .iter()
+            .find(|m| m.lhs.expr.to_postfix() == "3xv" && m.rhs.expr.to_postfix() == "4")
+            .expect("cube root of 64");
+        assert!(
+            row.error.abs() > crate::thresholds::EXACT_MATCH_TOLERANCE,
+            "{label} 64 cube-root x-error {} is inside 1e-14",
+            row.error
+        );
+        assert!(
+            super::solved_x_within_ulps(row.x_value, sixty_four),
+            "{label} 64 cube-root x {} is outside 8 ulps",
+            row.x_value
+        );
+    }
+}
+
+#[test]
+fn test_small_target_underflow_is_skipped() {
+    use crate::eval::{evaluate_fast_with_context, EvalContext};
+    use crate::expr::{EvaluatedExpr, Expression};
+    use crate::symbol::{NumType, Symbol};
+
+    let ctx = EvalContext::default();
+    let evaluated_at = |postfix: &str, target: f64| {
+        let expr = Expression::parse(postfix).unwrap_or_else(|| panic!("parse {postfix}"));
+        let at = evaluate_fast_with_context(&expr, target, &ctx)
+            .unwrap_or_else(|err| panic!("eval {postfix} at {target}: {err:?}"));
+        EvaluatedExpr::new(expr, at.value, at.derivative, NumType::Transcendental)
+    };
+
+    let tiny = 1.774_999_999_999_999_7e-11;
+    // x^2 has vanished into the constant. At 1e-8 the derivative of 2+x^2 is
+    // 2e-8, above the flat-path threshold, so the skip has to run first.
+    // 1.1e-8 is past the old fixed cutoff and still bitwise. 2e-8 moves 2+x^2
+    // by one ulp of 2, and 6e-8 is still inside the 8-ulp exact window.
+    // exp(x^2) leaves that window before 6e-8, so it is not in the last set.
+    for target in [tiny, 1e-8, -1e-8, 1.1e-8, -1.1e-8, 2e-8] {
+        for postfix in ["2xs+", "pxs+", "xsE", "xsC", "4xs+", "5xs+"] {
+            let lhs = evaluated_at(postfix, target);
+            assert!(
+                super::should_skip_degenerate_lhs(&lhs, target, &ctx),
+                "{postfix} at {target} still has an x term in floating point (value {})",
+                lhs.value
+            );
+        }
+    }
+    for postfix in ["2xs+", "pxs+", "xsC", "4xs+", "5xs+"] {
+        let lhs = evaluated_at(postfix, 6e-8);
+        assert!(
+            super::should_skip_degenerate_lhs(&lhs, 6e-8, &ctx),
+            "{postfix} at 6e-8 still has an x term in floating point (value {})",
+            lhs.value
+        );
+    }
+
+    // 2+(2e-8)^2 is 2+1ulp. Bitwise inequality is not "a real function of x"
+    // while that ulp still passes the exact-side rule.
+    let moved = evaluated_at("2xs+", 2e-8);
+    assert_ne!(moved.value, 2.0, "2 + (2e-8)^2 should move by one ulp");
+    assert!(
+        super::sides_agree_within_ulps(moved.value, 2.0),
+        "2 + (2e-8)^2 = {} must still be inside the exact tolerance of 2",
+        moved.value
+    );
+
+    // Just past the 8-ulp window the addend is a real change and stays.
+    let past = evaluated_at("2xs+", 7e-8);
+    assert!(
+        !super::sides_agree_within_ulps(past.value, 2.0),
+        "2 + (7e-8)^2 = {} should have left the 8-ulp window",
+        past.value
+    );
+    assert!(
+        !super::should_skip_degenerate_lhs(&past, 7e-8, &ctx),
+        "2 + x^2 at 7e-8 has left the flush window"
+    );
+
+    // Target 0 is the probe point itself. x^2 is flat there and must stay.
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xs", 0.0),
+        0.0,
+        &ctx
+    ));
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("2xs+", 0.0),
+        0.0,
+        &ctx
+    ));
+
+    // 1/x does not evaluate at 0 or at a subnormal, so the tiny-target skip
+    // must not eat it. sinpi(1/x) is the steep root the exactness test sees.
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xrS", tiny),
+        tiny,
+        &ctx
+    ));
+
+    // Same vanished-x pattern when 0 is outside the domain, or when ±1 is
+    // still a root (cospi(6) = 1) and only the 0.5 probe moves. True
+    // identities hold at that probe and stay.
+    // Same flush once the value is merely within a few ulps of the limit,
+    // including cospi(plastic"/x) and 2+x at 1e-15 (a couple of ulps of 2).
+    for postfix in ["6x*C", "xf^E", "1xf^-", "xx^C", "xCWr", "PxvC", "2x+"] {
+        let target = if postfix == "2x+" { 1e-15 } else { tiny };
+        assert!(
+            super::should_skip_degenerate_lhs(&evaluated_at(postfix, target), target, &ctx),
+            "{postfix} still depends on x at {target}"
+        );
+    }
+    for postfix in ["xxsL", "xxqL", "xrxrL"] {
+        assert!(
+            !super::should_skip_degenerate_lhs(&evaluated_at(postfix, tiny), tiny, &ctx),
+            "{postfix} is an identity at {tiny} and must stay"
+        );
+    }
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xxr*", 1.1e-8),
+        1.1e-8,
+        &ctx
+    ));
+    // Equal to the limit at 0 for a real reason, not because x flushed.
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xsC", 2.0_f64.sqrt()),
+        2.0_f64.sqrt(),
+        &ctx
+    ));
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xrC", 0.1),
+        0.1,
+        &ctx
+    ));
+
+    let config = restricted_config(
+        vec![
+            Symbol::One,
+            Symbol::Two,
+            Symbol::Three,
+            Symbol::Four,
+            Symbol::Five,
+            Symbol::Pi,
+        ],
+        vec![Symbol::Square, Symbol::Exp, Symbol::CosPi, Symbol::Recip],
+        vec![Symbol::Add, Symbol::Sub, Symbol::Mul],
+        45,
+        5,
+    );
+    let vanished = [
+        "2xs+", "xs2+", "pxs+", "xsp+", "xsE", "xsC", "pxs-", "3xs+", "3xs-", "4xs+", "5xs+",
+    ];
+    for target in [tiny, 1e-8, 1.1e-8, -1.1e-8, 2e-8, 6e-8] {
+        for (label, matches) in batch_and_streaming(target, &config, 8) {
+            let list = equation_list(&matches);
+            for lhs in vanished {
+                assert!(
+                    !matches.iter().any(|m| m.lhs.expr.to_postfix() == lhs),
+                    "{label} reported {lhs} at {target}: {list}"
+                );
+            }
+            if target.abs() == 1.1e-8 {
+                assert!(
+                    is_exact_equation(&matches, "xxr*", "1"),
+                    "{label} dropped x*(1/x) = 1 at {target}: {list}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_exact_requires_solved_x_near_the_target() {
+    use crate::symbol::Symbol;
+
+    // Sides of e^x = 1 agree at 1e-15, and Newton walks to 0. That x-error is
+    // ~1e-15, far past 8 ulps of the target. The 1e6 cube root (~7 ulps) is
+    // covered by test_exact_uses_sides_at_the_typed_target.
+    let small = 1e-15;
+    assert!(!super::match_is_exact(1.0, 1.0, 0.0, small));
+    assert!(super::solved_x_within_ulps(
+        1.0e6 + 8.149_072_527_885_437e-10,
+        1.0e6
+    ));
+    assert!(super::solved_x_within_ulps(
+        64.0 + 2.842_170_943_040_401e-14,
+        64.0
+    ));
+    assert!(!super::solved_x_within_ulps(
+        1.0e6 + 9.0 * (1.0e6_f64.next_up() - 1.0e6),
+        1.0e6
+    ));
+
+    let near_zero = restricted_config(
+        vec![
+            Symbol::One,
+            Symbol::Two,
+            Symbol::Three,
+            Symbol::Four,
+            Symbol::Pi,
+        ],
+        vec![Symbol::Exp, Symbol::Recip],
+        vec![Symbol::Add, Symbol::Sub, Symbol::Pow],
+        50,
+        5,
+    );
+    let walked_off = [
+        ("xE", "1"),
+        ("1x-", "1"),
+        ("2x^", "1"),
+        ("2x+", "2"),
+        ("px^", "1"),
+        ("2x-", "2"),
+        ("3x^", "1"),
+        ("4x^", "1"),
+    ];
+    for target in [small, -small] {
+        for (label, matches) in batch_and_streaming(target, &near_zero, 16) {
+            let list = equation_list(&matches);
+            for (lhs, rhs) in walked_off {
+                assert!(
+                    !is_exact_equation(&matches, lhs, rhs),
+                    "{label} stamped {lhs} = {rhs} exact at {target}: {list}"
+                );
+            }
+        }
+    }
+
+    // x*(1/x) = 1 at 1e-15 is a real identity. A config that actually
+    // generates it must keep the row exact (the 1.1e-8 search covers the
+    // same identity; this is the smaller target).
+    let identity = restricted_config(
+        vec![Symbol::One],
+        vec![Symbol::Recip],
+        vec![Symbol::Mul],
+        50,
+        5,
+    );
+    for target in [small, -small] {
+        for (label, matches) in batch_and_streaming(target, &identity, 8) {
+            assert!(
+                is_exact_equation(&matches, "xxr*", "1"),
+                "{label} dropped x*(1/x) = 1 at {target}: {}",
+                equation_list(&matches)
+            );
+        }
+    }
+
+    // Level-2 rows whose sides barely move and whose solved x is ~1e-11 off.
+    let tiny = 1.774_999_999_999_999_7e-11;
+    assert!(!super::match_is_exact(1.0, 1.0, 4.2e-12, tiny));
+    assert!(!super::solved_x_within_ulps(0.0, tiny));
+    let flat_near_root = restricted_config(
+        vec![Symbol::One, Symbol::Pi, Symbol::E, Symbol::Plastic],
+        vec![Symbol::CosPi, Symbol::Square, Symbol::Exp, Symbol::Root],
+        vec![Symbol::Add],
+        60,
+        6,
+    );
+    for (label, matches) in batch_and_streaming(tiny, &flat_near_root, 16) {
+        let list = equation_list(&matches);
+        assert!(
+            !is_exact_equation(&matches, "PxvC", "1"),
+            "{label} stamped cospi(plastic\"/x) = 1 exact: {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "psEx+", "psE"),
+            "{label} stamped e^(pi^2)+x = e^(pi^2) exact: {list}"
+        );
+    }
+
+    // cospi(x) = 1 just off 2: the sides agree and Newton walks back to 2.
+    // The slope is too large for the flush skip, so the row stays, not exact.
+    let just_off = 2.00000001;
+    let cospi = restricted_config(vec![Symbol::One], vec![Symbol::CosPi], vec![], 40, 3);
+    for (label, matches) in batch_and_streaming(2.0, &cospi, 4) {
+        assert!(
+            is_exact_equation(&matches, "xC", "1"),
+            "{label} dropped cospi(x) = 1 at 2: {}",
+            equation_list(&matches)
+        );
+    }
+    for (label, matches) in batch_and_streaming(just_off, &cospi, 4) {
+        let list = equation_list(&matches);
+        assert!(
+            has_equation(&matches, "xC", "1"),
+            "{label} lost cospi(x) = 1 off 2, so the exactness check would be vacuous: {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xC", "1"),
+            "{label} stamped cospi(x) = 1 exact off an even integer: {list}"
+        );
+        let row = matches
+            .iter()
+            .find(|m| m.lhs.expr.to_postfix() == "xC")
+            .expect("cospi row");
+        assert!(
+            row.error.abs() > 8.0 * (just_off.next_up() - just_off).abs(),
+            "{label} cospi error {} is inside 8 ulps of the target",
+            row.error
+        );
+    }
 }
 
 #[test]

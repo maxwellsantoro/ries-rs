@@ -61,7 +61,9 @@ Equivalent abstract grammar (stack-discipline form):
 - unary nodes apply to one valid subexpression
 - binary nodes apply to two valid subexpressions
 
-In infix form, parentheses are added according to precedence/associativity rules implemented in `src/expr.rs` (power is right-associative; multiplication/division bind tighter than addition/subtraction).
+In infix form, parentheses follow the precedence and associativity rules in `src/expr.rs`. Power (`^`, including printed `^2` and `e^`) is right-associative and binds tighter than unary minus. Unary minus binds tighter than multiplication, division, and reciprocal (`1/`). Addition and subtraction are left-associative and bind least tightly. A subexpression is parenthesized when reprinting it at the same precedence would change the value (`(a^b)^c`, `a-(b-c)`, `1/(1/x)`, `-(1/(1/(-phi)))`). Parsing that infix with the same rules evaluates to the postfix value.
+
+Solve-for-x display uses `solve_for_x_at` and the matched root. Multi-valued inverses emit the real branch nearest that root: `±√y` for squares and even integer powers (odd powers keep their single real root), `asin(y)/π + 2k` or `1 - asin(y)/π + 2k` for sine, `2k ± acos(y)/π` for cosine, and `atan(y)/π + k` for tangent. Integer shifts print as decimal literals and evaluate to that exact integer for every finite integer `f64`, including magnitudes past 2^63. The function returns nothing when the hint is not finite, the inverse is not real, or the branch cannot be represented exactly. Text `-s` (report and classic) and `--format` use this same closed form. `solve_for_x_rhs_expression` remains the principal-branch inverse for callers that do not have a root.
 
 ## Search Space Partition
 
@@ -131,16 +133,50 @@ This difference is intentional and should not be conflated in benchmark or repro
 
 The canonical comparator is `compare_matches` in `src/pool.rs`.
 
+A row is exact when both of these hold (`match_is_exact`):
+
+- the two sides, both evaluated at the typed target, agree to a few ulps of
+  `max(|lhs|, |rhs|)` (`sides_agree_within_ulps`)
+- the solved `x` is within 8 ulps of the typed target (`solved_x_within_ulps`)
+
+Side agreement alone used to call a different root exact when the sides barely
+move (`e^x = 1` at `1e-15`, Newton walks to 0; `cospi(plastic"/x) = 1` near
+`1e-11`). The absolute window `|x_value - target| < EXACT_MATCH_TOLERANCE`
+used to drop a flat identity whose sides already match (`x^(1/3) = (1+9)^2`
+at `1e6`, about 7 ulps of `1e6`, and `x^(1/3) = 4` at `64`, about 2 ulps).
+Eight ulps of `|target|` keeps both. Newton also keeps a steep root whose
+correction is at most 8 ulps and whose residual is within
+`1e-5 * max(|f(x)|, |rhs|)`, with a floor of `1e-300` so two vanished sides do
+not collapse the cap. That looser accept is not exact. `max(|rhs|, 1)` is not
+the scale: it turned every right-hand side below 1 into an absolute `1e-5`
+window.
+
+An LHS is skipped when its value at a non-integer target is within that same
+side tolerance of its limit at 0, the value at `0.9 x` still is, and a probe at
+`0.25`, `0.5`, or `±1` still moves. The `0.9 x` probe keeps a root that only
+happens to equal the limit (`cospi(x^2) = 1` at `sqrt(2)`, `cospi(1/x) = 1`
+at `0.1`). The check follows the flush, not a fixed `|x|` cutoff: `2 + x^2`
+is bitwise 2 at `1.1e-8`, `4 + x^2` is still bitwise 4 at `2e-8`, and `2 + x^2`
+stays within 8 ulps of 2 out near `6e-8` (`cospi(x^2)`, `pi ± x^2`, and
+`3 ± x^2` with them). A derivative large enough that `|f' * x|` already exceeds
+many ulps of the value cannot be that flush, so ordinary targets do not pay
+for an extra evaluation at 0. Expressions undefined at 0 (`0^phi`, `1/x`) use
+a subnormal stand-in for that limit. A true identity such as `x*(1/x) = 1` or
+`log_x(x^2) = 2` holds at the probes and stays. Exact integers, including every
+`|x| >= 2^52`, are not part of this rule: `cospi(x) = 1` on the evens equals
+`cospi(0)`, and the integer-lattice check still drops `2 + 1/x` once `|x|` is
+that large. Target 0 is excluded too: `x^2` is flat there but the value is genuine.
+
 Ordering is:
 
 1. Exactness (exact before non-exact)
 2. Absolute error (`|x_value - target|`, smaller first) — **for non-exact matches
-   only**. Matches within `EXACT_MATCH_TOLERANCE` are all treated as equally
-   exact: residual differences below that tolerance are floating-point noise, not
-   a quality signal, so they collapse to a single error rank and are decided by
-   complexity instead. This keeps the bounded pool from churning on sub-tolerance
-   residuals and matches the original RIES intent of ranking exact forms by
-   simplicity.
+   only**. Rows flagged exact are treated as equally exact: the sides already
+   agree at the target and the solved x is within 8 ulps, so the remaining
+   x-error is not a quality signal. They collapse to a single error rank and
+   are decided by complexity instead.
+   This keeps the bounded pool from churning on sub-tolerance residuals and
+   matches the original RIES intent of ranking exact forms by simplicity.
 3. Ranking-mode tie-break:
    - `complexity`: lower `C_match` first
    - `parity`: lower legacy parity score first, then lower `C_match`

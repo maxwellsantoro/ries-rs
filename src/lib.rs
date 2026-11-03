@@ -133,7 +133,7 @@ pub type Complexity = u32;
 
 // High-level API
 pub use search::search;
-pub use solver::{canonical_expression_key, solve_for_x_rhs_expression};
+pub use solver::{canonical_expression_key, solve_for_x_at, solve_for_x_rhs_expression};
 
 // Fast exact match detection
 pub use fast_match::{find_fast_match, find_fast_match_with_context, FastMatchConfig};

@@ -5,6 +5,7 @@
 use crate::symbol::{NumType, Seft, Symbol};
 use smallvec::SmallVec;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 /// Maximum expression length (matching C version's MAX_ELEN)
 pub const MAX_EXPR_LEN: usize = 21;
@@ -24,7 +25,13 @@ pub enum OutputFormat {
 }
 
 /// A symbolic expression in postfix notation
-#[derive(Clone, PartialEq, Eq, Hash)]
+///
+/// Exact integer annotations live in a process-wide table keyed by
+/// [`Expression::literal_id`], not in this struct. Search clones and scans
+/// millions of expressions that never carry an annotation; an inline list
+/// here doubled the struct and showed up in search time. `literal_id == 0`
+/// means "no annotation" and never takes the lock. The id fits in the padding
+/// after `contains_x`, so a search expression is the same size as before.
 pub struct Expression {
     /// Symbols in postfix order
     symbols: SmallVec<[Symbol; MAX_EXPR_LEN]>,
@@ -32,6 +39,132 @@ pub struct Expression {
     complexity: u32,
     /// Whether this expression contains the variable x
     contains_x: bool,
+    /// Key into [`literal_store`]. Zero when this expression has no solver integer.
+    literal_id: u16,
+}
+
+/// Whether `child` must be parenthesized under `parent`.
+///
+/// Power is right-associative, so `(a^b)^c` needs parentheses and `a^(b^c)`
+/// prints as `a^b^c`. Addition, subtraction, multiplication, and division are
+/// left-associative, so an equal-precedence expression on the right
+/// (`a-(b-c)`, `a-(b+c)`) needs parentheses.
+fn infix_needs_paren(
+    parent_prec: u8,
+    child_prec: u8,
+    is_right_assoc: bool,
+    is_right_operand: bool,
+) -> bool {
+    if child_prec < parent_prec {
+        return true;
+    }
+    if child_prec == parent_prec {
+        if is_right_assoc {
+            return !is_right_operand;
+        }
+        return is_right_operand;
+    }
+    false
+}
+
+/// Parenthesize a subexpression that is not a primary (atom or function call).
+fn infix_paren_unless_primary(s: &str, prec: u8) -> String {
+    if prec < 100 {
+        format!("({})", s)
+    } else {
+        s.to_string()
+    }
+}
+
+/// Log bases that are themselves calls (`log_sqrt(2)(3)`) or operators need grouping.
+fn infix_group_log_base(s: &str, prec: u8) -> String {
+    if prec < 100 || s.contains('(') {
+        format!("({})", s)
+    } else {
+        s.to_string()
+    }
+}
+
+/// Decimal digits of a finite integer `f64`, with no exponent and no rounding.
+///
+/// Every finite value with magnitude at least 2^52 is an integer. Powers of two
+/// past 2^53 are exact too, but `Display` would print them in scientific
+/// notation and a `u64` cannot hold 2^64. The digits are the integer value of
+/// the significand, shifted by the unbiased exponent.
+pub(crate) fn format_exact_f64_integer(value: f64) -> String {
+    if !value.is_finite() {
+        return "0".to_string();
+    }
+    if value == 0.0 {
+        return "0".to_string();
+    }
+    let negative = value.is_sign_negative();
+    let bits = value.abs().to_bits();
+    let biased = ((bits >> 52) & 0x7ff) as i32;
+    if biased == 0 {
+        return "0".to_string();
+    }
+    let mut significand = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
+    // Little-endian decimal digits of the 53-bit significand.
+    let mut digits = Vec::new();
+    while significand > 0 {
+        digits.push((significand % 10) as u8);
+        significand /= 10;
+    }
+    let shift = biased - 1023 - 52;
+    if shift > 0 {
+        for _ in 0..shift {
+            let mut carry = 0u8;
+            for digit in &mut digits {
+                let scaled = *digit * 2 + carry;
+                *digit = scaled % 10;
+                carry = scaled / 10;
+            }
+            if carry > 0 {
+                digits.push(carry);
+            }
+        }
+    } else if shift < 0 {
+        for _ in 0..(-shift) {
+            let mut remainder = 0u8;
+            for digit in digits.iter_mut().rev() {
+                let scaled = remainder * 10 + *digit;
+                *digit = scaled / 2;
+                remainder = scaled % 2;
+            }
+            while digits.last() == Some(&0) && digits.len() > 1 {
+                digits.pop();
+            }
+        }
+    }
+    while digits.last() == Some(&0) && digits.len() > 1 {
+        digits.pop();
+    }
+    let mut text = String::with_capacity(digits.len() + usize::from(negative));
+    if negative {
+        text.push('-');
+    }
+    for digit in digits.iter().rev() {
+        text.push(char::from(b'0' + *digit));
+    }
+    text
+}
+
+fn infix_maybe_paren(
+    s: &str,
+    prec: u8,
+    parent_prec: u8,
+    is_right_assoc: bool,
+    is_right: bool,
+) -> String {
+    // `1--x`, `2*-x`, and `1/-x` are not primaries. Parenthesize a leading minus
+    // on the right of an operator.
+    let leading_minus = is_right && s.starts_with('-');
+    if leading_minus || infix_needs_paren(parent_prec, prec, is_right_assoc, is_right) {
+        format!("({})", s)
+    } else {
+        s.to_string()
+    }
 }
 
 impl Expression {
@@ -41,6 +174,7 @@ impl Expression {
             symbols: SmallVec::new(),
             complexity: 0,
             contains_x: false,
+            literal_id: 0,
         }
     }
 
@@ -57,6 +191,7 @@ impl Expression {
             symbols: SmallVec::from_slice(symbols),
             complexity,
             contains_x,
+            literal_id: 0,
         }
     }
 
@@ -83,6 +218,7 @@ impl Expression {
             symbols,
             complexity,
             contains_x,
+            literal_id: 0,
         })
     }
 
@@ -156,6 +292,59 @@ impl Expression {
         self.symbols.push(sym);
     }
 
+    /// Remember that the whole expression is the finite integer `value`.
+    ///
+    /// Later combinations shift the recorded span with the symbols. Evaluation
+    /// and printing use this value, not the postfix scaffold under the span.
+    pub(crate) fn mark_decimal_literal(&mut self, value: f64) {
+        if !value.is_finite() {
+            return;
+        }
+        let len = self.symbols.len();
+        if len == 0 || len > u32::MAX as usize {
+            return;
+        }
+        self.literal_id =
+            literal_store::push_span(self.literal_id, (0, len as u32, value.to_bits()));
+    }
+
+    pub(crate) fn append_decimal_literals(&mut self, other: &Expression, shift: u32) {
+        if other.literal_id == 0 {
+            return;
+        }
+        self.literal_id = literal_store::append_spans(self.literal_id, other.literal_id, shift);
+    }
+
+    fn trim_decimal_literals(&mut self) {
+        if self.literal_id == 0 {
+            return;
+        }
+        let n = self.symbols.len() as u32;
+        self.literal_id = literal_store::retain_spans(self.literal_id, n);
+    }
+
+    /// Solver-inserted integers are rare. Search expressions leave this empty,
+    /// and the evaluator skips the literal scan in that case.
+    #[inline(always)]
+    pub(crate) fn has_decimal_literals(&self) -> bool {
+        self.literal_id != 0
+    }
+
+    /// When a decimal literal starts at `index`, its symbol length and value.
+    pub(crate) fn decimal_literal_at(&self, index: usize) -> Option<(usize, f64)> {
+        if self.literal_id == 0 {
+            return None;
+        }
+        literal_store::span_at(self.literal_id, index)
+    }
+
+    /// If a decimal literal starts at `index`, return its text and advance past it.
+    fn take_decimal_literal(&self, index: &mut usize) -> Option<String> {
+        let (len, value) = self.decimal_literal_at(*index)?;
+        *index += len;
+        Some(format_exact_f64_integer(value))
+    }
+
     /// Remove the last symbol
     pub fn pop(&mut self) -> Option<Symbol> {
         let sym = self.symbols.pop()?;
@@ -164,6 +353,10 @@ impl Expression {
         // Recompute contains_x after popping
         if sym == Symbol::X {
             self.contains_x = self.symbols.contains(&Symbol::X);
+        }
+        // Search never annotates integers. Skip the table unless one is present.
+        if self.literal_id != 0 {
+            self.trim_decimal_literals();
         }
         Some(sym)
     }
@@ -193,6 +386,9 @@ impl Expression {
         if sym == Symbol::X {
             self.contains_x = self.symbols.contains(&Symbol::X);
         }
+        if self.literal_id != 0 {
+            self.trim_decimal_literals();
+        }
         Some(sym)
     }
 
@@ -206,12 +402,16 @@ impl Expression {
     /// Uses proper operator precedence and associativity rules:
     /// - Precedence levels (higher = tighter binding):
     ///   - 100: Atoms (constants, x, function calls)
-    ///   - 9: Power (right-associative)
-    ///   - 7: Unary operators (negation, reciprocal)
-    ///   - 6: Multiplication, division
-    ///   - 5: Addition, subtraction
+    ///   - 9: Power (right-associative), including `^2` and `e^`
+    ///   - 8: Unary minus
+    ///   - 6: Multiplication, division, and reciprocal (`1/`)
+    ///   - 4: Addition, subtraction
     /// - Right-associative operators (power) bind right-to-left
     /// - Left-associative operators bind left-to-right
+    /// - Printed grouping round-trips: parsing the infix with these rules
+    ///   yields the same value as the postfix expression. Unary results keep
+    ///   the precedence of the operator they render as, so chains such as
+    ///   `-(1/(1/(-phi)))` are not flattened.
     ///
     /// Convert to infix notation, returning `Err(EvalError::StackUnderflow)` if
     /// the expression is malformed (e.g. a binary operator with no operands).
@@ -225,38 +425,16 @@ impl Expression {
         const PREC_MUL: u8 = 6;
         const PREC_ADD: u8 = 4;
 
-        fn needs_paren(
-            parent_prec: u8,
-            child_prec: u8,
-            is_right_assoc: bool,
-            is_right_operand: bool,
-        ) -> bool {
-            if child_prec < parent_prec {
-                return true;
-            }
-            if is_right_assoc && is_right_operand && child_prec == parent_prec {
-                return true;
-            }
-            false
-        }
-
-        fn maybe_paren_prec(
-            s: &str,
-            prec: u8,
-            parent_prec: u8,
-            is_right_assoc: bool,
-            is_right: bool,
-        ) -> String {
-            if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
-                format!("({})", s)
-            } else {
-                s.to_string()
-            }
-        }
-
         let mut stack: Vec<(String, u8)> = Vec::new();
 
-        for &sym in &self.symbols {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(literal) = self.take_decimal_literal(&mut index) {
+                stack.push((literal, PREC_ATOM));
+                continue;
+            }
+            let sym = self.symbols[index];
+            index += 1;
             match sym.seft() {
                 Seft::A => {
                     stack.push((sym.display_name(), PREC_ATOM));
@@ -264,29 +442,36 @@ impl Expression {
                 Seft::B => {
                     let (arg, arg_prec) =
                         stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
-                    let result = match sym {
+                    // Unary results carry the precedence of the operator they
+                    // print as. Tagging them as atoms drops parentheses, so
+                    // `-(1/(1/(-phi)))` used to render as `-1/1/-phi`.
+                    // Negation's operand is parenthesized unless it binds
+                    // strictly tighter than unary minus (power does: `-x^2`).
+                    let (result, prec) = match sym {
                         Symbol::Neg => {
-                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_UNARY, false, false);
-                            format!("-{}", arg_s)
+                            let arg_s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, false, false);
+                            (format!("-{}", arg_s), PREC_UNARY)
                         }
                         Symbol::Recip => {
-                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_MUL, false, false);
-                            format!("1/{}", arg_s)
+                            // Denominator is the right side of a division.
+                            let arg_s =
+                                infix_maybe_paren(&arg, arg_prec, PREC_MUL + 1, false, true);
+                            (format!("1/{}", arg_s), PREC_MUL)
                         }
-                        Symbol::Sqrt => format!("sqrt({})", arg),
+                        Symbol::Sqrt => (format!("sqrt({})", arg), PREC_ATOM),
                         Symbol::Square => {
-                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_POWER, false, false);
-                            format!("{}^2", arg_s)
+                            let arg_s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, true, false);
+                            (format!("{}^2", arg_s), PREC_POWER)
                         }
-                        Symbol::Ln => format!("ln({})", arg),
+                        Symbol::Ln => (format!("ln({})", arg), PREC_ATOM),
                         Symbol::Exp => {
-                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_POWER, true, true);
-                            format!("e^{}", arg_s)
+                            let arg_s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, true, true);
+                            (format!("e^{}", arg_s), PREC_POWER)
                         }
-                        Symbol::SinPi => format!("sinpi({})", arg),
-                        Symbol::CosPi => format!("cospi({})", arg),
-                        Symbol::TanPi => format!("tanpi({})", arg),
-                        Symbol::LambertW => format!("W({})", arg),
+                        Symbol::SinPi => (format!("sinpi({})", arg), PREC_ATOM),
+                        Symbol::CosPi => (format!("cospi({})", arg), PREC_ATOM),
+                        Symbol::TanPi => (format!("tanpi({})", arg), PREC_ATOM),
+                        Symbol::LambertW => (format!("W({})", arg), PREC_ATOM),
                         Symbol::UserFunction0
                         | Symbol::UserFunction1
                         | Symbol::UserFunction2
@@ -302,26 +487,28 @@ impl Expression {
                         | Symbol::UserFunction12
                         | Symbol::UserFunction13
                         | Symbol::UserFunction14
-                        | Symbol::UserFunction15 => format!("{}({})", sym.display_name(), arg),
-                        _ => "?".to_string(),
+                        | Symbol::UserFunction15 => {
+                            (format!("{}({})", sym.display_name(), arg), PREC_ATOM)
+                        }
+                        _ => ("?".to_string(), PREC_ATOM),
                     };
-                    stack.push((result, PREC_ATOM));
+                    stack.push((result, prec));
                 }
                 Seft::C => {
                     let (b, b_prec) = stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
                     let (a, a_prec) = stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
                     let (result, prec) = match sym {
                         Symbol::Add => {
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}+{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Sub => {
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}-{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Mul => {
-                            let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL, false, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL, false, true);
                             if a_s.chars().last().is_some_and(|c| c.is_ascii_digit())
                                 && b_s.chars().next().is_some_and(|c| c.is_alphabetic())
                             {
@@ -331,17 +518,24 @@ impl Expression {
                             }
                         }
                         Symbol::Div => {
-                            let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL + 1, false, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL + 1, false, true);
                             (format!("{}/{}", a_s, b_s), PREC_MUL)
                         }
                         Symbol::Pow => {
-                            let a_s = maybe_paren_prec(&a, a_prec, PREC_POWER, true, false);
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_POWER, true, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_POWER, true, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, true);
                             (format!("{}^{}", a_s, b_s), PREC_POWER)
                         }
-                        Symbol::Root => (format!("{}\"/{}", a, b), PREC_POWER),
-                        Symbol::Log => (format!("log_{}({})", a, b), PREC_ATOM),
+                        Symbol::Root => {
+                            let index = infix_paren_unless_primary(&a, a_prec);
+                            let radicand = infix_paren_unless_primary(&b, b_prec);
+                            (format!("{}\"/{}", index, radicand), PREC_POWER)
+                        }
+                        Symbol::Log => {
+                            let base = infix_group_log_base(&a, a_prec);
+                            (format!("log_{}({})", base, b), PREC_ATOM)
+                        }
                         Symbol::Atan2 => (format!("atan2({}, {})", a, b), PREC_ATOM),
                         _ => unreachable!(),
                     };
@@ -371,47 +565,22 @@ impl Expression {
     /// This is the table-driven version that uses per-run configuration
     /// instead of global overrides for symbol display names.
     pub fn to_infix_with_table(&self, table: &crate::symbol_table::SymbolTable) -> String {
-        /// Precedence levels for operators
         const PREC_ATOM: u8 = 100; // Constants, x, function calls
         const PREC_POWER: u8 = 9; // ^ (right-associative)
         const PREC_UNARY: u8 = 8; // Unary minus, reciprocal
         const PREC_MUL: u8 = 6; // *, /
         const PREC_ADD: u8 = 4; // +, -
 
-        /// Check if we need parentheses around an operand
-        fn needs_paren(
-            parent_prec: u8,
-            child_prec: u8,
-            is_right_assoc: bool,
-            is_right_operand: bool,
-        ) -> bool {
-            if child_prec < parent_prec {
-                return true;
-            }
-            if is_right_assoc && is_right_operand && child_prec == parent_prec {
-                return true;
-            }
-            false
-        }
-
-        /// Wrap in parentheses if needed
-        fn maybe_paren_prec(
-            s: &str,
-            prec: u8,
-            parent_prec: u8,
-            is_right_assoc: bool,
-            is_right: bool,
-        ) -> String {
-            if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
-                format!("({})", s)
-            } else {
-                s.to_string()
-            }
-        }
-
         let mut stack: Vec<(String, u8)> = Vec::new();
 
-        for &sym in &self.symbols {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(literal) = self.take_decimal_literal(&mut index) {
+                stack.push((literal, PREC_ATOM));
+                continue;
+            }
+            let sym = self.symbols[index];
+            index += 1;
             match sym.seft() {
                 Seft::A => {
                     stack.push((table.name(sym).to_string(), PREC_ATOM));
@@ -420,29 +589,30 @@ impl Expression {
                     let (arg, arg_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let result = match sym {
+                    let (result, prec) = match sym {
                         Symbol::Neg => {
-                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_UNARY, false, false);
-                            format!("-{}", arg_s)
+                            let arg_s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, false, false);
+                            (format!("-{}", arg_s), PREC_UNARY)
                         }
                         Symbol::Recip => {
-                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_MUL, false, false);
-                            format!("1/{}", arg_s)
+                            let arg_s =
+                                infix_maybe_paren(&arg, arg_prec, PREC_MUL + 1, false, true);
+                            (format!("1/{}", arg_s), PREC_MUL)
                         }
-                        Symbol::Sqrt => format!("sqrt({})", arg),
+                        Symbol::Sqrt => (format!("sqrt({})", arg), PREC_ATOM),
                         Symbol::Square => {
-                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_POWER, false, false);
-                            format!("{}^2", arg_s)
+                            let arg_s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, true, false);
+                            (format!("{}^2", arg_s), PREC_POWER)
                         }
-                        Symbol::Ln => format!("ln({})", arg),
+                        Symbol::Ln => (format!("ln({})", arg), PREC_ATOM),
                         Symbol::Exp => {
-                            let arg_s = maybe_paren_prec(&arg, arg_prec, PREC_POWER, true, true);
-                            format!("e^{}", arg_s)
+                            let arg_s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, true, true);
+                            (format!("e^{}", arg_s), PREC_POWER)
                         }
-                        Symbol::SinPi => format!("sinpi({})", arg),
-                        Symbol::CosPi => format!("cospi({})", arg),
-                        Symbol::TanPi => format!("tanpi({})", arg),
-                        Symbol::LambertW => format!("W({})", arg),
+                        Symbol::SinPi => (format!("sinpi({})", arg), PREC_ATOM),
+                        Symbol::CosPi => (format!("cospi({})", arg), PREC_ATOM),
+                        Symbol::TanPi => (format!("tanpi({})", arg), PREC_ATOM),
+                        Symbol::LambertW => (format!("W({})", arg), PREC_ATOM),
                         Symbol::UserFunction0
                         | Symbol::UserFunction1
                         | Symbol::UserFunction2
@@ -458,10 +628,12 @@ impl Expression {
                         | Symbol::UserFunction12
                         | Symbol::UserFunction13
                         | Symbol::UserFunction14
-                        | Symbol::UserFunction15 => format!("{}({})", table.name(sym), arg),
-                        _ => "?".to_string(),
+                        | Symbol::UserFunction15 => {
+                            (format!("{}({})", table.name(sym), arg), PREC_ATOM)
+                        }
+                        _ => ("?".to_string(), PREC_ATOM),
                     };
-                    stack.push((result, PREC_ATOM));
+                    stack.push((result, prec));
                 }
                 Seft::C => {
                     let (b, b_prec) = stack
@@ -472,16 +644,16 @@ impl Expression {
                         .expect("stack underflow in to_infix: expression is not valid postfix");
                     let (result, prec) = match sym {
                         Symbol::Add => {
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}+{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Sub => {
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_ADD, false, true);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}-{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Mul => {
-                            let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL, false, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL, false, true);
                             if a_s.chars().last().is_some_and(|c| c.is_ascii_digit())
                                 && b_s.chars().next().is_some_and(|c| c.is_alphabetic())
                             {
@@ -491,17 +663,24 @@ impl Expression {
                             }
                         }
                         Symbol::Div => {
-                            let a_s = maybe_paren_prec(&a, a_prec, PREC_MUL, false, false);
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_MUL + 1, false, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL + 1, false, true);
                             (format!("{}/{}", a_s, b_s), PREC_MUL)
                         }
                         Symbol::Pow => {
-                            let a_s = maybe_paren_prec(&a, a_prec, PREC_POWER, true, false);
-                            let b_s = maybe_paren_prec(&b, b_prec, PREC_POWER, true, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_POWER, true, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, true);
                             (format!("{}^{}", a_s, b_s), PREC_POWER)
                         }
-                        Symbol::Root => (format!("{}\"/{}", a, b), PREC_POWER),
-                        Symbol::Log => (format!("log_{}({})", a, b), PREC_ATOM),
+                        Symbol::Root => {
+                            let index = infix_paren_unless_primary(&a, a_prec);
+                            let radicand = infix_paren_unless_primary(&b, b_prec);
+                            (format!("{}\"/{}", index, radicand), PREC_POWER)
+                        }
+                        Symbol::Log => {
+                            let base = infix_group_log_base(&a, a_prec);
+                            (format!("log_{}({})", base, b), PREC_ATOM)
+                        }
                         Symbol::Atan2 => (format!("atan2({}, {})", a, b), PREC_ATOM),
                         _ => unreachable!(),
                     };
@@ -575,38 +754,16 @@ impl Expression {
         const PREC_MUL: u8 = 6;
         const PREC_ADD: u8 = 4;
 
-        fn needs_paren(
-            parent_prec: u8,
-            child_prec: u8,
-            is_right_assoc: bool,
-            is_right_operand: bool,
-        ) -> bool {
-            if child_prec < parent_prec {
-                return true;
-            }
-            if is_right_assoc && is_right_operand && child_prec == parent_prec {
-                return true;
-            }
-            false
-        }
-
-        fn maybe_paren(
-            s: &str,
-            prec: u8,
-            parent_prec: u8,
-            is_right_assoc: bool,
-            is_right: bool,
-        ) -> String {
-            if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
-                format!("({})", s)
-            } else {
-                s.to_string()
-            }
-        }
-
         let mut stack: Vec<(String, u8)> = Vec::new();
 
-        for &sym in &self.symbols {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(literal) = self.take_decimal_literal(&mut index) {
+                stack.push((literal, PREC_ATOM));
+                continue;
+            }
+            let sym = self.symbols[index];
+            index += 1;
             match sym.seft() {
                 Seft::A => {
                     let s = match sym {
@@ -629,26 +786,27 @@ impl Expression {
                     let (arg, arg_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let result = match sym {
+                    let grouped = infix_paren_unless_primary(&arg, arg_prec);
+                    let (result, prec) = match sym {
                         Symbol::Neg => {
-                            let s = maybe_paren(&arg, arg_prec, PREC_UNARY, false, false);
-                            format!("-{}", s)
+                            let s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, false, false);
+                            (format!("-{}", s), PREC_UNARY)
                         }
                         Symbol::Recip => {
-                            let s = maybe_paren(&arg, arg_prec, PREC_MUL, false, false);
-                            format!("1/{}", s)
+                            let s = infix_maybe_paren(&arg, arg_prec, PREC_MUL + 1, false, true);
+                            (format!("1/{}", s), PREC_MUL)
                         }
-                        Symbol::Sqrt => format!("Sqrt[{}]", arg),
+                        Symbol::Sqrt => (format!("Sqrt[{}]", arg), PREC_ATOM),
                         Symbol::Square => {
-                            let s = maybe_paren(&arg, arg_prec, PREC_POWER, false, false);
-                            format!("{}^2", s)
+                            let s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, true, false);
+                            (format!("{}^2", s), PREC_POWER)
                         }
-                        Symbol::Ln => format!("Log[{}]", arg),
-                        Symbol::Exp => format!("Exp[{}]", arg),
-                        Symbol::SinPi => format!("Sin[Pi*{}]", arg),
-                        Symbol::CosPi => format!("Cos[Pi*{}]", arg),
-                        Symbol::TanPi => format!("Tan[Pi*{}]", arg),
-                        Symbol::LambertW => format!("ProductLog[{}]", arg),
+                        Symbol::Ln => (format!("Log[{}]", arg), PREC_ATOM),
+                        Symbol::Exp => (format!("Exp[{}]", arg), PREC_ATOM),
+                        Symbol::SinPi => (format!("Sin[Pi*{}]", grouped), PREC_ATOM),
+                        Symbol::CosPi => (format!("Cos[Pi*{}]", grouped), PREC_ATOM),
+                        Symbol::TanPi => (format!("Tan[Pi*{}]", grouped), PREC_ATOM),
+                        Symbol::LambertW => (format!("ProductLog[{}]", arg), PREC_ATOM),
                         Symbol::UserFunction0
                         | Symbol::UserFunction1
                         | Symbol::UserFunction2
@@ -664,10 +822,12 @@ impl Expression {
                         | Symbol::UserFunction12
                         | Symbol::UserFunction13
                         | Symbol::UserFunction14
-                        | Symbol::UserFunction15 => format!("{}[{}]", sym.display_name(), arg),
-                        _ => "?".to_string(),
+                        | Symbol::UserFunction15 => {
+                            (format!("{}[{}]", sym.display_name(), arg), PREC_ATOM)
+                        }
+                        _ => ("?".to_string(), PREC_ATOM),
                     };
-                    stack.push((result, PREC_ATOM));
+                    stack.push((result, prec));
                 }
                 Seft::C => {
                     let (b, b_prec) = stack
@@ -678,31 +838,32 @@ impl Expression {
                         .expect("stack underflow in to_infix: expression is not valid postfix");
                     let (result, prec) = match sym {
                         Symbol::Add => {
-                            let b_s = maybe_paren(&b, b_prec, PREC_ADD, false, true);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}+{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Sub => {
-                            let b_s = maybe_paren(&b, b_prec, PREC_ADD, false, true);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}-{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Mul => {
-                            let a_s = maybe_paren(&a, a_prec, PREC_MUL, false, false);
-                            let b_s = maybe_paren(&b, b_prec, PREC_MUL, false, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL, false, true);
                             (format!("{}*{}", a_s, b_s), PREC_MUL)
                         }
                         Symbol::Div => {
-                            let a_s = maybe_paren(&a, a_prec, PREC_MUL, false, false);
-                            let b_s = maybe_paren(&b, b_prec, PREC_MUL + 1, false, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL + 1, false, true);
                             (format!("{}/{}", a_s, b_s), PREC_MUL)
                         }
                         Symbol::Pow => {
-                            let a_s = maybe_paren(&a, a_prec, PREC_POWER, true, false);
-                            let b_s = maybe_paren(&b, b_prec, PREC_POWER, true, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_POWER, true, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, true);
                             (format!("{}^{}", a_s, b_s), PREC_POWER)
                         }
                         Symbol::Root => {
-                            let b_s = maybe_paren(&b, b_prec, PREC_POWER, true, false);
-                            (format!("{}^(1/{})", b_s, a), PREC_POWER)
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, false);
+                            let a_s = infix_paren_unless_primary(&a, a_prec);
+                            (format!("{}^(1/{})", b_s, a_s), PREC_POWER)
                         }
                         Symbol::Log => (format!("Log[{}, {}]", a, b), PREC_ATOM),
                         Symbol::Atan2 => (format!("ArcTan[{}, {}]", b, a), PREC_ATOM),
@@ -726,38 +887,16 @@ impl Expression {
         const PREC_MUL: u8 = 6;
         const PREC_ADD: u8 = 4;
 
-        fn needs_paren(
-            parent_prec: u8,
-            child_prec: u8,
-            is_right_assoc: bool,
-            is_right_operand: bool,
-        ) -> bool {
-            if child_prec < parent_prec {
-                return true;
-            }
-            if is_right_assoc && is_right_operand && child_prec == parent_prec {
-                return true;
-            }
-            false
-        }
-
-        fn maybe_paren(
-            s: &str,
-            prec: u8,
-            parent_prec: u8,
-            is_right_assoc: bool,
-            is_right: bool,
-        ) -> String {
-            if needs_paren(parent_prec, prec, is_right_assoc, is_right) {
-                format!("({})", s)
-            } else {
-                s.to_string()
-            }
-        }
-
         let mut stack: Vec<(String, u8)> = Vec::new();
 
-        for &sym in &self.symbols {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(literal) = self.take_decimal_literal(&mut index) {
+                stack.push((literal, PREC_ATOM));
+                continue;
+            }
+            let sym = self.symbols[index];
+            index += 1;
             match sym.seft() {
                 Seft::A => {
                     let s = match sym {
@@ -780,26 +919,27 @@ impl Expression {
                     let (arg, arg_prec) = stack
                         .pop()
                         .expect("stack underflow in to_infix: expression is not valid postfix");
-                    let result = match sym {
+                    let grouped = infix_paren_unless_primary(&arg, arg_prec);
+                    let (result, prec) = match sym {
                         Symbol::Neg => {
-                            let s = maybe_paren(&arg, arg_prec, PREC_UNARY, false, false);
-                            format!("-{}", s)
+                            let s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, false, false);
+                            (format!("-{}", s), PREC_UNARY)
                         }
                         Symbol::Recip => {
-                            let s = maybe_paren(&arg, arg_prec, PREC_MUL, false, false);
-                            format!("1/{}", s)
+                            let s = infix_maybe_paren(&arg, arg_prec, PREC_MUL + 1, false, true);
+                            (format!("1/{}", s), PREC_MUL)
                         }
-                        Symbol::Sqrt => format!("sqrt({})", arg),
+                        Symbol::Sqrt => (format!("sqrt({})", arg), PREC_ATOM),
                         Symbol::Square => {
-                            let s = maybe_paren(&arg, arg_prec, PREC_POWER, false, false);
-                            format!("{}**2", s)
+                            let s = infix_maybe_paren(&arg, arg_prec, PREC_POWER, true, false);
+                            (format!("{}**2", s), PREC_POWER)
                         }
-                        Symbol::Ln => format!("log({})", arg),
-                        Symbol::Exp => format!("exp({})", arg),
-                        Symbol::SinPi => format!("sin(pi*{})", arg),
-                        Symbol::CosPi => format!("cos(pi*{})", arg),
-                        Symbol::TanPi => format!("tan(pi*{})", arg),
-                        Symbol::LambertW => format!("lambertw({})", arg),
+                        Symbol::Ln => (format!("log({})", arg), PREC_ATOM),
+                        Symbol::Exp => (format!("exp({})", arg), PREC_ATOM),
+                        Symbol::SinPi => (format!("sin(pi*{})", grouped), PREC_ATOM),
+                        Symbol::CosPi => (format!("cos(pi*{})", grouped), PREC_ATOM),
+                        Symbol::TanPi => (format!("tan(pi*{})", grouped), PREC_ATOM),
+                        Symbol::LambertW => (format!("lambertw({})", arg), PREC_ATOM),
                         Symbol::UserFunction0
                         | Symbol::UserFunction1
                         | Symbol::UserFunction2
@@ -815,10 +955,12 @@ impl Expression {
                         | Symbol::UserFunction12
                         | Symbol::UserFunction13
                         | Symbol::UserFunction14
-                        | Symbol::UserFunction15 => format!("{}({})", sym.display_name(), arg),
-                        _ => "?".to_string(),
+                        | Symbol::UserFunction15 => {
+                            (format!("{}({})", sym.display_name(), arg), PREC_ATOM)
+                        }
+                        _ => ("?".to_string(), PREC_ATOM),
                     };
-                    stack.push((result, PREC_ATOM));
+                    stack.push((result, prec));
                 }
                 Seft::C => {
                     let (b, b_prec) = stack
@@ -829,31 +971,32 @@ impl Expression {
                         .expect("stack underflow in to_infix: expression is not valid postfix");
                     let (result, prec) = match sym {
                         Symbol::Add => {
-                            let b_s = maybe_paren(&b, b_prec, PREC_ADD, false, true);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}+{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Sub => {
-                            let b_s = maybe_paren(&b, b_prec, PREC_ADD, false, true);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
                             (format!("{}-{}", a, b_s), PREC_ADD)
                         }
                         Symbol::Mul => {
-                            let a_s = maybe_paren(&a, a_prec, PREC_MUL, false, false);
-                            let b_s = maybe_paren(&b, b_prec, PREC_MUL, false, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL, false, true);
                             (format!("{}*{}", a_s, b_s), PREC_MUL)
                         }
                         Symbol::Div => {
-                            let a_s = maybe_paren(&a, a_prec, PREC_MUL, false, false);
-                            let b_s = maybe_paren(&b, b_prec, PREC_MUL + 1, false, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL + 1, false, true);
                             (format!("{}/{}", a_s, b_s), PREC_MUL)
                         }
                         Symbol::Pow => {
-                            let a_s = maybe_paren(&a, a_prec, PREC_POWER, true, false);
-                            let b_s = maybe_paren(&b, b_prec, PREC_POWER, true, true);
+                            let a_s = infix_maybe_paren(&a, a_prec, PREC_POWER, true, false);
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, true);
                             (format!("{}**{}", a_s, b_s), PREC_POWER)
                         }
                         Symbol::Root => {
-                            let b_s = maybe_paren(&b, b_prec, PREC_POWER, true, false);
-                            (format!("{}**(1/{})", b_s, a), PREC_POWER)
+                            let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, false);
+                            let a_s = infix_paren_unless_primary(&a, a_prec);
+                            (format!("{}**(1/{})", b_s, a_s), PREC_POWER)
                         }
                         Symbol::Log => (format!("log({}, {})", b, a), PREC_ATOM),
                         Symbol::Atan2 => (format!("atan2({}, {})", a, b), PREC_ATOM),
@@ -871,9 +1014,268 @@ impl Expression {
     }
 }
 
+impl Clone for Expression {
+    fn clone(&self) -> Self {
+        Self {
+            symbols: self.symbols.clone(),
+            complexity: self.complexity,
+            contains_x: self.contains_x,
+            literal_id: literal_store::clone_id(self.literal_id),
+        }
+    }
+}
+
+impl Drop for Expression {
+    fn drop(&mut self) {
+        literal_store::release(self.literal_id);
+    }
+}
+
+impl PartialEq for Expression {
+    fn eq(&self, other: &Self) -> bool {
+        self.symbols == other.symbols
+            && self.complexity == other.complexity
+            && self.contains_x == other.contains_x
+            && literal_store::same_spans(self.literal_id, other.literal_id)
+    }
+}
+
+impl Eq for Expression {}
+
+impl Hash for Expression {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Match the field hash of an expression with no integer annotation so
+        // search dedup keys stay identical to a build that has no side table.
+        self.symbols.hash(state);
+        self.complexity.hash(state);
+        self.contains_x.hash(state);
+        if self.literal_id != 0 {
+            literal_store::hash_spans(self.literal_id, state);
+        }
+    }
+}
+
 impl Default for Expression {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Exact integer spans for solver-built expressions.
+///
+/// Search expressions use id 0 and never lock. Ids are reference-counted so a
+/// cloned closed form keeps its value after the original is dropped, including
+/// across threads (reporting can run off the search pool).
+mod literal_store {
+    use std::hash::{Hash, Hasher};
+    use std::sync::Mutex;
+
+    struct Slot {
+        refs: u32,
+        spans: Vec<(u32, u32, u64)>,
+    }
+
+    struct Store {
+        /// Index 0 is unused so a zero id means "no annotation".
+        entries: Vec<Option<Slot>>,
+        free: Vec<u16>,
+    }
+
+    impl Store {
+        fn new() -> Self {
+            Self {
+                entries: vec![None],
+                free: Vec::new(),
+            }
+        }
+
+        fn alloc(&mut self, spans: Vec<(u32, u32, u64)>) -> u16 {
+            let slot = Slot { refs: 1, spans };
+            if let Some(id) = self.free.pop() {
+                self.entries[id as usize] = Some(slot);
+                return id;
+            }
+            let id = self.entries.len();
+            assert!(
+                id <= u16::MAX as usize,
+                "exact integer literal table exhausted"
+            );
+            self.entries.push(Some(slot));
+            id as u16
+        }
+
+        fn release_locked(&mut self, id: u16) {
+            if id == 0 {
+                return;
+            }
+            let slot = self.entries[id as usize]
+                .as_mut()
+                .expect("literal id released twice");
+            slot.refs -= 1;
+            if slot.refs == 0 {
+                self.entries[id as usize] = None;
+                self.free.push(id);
+            }
+        }
+
+        /// Unique slot the caller may mutate. Shared slots are copied first.
+        fn detach(&mut self, id: u16) -> u16 {
+            if id == 0 {
+                return self.alloc(Vec::new());
+            }
+            let refs = self.entries[id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .refs;
+            if refs == 1 {
+                return id;
+            }
+            let spans = self.entries[id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans
+                .clone();
+            self.release_locked(id);
+            self.alloc(spans)
+        }
+    }
+
+    fn with_store<R>(f: impl FnOnce(&mut Store) -> R) -> R {
+        static STORE: Mutex<Option<Store>> = Mutex::new(None);
+        let mut guard = STORE.lock().unwrap_or_else(|err| err.into_inner());
+        if guard.is_none() {
+            *guard = Some(Store::new());
+        }
+        f(guard.as_mut().expect("literal store"))
+    }
+
+    #[inline(always)]
+    pub(super) fn clone_id(id: u16) -> u16 {
+        if id == 0 {
+            return 0;
+        }
+        with_store(|store| {
+            store.entries[id as usize]
+                .as_mut()
+                .expect("literal id missing")
+                .refs += 1;
+            id
+        })
+    }
+
+    #[inline(always)]
+    pub(super) fn release(id: u16) {
+        if id == 0 {
+            return;
+        }
+        with_store(|store| store.release_locked(id));
+    }
+
+    pub(super) fn push_span(id: u16, span: (u32, u32, u64)) -> u16 {
+        with_store(|store| {
+            let id = store.detach(id);
+            store.entries[id as usize]
+                .as_mut()
+                .expect("literal id missing")
+                .spans
+                .push(span);
+            id
+        })
+    }
+
+    pub(super) fn append_spans(self_id: u16, other_id: u16, shift: u32) -> u16 {
+        if other_id == 0 {
+            return self_id;
+        }
+        with_store(|store| {
+            let extra: Vec<(u32, u32, u64)> = store.entries[other_id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans
+                .iter()
+                .map(|&(start, len, bits)| (start.saturating_add(shift), len, bits))
+                .collect();
+            let mut id = self_id;
+            for span in extra {
+                id = store.detach(id);
+                store.entries[id as usize]
+                    .as_mut()
+                    .expect("literal id missing")
+                    .spans
+                    .push(span);
+            }
+            id
+        })
+    }
+
+    pub(super) fn retain_spans(id: u16, n: u32) -> u16 {
+        if id == 0 {
+            return 0;
+        }
+        with_store(|store| {
+            let id = store.detach(id);
+            let spans = &mut store.entries[id as usize]
+                .as_mut()
+                .expect("literal id missing")
+                .spans;
+            spans.retain(|(start, len, _)| start.saturating_add(*len) <= n);
+            if spans.is_empty() {
+                store.release_locked(id);
+                0
+            } else {
+                id
+            }
+        })
+    }
+
+    pub(super) fn span_at(id: u16, index: usize) -> Option<(usize, f64)> {
+        if id == 0 {
+            return None;
+        }
+        with_store(|store| {
+            store.entries[id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans
+                .iter()
+                .find_map(|&(start, len, bits)| {
+                    (start as usize == index && len > 0)
+                        .then_some((len as usize, f64::from_bits(bits)))
+                })
+        })
+    }
+
+    pub(super) fn same_spans(left: u16, right: u16) -> bool {
+        if left == right {
+            return true;
+        }
+        if left == 0 || right == 0 {
+            return false;
+        }
+        with_store(|store| {
+            let a = &store.entries[left as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans;
+            let b = &store.entries[right as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans;
+            a == b
+        })
+    }
+
+    pub(super) fn hash_spans<H: Hasher>(id: u16, state: &mut H) {
+        if id == 0 {
+            return;
+        }
+        with_store(|store| {
+            store.entries[id as usize]
+                .as_ref()
+                .expect("literal id missing")
+                .spans
+                .hash(state);
+        });
     }
 }
 
@@ -922,6 +1324,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn search_expression_stays_the_size_of_its_symbol_buffer() {
+        // The integer-annotation id sits in the padding after `contains_x`.
+        // Growing past this makes every search clone and the RHS value scan
+        // touch extra bytes.
+        let symbols = std::mem::size_of::<SmallVec<[Symbol; MAX_EXPR_LEN]>>();
+        let expr = std::mem::size_of::<Expression>();
+        assert!(
+            expr <= symbols + 8,
+            "Expression is {expr} bytes, symbol buffer is {symbols}"
+        );
+        assert_eq!(expr, 40, "search Expression grew to {expr} bytes");
+    }
+
+    #[test]
+    fn decimal_literal_survives_clone_and_drop() {
+        let mut expr = Expression::parse("2").unwrap();
+        let big = 2.0_f64.powi(63);
+        expr.mark_decimal_literal(big);
+        let cloned = expr.clone();
+        drop(expr);
+        assert_eq!(cloned.decimal_literal_at(0), Some((1, big)));
+        let again = cloned.clone();
+        assert_eq!(again, cloned);
+        assert_eq!(again.to_infix(), "9223372036854775808");
+    }
+
+    #[test]
     fn test_parse_expression() {
         let expr = Expression::parse("32+").unwrap();
         assert_eq!(expr.len(), 3);
@@ -942,6 +1371,31 @@ mod tests {
 
         // Invalid: 3 2 (two values left on stack)
         assert!(Expression::parse("32").is_none());
+    }
+
+    #[test]
+    fn test_format_exact_f64_integer_digits() {
+        assert_eq!(format_exact_f64_integer(0.0), "0");
+        assert_eq!(format_exact_f64_integer(2000002.0), "2000002");
+        assert_eq!(format_exact_f64_integer(-12.0), "-12");
+        // Independent of the digit-shift formatter: primitive integers.
+        for exp in [1_u32, 10, 53, 58, 59, 60, 61, 62, 63, 64, 100, 127] {
+            let text = format_exact_f64_integer(2.0_f64.powi(exp as i32));
+            let reference = (1_u128 << exp).to_string();
+            assert_eq!(text, reference, "2^{exp}");
+        }
+        let huge = format_exact_f64_integer(2.0_f64.powi(1023));
+        assert_eq!(huge.parse::<f64>().unwrap(), 2.0_f64.powi(1023));
+        assert_eq!(huge.len(), 308);
+        let mut mod_billion = 1u64;
+        for _ in 0..1023 {
+            mod_billion = (mod_billion * 2) % 1_000_000_000;
+        }
+        let tail: u64 = huge[huge.len() - 9..].parse().unwrap();
+        assert_eq!(tail, mod_billion);
+        let max_digits = format_exact_f64_integer(f64::MAX);
+        assert_eq!(max_digits.parse::<f64>().unwrap(), f64::MAX);
+        assert!(max_digits.bytes().all(|b| b.is_ascii_digit()));
     }
 
     #[test]
@@ -1097,5 +1551,37 @@ mod tests {
         let expr = Expression::parse("32+").unwrap();
         let result = expr.try_to_infix();
         assert_eq!(result.unwrap(), "3+2");
+    }
+
+    #[test]
+    fn test_reciprocal_chain_keeps_grouping() {
+        // -(1/(1/(-phi))), previously flattened to `-1/1/-phi`.
+        assert_eq!(
+            Expression::parse("fnrrn").unwrap().to_infix(),
+            "-(1/(1/(-phi)))"
+        );
+    }
+
+    #[test]
+    fn test_subtraction_is_left_associative_in_print() {
+        assert_eq!(Expression::parse("12-3-").unwrap().to_infix(), "1-2-3");
+        assert_eq!(Expression::parse("123--").unwrap().to_infix(), "1-(2-3)");
+        assert_eq!(Expression::parse("123+-").unwrap().to_infix(), "1-(2+3)");
+    }
+
+    #[test]
+    fn test_power_is_right_associative_in_print() {
+        assert_eq!(Expression::parse("x23^^").unwrap().to_infix(), "x^2^3");
+        assert_eq!(Expression::parse("x2^3^").unwrap().to_infix(), "(x^2)^3");
+        assert_eq!(Expression::parse("xss").unwrap().to_infix(), "(x^2)^2");
+        assert_eq!(Expression::parse("xsn").unwrap().to_infix(), "-x^2");
+        assert_eq!(Expression::parse("xns").unwrap().to_infix(), "(-x)^2");
+    }
+
+    #[test]
+    fn test_division_of_division_keeps_grouping() {
+        assert_eq!(Expression::parse("xrr").unwrap().to_infix(), "1/(1/x)");
+        assert_eq!(Expression::parse("xrs").unwrap().to_infix(), "(1/x)^2");
+        assert_eq!(Expression::parse("xsr").unwrap().to_infix(), "1/x^2");
     }
 }

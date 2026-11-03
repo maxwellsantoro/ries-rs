@@ -476,6 +476,7 @@ fn make_match(
         x_value: target,
         error,
         complexity,
+        exact: error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
     })
 }
 

@@ -6,10 +6,7 @@ use crate::eval::EvalContext;
 use crate::expr::EvaluatedExpr;
 use crate::pool::{RankingMode, TopKPool};
 use crate::profile::UserConstant;
-use crate::thresholds::{
-    DEGENERATE_DERIVATIVE, DEGENERATE_RANGE_TOLERANCE, DEGENERATE_TEST_THRESHOLD,
-    EXACT_MATCH_TOLERANCE, NEWTON_FINAL_TOLERANCE,
-};
+use crate::thresholds::{DEGENERATE_DERIVATIVE, DEGENERATE_TEST_THRESHOLD, NEWTON_FINAL_TOLERANCE};
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -21,17 +18,67 @@ mod tests;
 use db::calculate_adaptive_search_radius;
 pub use db::{ComplexityTier, ExprDatabase, TieredExprDatabase};
 
+/// Extra ulps of slope gap before a flush check is worth an evaluation at 0.
+///
+/// `x^2` has `|f' * x| = 2 |f - f(0)|`, so the 8-ulp boundary still looks like
+/// about 16 ulps of slope. 64 keeps that boundary inside the limit check, and
+/// an ordinary O(1) derivative returns before the extra evaluation.
+const FLUSH_SLOPE_MARGIN_ULPS: f64 = 64.0;
+
 /// Returns true when a near-zero-derivative LHS should be skipped as degenerate.
+///
+/// When `target + e` is still a non-integer, that step is a real perturbation
+/// and the historical rule (unchanged value or a still-zero derivative) is
+/// kept so ordinary searches see the same LHS set.
+///
+/// From 2^52 upward every finite float is an integer, so `target + e` lands on
+/// another integer (or does not move at all once the ulp exceeds `e`). A
+/// derivative that stays zero there is not evidence of a constant: `cospi`
+/// flips between adjacent integers, and above 2^53 every representable sample
+/// is even so the flip is invisible. Those targets are kept when a neighbor
+/// changes the value, or when the same value holds at a small integer of the
+/// same parity but not off that lattice.
+///
+/// A value that holds only because a term has underflowed is skipped. For a
+/// huge float that is `2 + 1/x` (equals 2 everywhere large, and 2.5 at 2).
+/// For any other non-integer the `x` term is gone when the value is still
+/// within a few ulps of the limit at 0 (`2 + x^2`, `4 + x^2`, `cospi(x^2)`),
+/// while a probe at `0.5` still moves. There is no fixed `|x|` cutoff: `2 +
+/// x^2` is bitwise 2 at `1.1e-8` and still within 8 ulps of 2 out near `6e-8`.
+/// Sampling off the lattice alone cannot see the large-float case: both the
+/// identity and the underflow are non-constant at 0.5. The flush check runs
+/// before the derivative test, because at `1e-8` the derivative of `2 + x^2`
+/// is `2e-8`.
 pub(crate) fn should_skip_degenerate_lhs(
     lhs: &EvaluatedExpr,
     target: f64,
     eval: &EvalContext<'_>,
 ) -> bool {
+    if x_dependence_underflowed(lhs, target, eval) {
+        return true;
+    }
     if lhs.derivative.abs() >= DEGENERATE_TEST_THRESHOLD {
         return false;
     }
-    let test_x = target + std::f64::consts::E;
-    match crate::eval::evaluate_fast_with_context(&lhs.expr, test_x, eval) {
+    let standard = target + std::f64::consts::E;
+    if standard.is_finite() && standard != target && standard.fract() != 0.0 {
+        return probe_matches_legacy_degenerate_rule(lhs, standard, eval);
+    }
+    if !locally_constant_on_integer_neighbors(lhs, target, eval) {
+        return false;
+    }
+    if reduced_parity_value_differs(lhs, target, eval) {
+        return true;
+    }
+    !off_lattice_sample_moves(lhs, eval)
+}
+
+fn probe_matches_legacy_degenerate_rule(
+    lhs: &EvaluatedExpr,
+    probe: f64,
+    eval: &EvalContext<'_>,
+) -> bool {
+    match crate::eval::evaluate_search(&lhs.expr, probe, eval) {
         Ok(test_result) => {
             let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
             let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
@@ -39,6 +86,212 @@ pub(crate) fn should_skip_degenerate_lhs(
         }
         Err(_) => true,
     }
+}
+
+fn probe_moves(lhs: &EvaluatedExpr, probe: f64, eval: &EvalContext<'_>) -> bool {
+    if !probe.is_finite() {
+        return false;
+    }
+    match crate::eval::evaluate_search(&lhs.expr, probe, eval) {
+        Ok(test_result) => {
+            let value_unchanged = (test_result.value - lhs.value).abs() < DEGENERATE_TEST_THRESHOLD;
+            let deriv_still_zero = test_result.derivative.abs() < DEGENERATE_TEST_THRESHOLD;
+            !value_unchanged || !deriv_still_zero
+        }
+        Err(_) => false,
+    }
+}
+
+fn locally_constant_on_integer_neighbors(
+    lhs: &EvaluatedExpr,
+    target: f64,
+    eval: &EvalContext<'_>,
+) -> bool {
+    let neighbors = [target.next_up(), target.next_down()];
+    for probe in neighbors {
+        if probe == target {
+            continue;
+        }
+        if probe_moves(lhs, probe, eval) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Small integer with the same sign and parity as `target`.
+///
+/// Large finite floats are integers. An identity that is really about that
+/// integer (`cospi` on evens) still holds here; a term that only vanished
+/// because `|x|` is huge (`1/x` added to a constant) does not.
+fn reduced_parity_probe(target: f64) -> f64 {
+    let even = crate::eval::f64_exact_integer_is_even(target).unwrap_or(true);
+    let magnitude = if even { 2.0 } else { 1.0 };
+    if target.is_sign_negative() {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+fn reduced_parity_value_differs(lhs: &EvaluatedExpr, target: f64, eval: &EvalContext<'_>) -> bool {
+    let probe = reduced_parity_probe(target);
+    if probe == target {
+        return false;
+    }
+    match crate::eval::evaluate_search(&lhs.expr, probe, eval) {
+        Ok(test_result) => (test_result.value - lhs.value).abs() >= DEGENERATE_TEST_THRESHOLD,
+        Err(_) => false,
+    }
+}
+
+fn off_lattice_sample_moves(lhs: &EvaluatedExpr, eval: &EvalContext<'_>) -> bool {
+    [0.5_f64, 1.0, -0.5]
+        .into_iter()
+        .any(|probe| probe_moves(lhs, probe, eval))
+}
+
+/// True when `x` has flushed out of `lhs` at `target`.
+///
+/// The value is within the exact-match tolerance of the limit at 0, a point
+/// closer to 0 (`0.9 x`) still is, and a moderate probe (`0.25`, `0.5`, `±1`)
+/// moves. The closer point keeps a real root that only happens to equal that
+/// limit (`cospi(x^2)` at `sqrt(2)`, `cospi(1/x)` at `0.1`). The far probes
+/// separate underflow from an identity (`x*(1/x)`, `log_x(x^2) = 2` hold
+/// there and stay). `0^phi` and `1/x` are undefined at 0; a subnormal stand-in
+/// is the same limit when the expression is defined for a tiny nonzero `x`.
+///
+/// Exact nonzero integers are excluded. Every `|x| >= 2^52` is an integer, and
+/// `cospi(x) = 1` on the evens equals `cospi(0)` while a probe at `0.5` moves.
+/// Those stay on the integer-lattice rules. Target 0 is excluded too: `x^2`
+/// is flat there but the value is genuine.
+fn x_dependence_underflowed(lhs: &EvaluatedExpr, target: f64, eval: &EvalContext<'_>) -> bool {
+    if !target.is_finite() || target == 0.0 || target.fract() == 0.0 {
+        return false;
+    }
+    // A near-linear change from 0 already exceeds many ulps of the value, so
+    // this cannot be a flushed constant. `cospi` near an even integer returns
+    // to 1 with a small derivative, but `|f' * x|` is still huge compared with
+    // an ulp, and that root must stay.
+    let slope_gap = lhs.derivative.abs() * target.abs();
+    if slope_gap.is_finite() && slope_gap > FLUSH_SLOPE_MARGIN_ULPS * ulp_of(lhs.value.abs()) {
+        return false;
+    }
+    let Some(limit) = value_at_zero_limit(lhs, target, eval) else {
+        return false;
+    };
+    if !sides_agree_within_ulps(lhs.value, limit) {
+        return false;
+    }
+    // A root can equal the limit at 0 without a flushed term: cospi(x^2) = 1
+    // at sqrt(2), cospi(1/x) = 1 at 1/10. Closer to 0, a flushed term is still
+    // gone, while those roots move. 0.9 stays on the flushed side of the
+    // 8-ulp boundary (6e-8 for 2 + x^2) and off an even-integer reciprocal.
+    let closer = target * 0.9;
+    if closer == target || !closer.is_finite() {
+        return false;
+    }
+    match crate::eval::evaluate_search(&lhs.expr, closer, eval) {
+        Ok(near) if sides_agree_within_ulps(near.value, limit) => {}
+        _ => return false,
+    }
+    // 0.25 sits off the integers and half-integers, so cospi(0.25) is not
+    // 0, ±1 and Lambert W stays defined. 0.5 alone misses 1/W(cospi(x)).
+    [0.25_f64, 0.5, 1.0, -0.5].into_iter().any(|probe| {
+        match crate::eval::evaluate_search(&lhs.expr, probe, eval) {
+            Ok(moved) => (moved.value - lhs.value).abs() >= DEGENERATE_TEST_THRESHOLD,
+            Err(_) => false,
+        }
+    })
+}
+
+fn value_at_zero_limit(lhs: &EvaluatedExpr, target: f64, eval: &EvalContext<'_>) -> Option<f64> {
+    if let Ok(at_zero) = crate::eval::evaluate_search(&lhs.expr, 0.0, eval) {
+        return Some(at_zero.value);
+    }
+    // 0 is outside the domain. A subnormal is still small enough that a
+    // positive power of x underflows, and it keeps the sign of the target.
+    let stand_in = target.signum() * 1e-300;
+    if stand_in == target || !stand_in.is_finite() {
+        return None;
+    }
+    crate::eval::evaluate_search(&lhs.expr, stand_in, eval)
+        .ok()
+        .map(|result| result.value)
+}
+
+/// Half-width of the window in which a flat LHS may be paired with an RHS.
+///
+/// The residual has to be only a few ulps. A wider window used to stamp
+/// near-misses (`cospi(sqrt(x)) ≈ 0.997`) as exact.
+pub(crate) fn flat_exact_half_width(lhs_value: f64) -> f64 {
+    let scale = lhs_value.abs().max(1.0);
+    (8.0 * f64::EPSILON * scale).max(f64::EPSILON)
+}
+
+/// True when `lhs_value` and `rhs_value` agree to a few ulps of a unit scale.
+///
+/// The scale is at least 1, so this is the flat-match window. Exactness of a
+/// reported row uses [`sides_agree_within_ulps`], which has no floor: a
+/// sub-unit residual can be many ulps of the two sides.
+pub(crate) fn residual_is_exact(lhs_value: f64, rhs_value: f64) -> bool {
+    let diff = (lhs_value - rhs_value).abs();
+    if diff == 0.0 {
+        return true;
+    }
+    let scale = lhs_value.abs().max(rhs_value.abs()).max(1.0);
+    diff <= (8.0 * f64::EPSILON * scale).max(f64::EPSILON)
+}
+
+/// True when the two sides agree to a few ulps of `max(|lhs|, |rhs|)`.
+///
+/// Both values are the ones at the typed target. Necessary for an exact row,
+/// and not sufficient: Newton can land on a different root of a function whose
+/// sides barely move (`e^x = 1` at `1e-15`). [`match_is_exact`] also requires
+/// the solved `x`.
+pub(crate) fn sides_agree_within_ulps(lhs_value: f64, rhs_value: f64) -> bool {
+    let diff = (lhs_value - rhs_value).abs();
+    if diff == 0.0 {
+        return true;
+    }
+    if !diff.is_finite() {
+        return false;
+    }
+    let scale = lhs_value.abs().max(rhs_value.abs());
+    scale.is_finite() && scale > 0.0 && diff <= 8.0 * f64::EPSILON * scale
+}
+
+/// One ulp of a non-negative magnitude.
+fn ulp_of(mag: f64) -> f64 {
+    if mag <= 0.0 || !mag.is_finite() {
+        return f64::from_bits(1);
+    }
+    let up = mag.next_up();
+    if !up.is_finite() {
+        return mag - mag.next_down();
+    }
+    up - mag
+}
+
+/// True when `solved_x` is within 8 ulps of `target`.
+///
+/// Eight ulps of `|target|` still covers a flat root: `x^(1/3)` at `1e6` is
+/// about 7 ulps off, and `x^(1/3) = 4` at `64` is about 2. It rejects a walk
+/// to 0 (`e^x = 1` at `1e-15`, error about `1e-15`).
+pub(crate) fn solved_x_within_ulps(solved_x: f64, target: f64) -> bool {
+    let diff = (solved_x - target).abs();
+    if diff == 0.0 {
+        return true;
+    }
+    if !diff.is_finite() || !solved_x.is_finite() || !target.is_finite() {
+        return false;
+    }
+    diff <= 8.0 * ulp_of(target.abs())
+}
+
+/// Exact when the sides agree at the typed target and the solved `x` is that target.
+pub(crate) fn match_is_exact(lhs_value: f64, rhs_value: f64, solved_x: f64, target: f64) -> bool {
+    sides_agree_within_ulps(lhs_value, rhs_value) && solved_x_within_ulps(solved_x, target)
 }
 #[cfg(test)]
 use newton::newton_raphson;
@@ -335,6 +588,14 @@ pub struct Match {
     pub error: f64,
     /// Total complexity (LHS + RHS)
     pub complexity: u32,
+    /// Reported and ranked as an exact root.
+    ///
+    /// The two sides, both evaluated at the typed target, agree to a few ulps
+    /// of `max(|lhs|, |rhs|)`, and `x_value` is within 8 ulps of the typed
+    /// target. A Newton hit that only passed the loose local-root test is
+    /// false, and so is a nearby root whose sides do not match at the target
+    /// or whose solved `x` walked off to a different root.
+    pub exact: bool,
 }
 
 impl Match {
@@ -344,7 +605,7 @@ impl Match {
         let lhs_str = self.lhs.expr.to_infix();
         let rhs_str = self.rhs.expr.to_infix();
 
-        let error_str = if self.error.abs() < EXACT_MATCH_TOLERANCE {
+        let error_str = if self.exact {
             "('exact' match)".to_string()
         } else {
             let sign = if self.error >= 0.0 { "+" } else { "-" };
@@ -944,7 +1205,7 @@ pub fn search_streaming(
 }
 
 fn stop_condition_met(m: &Match, search_config: &SearchConfig) -> bool {
-    (search_config.stop_at_exact && m.error.abs() < EXACT_MATCH_TOLERANCE)
+    (search_config.stop_at_exact && m.exact)
         || search_config
             .stop_below
             .is_some_and(|threshold| m.error.abs() < threshold)
@@ -1112,17 +1373,12 @@ pub fn search_streaming_with_config(
                 }
                 if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
                     stats.lhs_tested += 1;
+                    let half = flat_exact_half_width(lhs.value);
                     stats.record_candidate_window(
                         lhs,
-                        rhs_db.count_in_range(
-                            lhs.value - DEGENERATE_RANGE_TOLERANCE,
-                            lhs.value + DEGENERATE_RANGE_TOLERANCE,
-                        ),
+                        rhs_db.count_in_range(lhs.value - half, lhs.value + half),
                     );
-                    for rhs in rhs_db.iter_tiers_in_range(
-                        lhs.value - DEGENERATE_RANGE_TOLERANCE,
-                        lhs.value + DEGENERATE_RANGE_TOLERANCE,
-                    ) {
+                    for rhs in rhs_db.iter_tiers_in_range(lhs.value - half, lhs.value + half) {
                         if !search_config.rhs_symbol_allowed(&rhs.expr) {
                             continue;
                         }
@@ -1133,14 +1389,25 @@ pub fn search_streaming_with_config(
                                 lhs.value, rhs.value
                             );
                         }
-                        let val_diff = (lhs.value - rhs.value).abs();
-                        if val_diff < DEGENERATE_RANGE_TOLERANCE && pool.would_accept(0.0, true) {
+                        // `residual_is_exact` is the named flat window. Exactness
+                        // still requires the sides to agree, and the solved x
+                        // is the target on this path so the ulp window holds.
+                        if residual_is_exact(lhs.value, rhs.value)
+                            && match_is_exact(
+                                lhs.value,
+                                rhs.value,
+                                search_config.target,
+                                search_config.target,
+                            )
+                            && pool.would_accept(0.0, true)
+                        {
                             let m = Match {
                                 lhs: lhs.clone(),
                                 rhs: rhs.clone(),
                                 x_value: search_config.target,
                                 error: 0.0,
                                 complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                                exact: true,
                             };
                             if stop_condition_met(&m, search_config)
                                 && best_stop_match
@@ -1194,7 +1461,8 @@ pub fn search_streaming_with_config(
                     if !search_config.refine_with_newton {
                         let refined_x = search_config.target + x_delta;
                         let refined_error = x_delta;
-                        let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+                        let is_exact =
+                            match_is_exact(lhs.value, rhs.value, refined_x, search_config.target);
 
                         if pool.would_accept(refined_error.abs(), is_exact) {
                             let m = Match {
@@ -1203,6 +1471,7 @@ pub fn search_streaming_with_config(
                                 x_value: refined_x,
                                 error: refined_error,
                                 complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                                exact: is_exact,
                             };
                             if stop_condition_met(&m, search_config)
                                 && best_stop_match
@@ -1218,7 +1487,7 @@ pub fn search_streaming_with_config(
 
                     stats.newton_calls += 1;
                     let initial_guess = search_config.target + x_delta;
-                    if let Some(refined_x) = newton_raphson_with_constants(
+                    if let Some(hit) = newton_raphson_with_constants(
                         &lhs.expr,
                         rhs.value,
                         initial_guess,
@@ -1227,9 +1496,14 @@ pub fn search_streaming_with_config(
                         search_config.show_newton,
                         search_config.derivative_margin,
                     ) {
+                        if !hit.real {
+                            continue;
+                        }
+                        let refined_x = hit.x;
                         stats.newton_success += 1;
                         let refined_error = refined_x - search_config.target;
-                        let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
+                        let is_exact =
+                            match_is_exact(lhs.value, rhs.value, refined_x, search_config.target);
 
                         if pool.would_accept(refined_error.abs(), is_exact) {
                             let m = Match {
@@ -1238,6 +1512,7 @@ pub fn search_streaming_with_config(
                                 x_value: refined_x,
                                 error: refined_error,
                                 complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                                exact: is_exact,
                             };
                             if stop_condition_met(&m, search_config)
                                 && best_stop_match
@@ -1346,7 +1621,7 @@ pub fn search_one_sided_with_stats_and_config(
         }
 
         let error = rhs.value - config.target;
-        let is_exact = error.abs() < EXACT_MATCH_TOLERANCE;
+        let is_exact = match_is_exact(lhs.value, rhs.value, rhs.value, config.target);
         if !pool.would_accept(error.abs(), is_exact) {
             continue;
         }
@@ -1357,6 +1632,7 @@ pub fn search_one_sided_with_stats_and_config(
             x_value: rhs.value,
             error,
             complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+            exact: is_exact,
         };
 
         pool.try_insert(m);
