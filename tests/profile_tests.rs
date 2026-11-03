@@ -76,6 +76,8 @@ fn test_profile_override() {
 
 /// Test UserConstant structure
 #[test]
+// Ten-digit gamma fixture from the profile example, not std::f64::consts::EULER_GAMMA.
+#[allow(clippy::approx_constant)]
 fn test_user_constant() {
     let constant = UserConstant {
         weight: 10,

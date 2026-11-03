@@ -237,8 +237,8 @@ mod tests {
         use std::collections::HashSet;
 
         let symbols = Symbol::constants();
-        let allowed: HashSet<u8> = [b'1', b'2', b'3'].into_iter().collect();
-        let excluded: HashSet<u8> = [b'2'].into_iter().collect();
+        let allowed: HashSet<u8> = (*b"123").into_iter().collect();
+        let excluded: HashSet<u8> = (*b"2").into_iter().collect();
 
         // Test with allowed only
         let filtered = filter_symbols(symbols, Some(&allowed), None);

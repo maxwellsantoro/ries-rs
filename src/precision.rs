@@ -706,7 +706,7 @@ mod tests {
         // Euler-Mascheroni constant at 256-bit precision
         let gamma_hp = HighPrec::gamma_with_prec(256);
         // f64 only has about 16 digits of this constant
-        let gamma_f64_approx = 0.5772156649015329;
+        let gamma_f64_approx = std::f64::consts::EULER_GAMMA;
         let gamma_f64 = HighPrec::from_f64_with_prec(gamma_f64_approx, 256);
 
         let hp_str = format!("{:.40}", gamma_hp.inner);

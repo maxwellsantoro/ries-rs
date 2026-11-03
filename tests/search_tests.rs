@@ -407,7 +407,7 @@ fn test_find_golden_ratio() {
     let mut config = fast_config();
     config.constants.push(Symbol::Phi); // Add phi constant
 
-    let phi = 1.618_033_988_749_895;
+    let phi = std::f64::consts::GOLDEN_RATIO;
     let (matches, _stats) = search_with_stats_and_options(phi, &config, 50, false, None);
 
     // Should find some match (not necessarily exact due to transcendental nature)
@@ -434,6 +434,8 @@ fn test_find_golden_ratio() {
 
 /// Test that user constants work in generation and search
 #[test]
+// Short gamma-like user-constant fixture, not std::f64::consts::EULER_GAMMA.
+#[allow(clippy::approx_constant)]
 fn test_user_constant_in_search() {
     // Create a config with a user constant
     let user_constants = vec![UserConstant {
@@ -473,6 +475,8 @@ fn test_user_constant_in_search() {
 }
 
 #[test]
+// Short gamma-like user-constant fixture, not std::f64::consts::EULER_GAMMA.
+#[allow(clippy::approx_constant)]
 fn test_batch_and_streaming_agree_on_user_constant_top_match() {
     let user_constants = vec![UserConstant {
         weight: 4,
