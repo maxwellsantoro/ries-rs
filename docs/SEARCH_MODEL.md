@@ -133,20 +133,33 @@ This difference is intentional and should not be conflated in benchmark or repro
 
 The canonical comparator is `compare_matches` in `src/pool.rs`.
 
-A row is exact only when both are true: `|x_value - target| < EXACT_MATCH_TOLERANCE`,
-and the two sides agree to a few ulps (`residual_is_exact`). Newton also keeps a
-steep root whose correction is at most 8 ulps and whose residual is within
-`1e-5 * max(|f(x)|, |rhs|)`, with a floor of `1e-300` so two vanished sides do
-not collapse the cap. That looser accept is not exact. `max(|rhs|, 1)` is not
-the scale: it turned every right-hand side below 1 into an absolute `1e-5`
-window.
+A row is exact when the two sides, both evaluated at the typed target, agree
+to a few ulps of `max(|lhs|, |rhs|)` (`sides_agree_within_ulps`). There is no
+fixed window in `x`. `|x_value - target| < EXACT_MATCH_TOLERANCE` used to call
+a steep function exact when Newton had landed on a different nearby root
+(`sinpi(1/x) = ln(1)` near `1e-11`), and used to drop a flat identity whose
+sides already match (`x^(1/3) = (1+9)^2` at `1e6`, about `8e-10` away in `x`).
+Newton also keeps a steep root whose correction is at most 8 ulps and whose
+residual is within `1e-5 * max(|f(x)|, |rhs|)`, with a floor of `1e-300` so two
+vanished sides do not collapse the cap. That looser accept is not exact.
+`max(|rhs|, 1)` is not the scale: it turned every right-hand side below 1 into
+an absolute `1e-5` window.
+
+An LHS whose value at a tiny nonzero target (`|x| <= 1e-8`) matches its limit
+at 0, while a probe at `0.25`, `0.5`, or `±1` still moves, is skipped before matching.
+`x^2` has underflowed into the constant (`2 + x^2`, `pi + x^2`, `exp(x^2)`,
+and the same pattern for `cospi(6x)`, `e^(x^phi)`, `1 - x^phi`, `1/W(cospi(x))`). Expressions
+undefined at 0 (`0^phi`, `1/x`) use a subnormal stand-in for that limit.
+A true identity such as `log_x(x^2) = 2` holds at the probes and stays. The
+same underflow idea still drops `2 + 1/x` once `|x| >= 2^52`. Target 0 is not
+part of the tiny-float skip: `x^2` is flat there but the value is genuine.
 
 Ordering is:
 
 1. Exactness (exact before non-exact)
 2. Absolute error (`|x_value - target|`, smaller first) — **for non-exact matches
-   only**. Rows flagged exact are treated as equally exact: x-error below
-   `EXACT_MATCH_TOLERANCE` is floating-point noise, not a quality signal, so
+   only**. Rows flagged exact are treated as equally exact: once the sides
+   agree at the target, the remaining x-error is not a quality signal, so
    they collapse to a single error rank and are decided by complexity instead.
    This keeps the bounded pool from churning on sub-tolerance residuals and
    matches the original RIES intent of ranking exact forms by simplicity.

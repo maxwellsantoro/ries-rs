@@ -2041,35 +2041,271 @@ fn test_small_rhs_loose_roots_are_not_exact() {
     }
 }
 
+fn restricted_config(
+    constants: Vec<crate::symbol::Symbol>,
+    unary_ops: Vec<crate::symbol::Symbol>,
+    binary_ops: Vec<crate::symbol::Symbol>,
+    complexity: u32,
+    max_length: usize,
+) -> crate::gen::GenConfig {
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = complexity;
+    config.max_rhs_complexity = complexity;
+    config.max_length = max_length;
+    config.constants = constants;
+    config.unary_ops = unary_ops;
+    config.binary_ops = binary_ops;
+    config
+}
+
+fn batch_and_streaming(
+    target: f64,
+    config: &crate::gen::GenConfig,
+    n: usize,
+) -> Vec<(&'static str, Vec<super::Match>)> {
+    vec![
+        ("batch", super::search(target, config, n)),
+        (
+            "streaming",
+            super::search_streaming(target, config, n, false, None).0,
+        ),
+    ]
+}
+
 #[test]
-fn test_tiny_target_square_sum_is_outside_the_underflow_skip() {
+fn test_exact_uses_sides_at_the_typed_target() {
+    use crate::eval::evaluate;
+    use crate::expr::Expression;
+    use crate::symbol::Symbol;
+
+    // Steep near a tiny target: Newton lands a few ulps away, where sinpi(1/x)
+    // is exactly 0 or 1, but the sides at the typed target do not agree.
+    let tiny = 1.774_999_999_999_999_7e-11;
+    let sinpi = evaluate(&Expression::parse("xrS").unwrap(), tiny).unwrap();
+    let ln_one = evaluate(&Expression::parse("1l").unwrap(), tiny).unwrap();
+    assert!(
+        sinpi.value.abs() > 1e-2 && ln_one.value == 0.0,
+        "sinpi(1/x) at the target is {}, ln(1) is {}",
+        sinpi.value,
+        ln_one.value
+    );
+    assert!(
+        !super::sides_agree_within_ulps(sinpi.value, ln_one.value),
+        "sides at the typed target must not count as exact"
+    );
+
+    // sinpi(1) is also 0 and ties ln(1) on complexity. RHS dedupe keeps one of
+    // them, so the right-hand side is generated with ln only. The left-hand
+    // side still has sinpi.
+    let mut ln_one_cfg = restricted_config(
+        vec![Symbol::One],
+        vec![Symbol::Recip, Symbol::SinPi, Symbol::Ln],
+        vec![],
+        45,
+        4,
+    );
+    ln_one_cfg.rhs_unary_ops = Some(vec![Symbol::Ln]);
+    let companions = restricted_config(
+        vec![Symbol::One],
+        vec![Symbol::Recip, Symbol::SinPi, Symbol::Exp],
+        vec![Symbol::Add, Symbol::Sub],
+        55,
+        6,
+    );
+    let cases = [
+        (&ln_one_cfg, &[("xrS", "1l")][..]),
+        (
+            &companions,
+            &[("xrSE", "1"), ("1xrS+", "1"), ("1xrS-", "1")][..],
+        ),
+    ];
+    for (config, equations) in cases {
+        for (label, matches) in batch_and_streaming(tiny, config, 16) {
+            let list = equation_list(&matches);
+            for &(lhs, rhs) in equations {
+                assert!(
+                    has_equation(&matches, lhs, rhs),
+                    "{label} lost {lhs} = {rhs}, so the exactness check would be vacuous: {list}"
+                );
+                assert!(
+                    !is_exact_equation(&matches, lhs, rhs),
+                    "{label} stamped {lhs} = {rhs} exact from a nearby root: {list}"
+                );
+                let row = matches
+                    .iter()
+                    .find(|m| m.lhs.expr.to_postfix() == lhs && m.rhs.expr.to_postfix() == rhs)
+                    .expect("row present");
+                assert!(
+                    row.error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
+                    "{label} {lhs} = {rhs} left the 1e-14 window (err {}), so this is a different match",
+                    row.error
+                );
+            }
+        }
+    }
+
+    let smaller = 1e-15;
+    let sinpi_small = evaluate(&Expression::parse("xrS").unwrap(), smaller).unwrap();
+    assert!(
+        !super::sides_agree_within_ulps(sinpi_small.value, 1.0),
+        "sinpi(1/x) at 1e-15 is {}, not 1",
+        sinpi_small.value
+    );
+    let sinpi_one = restricted_config(
+        vec![Symbol::One],
+        vec![Symbol::Recip, Symbol::SinPi],
+        vec![],
+        40,
+        4,
+    );
+    for (label, matches) in batch_and_streaming(smaller, &sinpi_one, 8) {
+        let list = equation_list(&matches);
+        assert!(
+            has_equation(&matches, "xrS", "1"),
+            "{label} lost sinpi(1/x) = 1: {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xrS", "1"),
+            "{label} stamped sinpi(1/x) = 1 exact at 1e-15: {list}"
+        );
+    }
+
+    // Flat root: cbrt(1e6) and (1+9)^2 agree to a couple of ulps of 100, but
+    // Newton stops ~8e-10 away. The old 1e-14 window dropped the row.
+    let million = 1.0e6;
+    let cbrt = evaluate(&Expression::parse("3xv").unwrap(), million).unwrap();
+    let hundred = evaluate(&Expression::parse("19+s").unwrap(), million).unwrap();
+    assert!(
+        super::sides_agree_within_ulps(cbrt.value, hundred.value),
+        "cbrt(1e6) = {}, (1+9)^2 = {}",
+        cbrt.value,
+        hundred.value
+    );
+    let roots = restricted_config(
+        vec![Symbol::One, Symbol::Three, Symbol::Nine],
+        vec![Symbol::Square],
+        vec![Symbol::Add, Symbol::Root],
+        50,
+        6,
+    );
+    for (label, matches) in batch_and_streaming(million, &roots, 16) {
+        let list = equation_list(&matches);
+        assert!(
+            is_exact_equation(&matches, "3xv", "19+s"),
+            "{label} dropped x^(1/3) = (1+9)^2: {list}"
+        );
+        let row = matches
+            .iter()
+            .find(|m| m.lhs.expr.to_postfix() == "3xv" && m.rhs.expr.to_postfix() == "19+s")
+            .expect("cube root row");
+        assert!(
+            row.error.abs() > crate::thresholds::EXACT_MATCH_TOLERANCE,
+            "{label} cube-root x-error {} is inside 1e-14; the window would not have dropped it",
+            row.error
+        );
+    }
+}
+
+#[test]
+fn test_small_target_underflow_is_skipped() {
     use crate::eval::{evaluate_fast_with_context, EvalContext};
     use crate::expr::{EvaluatedExpr, Expression};
-    use crate::symbol::NumType;
+    use crate::symbol::{NumType, Symbol};
 
-    // 2 + x^2 equals 2 here because x^2 is far below an ulp of 2. The
-    // underflow skip only runs once `target + e` is an integer (|x| >= 2^52).
-    // At this target the historical probe is near e, where the sum is about 9,
-    // so the LHS is kept and the flat matcher sees a zero residual.
-    let target = 1.774_999_999_999_999_7e-11;
     let ctx = EvalContext::default();
-    let expr = Expression::parse("2xs+").expect("2 + x^2");
-    let at = evaluate_fast_with_context(&expr, target, &ctx).expect("eval");
-    assert_eq!(
-        at.value, 2.0,
-        "x^2 underflows into the add, value {}",
-        at.value
-    );
+    let evaluated_at = |postfix: &str, target: f64| {
+        let expr = Expression::parse(postfix).unwrap_or_else(|| panic!("parse {postfix}"));
+        let at = evaluate_fast_with_context(&expr, target, &ctx)
+            .unwrap_or_else(|err| panic!("eval {postfix} at {target}: {err:?}"));
+        EvaluatedExpr::new(expr, at.value, at.derivative, NumType::Transcendental)
+    };
+
+    let tiny = 1.774_999_999_999_999_7e-11;
+    // x^2 has vanished into the constant. At 1e-8 the derivative of 2+x^2 is
+    // 2e-8, above the flat-path threshold, so the skip has to run first.
+    for target in [tiny, 1e-8, -1e-8] {
+        for postfix in ["2xs+", "pxs+", "xsE"] {
+            let lhs = evaluated_at(postfix, target);
+            assert!(
+                super::should_skip_degenerate_lhs(&lhs, target, &ctx),
+                "{postfix} at {target} still has an x term in floating point (value {})",
+                lhs.value
+            );
+        }
+    }
+
+    // One ulp of 2 past the boundary: the square no longer underflows.
+    let above = evaluated_at("2xs+", 2e-8);
+    assert_ne!(above.value, 2.0, "2 + (2e-8)^2 should move");
     assert!(
-        at.derivative.abs() < crate::thresholds::DEGENERATE_TEST_THRESHOLD,
-        "derivative {}",
-        at.derivative
+        !super::should_skip_degenerate_lhs(&above, 2e-8, &ctx),
+        "2 + x^2 at 2e-8 is a real function of x"
     );
-    let lhs = EvaluatedExpr::new(expr, at.value, at.derivative, NumType::Transcendental);
-    assert!(
-        !super::should_skip_degenerate_lhs(&lhs, target, &ctx),
-        "the large-integer underflow skip does not apply below 2^52"
+
+    // Target 0 is the probe point itself. x^2 is flat there and must stay.
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xs", 0.0),
+        0.0,
+        &ctx
+    ));
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("2xs+", 0.0),
+        0.0,
+        &ctx
+    ));
+
+    // 1/x does not evaluate at 0 or at a subnormal, so the tiny-target skip
+    // must not eat it. sinpi(1/x) is the steep root the exactness test sees.
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xrS", tiny),
+        tiny,
+        &ctx
+    ));
+
+    // Same vanished-x pattern when 0 is outside the domain, or when ±1 is
+    // still a root (cospi(6) = 1) and only the 0.5 probe moves. True
+    // identities hold at that probe and stay.
+    // cospi(plastic"/x) is a flat near-root, not a vanished term: its value
+    // at the target is not the value at 0. The exact flag may keep it.
+    for postfix in ["6x*C", "xf^E", "1xf^-", "xx^C", "xCWr"] {
+        assert!(
+            super::should_skip_degenerate_lhs(&evaluated_at(postfix, tiny), tiny, &ctx),
+            "{postfix} still depends on x at {tiny}"
+        );
+    }
+    for postfix in ["xxsL", "xxqL", "xrxrL"] {
+        assert!(
+            !super::should_skip_degenerate_lhs(&evaluated_at(postfix, tiny), tiny, &ctx),
+            "{postfix} is an identity at {tiny} and must stay"
+        );
+    }
+    // 2+x at 1e-15 still differs from 2 by a couple of ulps. That is not
+    // underflow of an x^2 term, so the skip leaves it alone.
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("2x+", 1e-15),
+        1e-15,
+        &ctx
+    ));
+
+    let config = restricted_config(
+        vec![Symbol::One, Symbol::Two, Symbol::Pi],
+        vec![Symbol::Square, Symbol::Exp],
+        vec![Symbol::Add],
+        45,
+        5,
     );
+    let vanished = ["2xs+", "xs2+", "pxs+", "xsp+", "xsE"];
+    for target in [tiny, 1e-8] {
+        for (label, matches) in batch_and_streaming(target, &config, 8) {
+            let list = equation_list(&matches);
+            for lhs in vanished {
+                assert!(
+                    !matches.iter().any(|m| m.lhs.expr.to_postfix() == lhs),
+                    "{label} reported {lhs} at {target}: {list}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

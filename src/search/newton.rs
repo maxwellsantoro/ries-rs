@@ -29,21 +29,13 @@ pub(super) fn newton_raphson(
 }
 
 /// A candidate Newton returned. The step test can fire before the residual is small.
+///
+/// Exactness is not decided here. The caller checks the two sides at the typed
+/// target; the residual at the landed float can be zero on a different root.
 pub(super) struct NewtonHit {
     pub x: f64,
     /// Accepted by the tight residual test or the loose local-root test.
     pub real: bool,
-    /// The two sides agree to a few ulps. A hit that only passed the loose
-    /// test stays false, so a close `x` is not reported as exact.
-    pub exact_residual: bool,
-}
-
-impl NewtonHit {
-    /// Exact only when the residual is a few ulps and `x` is within the
-    /// reported exact window of the target.
-    pub(super) fn is_exact_for(&self, refined_error: f64) -> bool {
-        self.exact_residual && refined_error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE
-    }
 }
 
 /// Residual small enough, relative to the RHS, to call the iterate a root.
@@ -92,7 +84,6 @@ fn hit_from_sample(x: f64, value: f64, derivative: f64, rhs_value: f64) -> Newto
     NewtonHit {
         x,
         real: sample_is_root(value, derivative, rhs_value, x),
-        exact_residual: super::residual_is_exact(value, rhs_value),
     }
 }
 
@@ -161,11 +152,7 @@ pub(super) fn newton_raphson_with_constants(
             } else {
                 match crate::eval::evaluate_search(lhs, x, eval_context) {
                     Ok(at) => hit_from_sample(x, at.value, at.derivative, rhs_value),
-                    Err(_) => NewtonHit {
-                        x,
-                        real: false,
-                        exact_residual: false,
-                    },
+                    Err(_) => NewtonHit { x, real: false },
                 }
             };
             return Some(hit);
