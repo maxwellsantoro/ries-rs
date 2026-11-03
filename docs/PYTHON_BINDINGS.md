@@ -92,8 +92,8 @@ for match in results[:3]:
 
 Notes:
 
-- The Python API currently exposes the lighter library-level complexity mapping,
-  not the CLI's heavier `-l/--level` mapping.
+- The Python API exposes `search::level_to_complexity` (`40 + 2*L` on each side),
+  not the CLI's `-l/--level` mapping (`35 + 10*L`).
 - The Python API currently uses complexity-first ranking and does not expose the
   CLI's broader flag surface.
 - `target` must be finite; `NaN` and `Infinity` raise `ValueError`.
@@ -101,14 +101,16 @@ Notes:
 ### API vs CLI level scale
 
 The Python `level` parameter uses `search::level_to_complexity`, not the CLI
-`-l/--level` mapping. The CLI uses higher bases and a larger multiplier so each
-level explores a much larger expression space.
+`-l/--level` mapping. The API budget is `40 + 2*L` on each side. The CLI uses
+`35 + 10*L` on each side, so the two scales meet near the bottom and then the
+CLI pulls ahead.
 
 | Level | API `(max_lhs, max_rhs)` | CLI `(max_lhs, max_rhs)` |
 |-------|--------------------------|--------------------------|
-| 0 | (10, 12) | (35, 35) |
-| 2 | (18, 20) | (55, 55) |
-| 5 | (30, 32) | (85, 85) |
+| 0 | (40, 40) | (35, 35) |
+| 2 | (44, 44) | (55, 55) |
+| 3 | (46, 46) | (65, 65) |
+| 5 | (50, 50) | (85, 85) |
 
 For reproducible CLI-equivalent runs from Python, build a `GenConfig` with the
 CLI bounds from `docs/SEARCH_MODEL.md` and call the Rust library directly.

@@ -529,8 +529,9 @@ fn match_one_lhs(
 
     // Skip LHS with value too close to 0 - these produce floods of
     // trivial matches (like cospi(2.5)=0 matching many RHS near 0).
-    // Original RIES: "Prune zero subexpressions"
-    if lhs.value.abs() < config.zero_value_threshold {
+    // Original RIES: "Prune zero subexpressions".
+    // Target 0 is exempt: `x` itself is under the threshold there.
+    if super::prune_near_zero_lhs(lhs.value, config.target, config.zero_value_threshold) {
         if config.show_pruned_range {
             eprintln!(
                 "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",

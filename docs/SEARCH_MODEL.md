@@ -122,12 +122,23 @@ This is calibrated for practical coverage while avoiding expression explosion.
 
 ### Library helper (`src/search.rs::level_to_complexity`)
 
-Programmatic API helper uses a lighter mapping:
+Python, WebAssembly, and other programmatic callers use:
 
-- `max_lhs = 10 + 4*L`
-- `max_rhs = 12 + 4*L`
+- `max_lhs = 40 + 2*L`
+- `max_rhs = 40 + 2*L`
 
-This difference is intentional and should not be conflated in benchmark or reproducibility claims.
+| Level | API `(max_lhs, max_rhs)` | CLI `(max_lhs, max_rhs)` |
+|-------|--------------------------|--------------------------|
+| 0 | (40, 40) | (35, 35) |
+| 1 | (42, 42) | (45, 45) |
+| 2 | (44, 44) | (55, 55) |
+| 3 | (46, 46) | (65, 65) |
+| 4 | (48, 48) | (75, 75) |
+| 5 | (50, 50) | (85, 85) |
+
+Level 3 is the usual default. Symbol weights make `2*x = 5` cost 32 on the left, `x = 5/2` and `x = 2*6` cost 35 on the right, `x = 6*7` cost 40, and `x = 9*9` cost 42. Budget 46 is one add or multiply past that heaviest single-digit product, so the default level finds those equations with room to spare. It is not the smallest budget that contains `6*7`.
+
+The two scales are not the same function, and benchmarks should not treat them as interchangeable. The CLI step of 10 is the historical command-line tuning. Sharing it with the browser would make the demo's default (level 3, complexity 65) run for minutes on a target with no cheap exact match, and the CLI's own default (level 2, complexity 55) is already past an interactive full scan. The API step is 2 so that level 5, complexity 50, still finishes within a few seconds on that same full scan. `MAX_API_LEVEL` stays 5: the slider already covers the interactive range, and another step would cross the measured cliff past complexity 50.
 
 ## Match Ranking (Ordering)
 

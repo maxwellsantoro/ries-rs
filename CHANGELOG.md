@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Library, Python, and WebAssembly search levels now use `40 + 2*level` on each side. Level 3 is 46/46 and level 5 is 50/50. The previous `10 + 4*level` / `12 + 4*level` scale could not express `2*x = 5`, `x = 5/2`, or `x = 6*7` even at level 5. The CLI `-l` scale is unchanged. `MAX_API_LEVEL` stays 5.
+
+### Fixed
+- Searching for 0 no longer drops every left-hand side under `1e-4`. `x` is kept, so the exact equation `x = ln(1)` is found. `1-1` is the same value, but right-hand-side dedupe keeps `ln(1)` because it is cheaper (23 vs 25). Other targets still prune near-zero sides.
+
 ## [2.0.3] - 2026-11-03
 
 ### Fixed
