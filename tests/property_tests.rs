@@ -369,7 +369,7 @@ proptest! {
         if phi_val {
             let expr = Expression::parse("f").unwrap();
             let result = evaluate(&expr, 0.0).unwrap();
-            let phi = 1.618_033_988_749_895;
+            let phi = std::f64::consts::GOLDEN_RATIO;
             prop_assert!(approx_eq(result.value, phi, 1e-10));
             prop_assert!(approx_eq(result.derivative, 0.0, 1e-10));
         }

@@ -35,6 +35,8 @@ fn main() {
     println!("Example 2: Search for golden ratio approximations");
     println!("{:-<60}", "");
 
+    // Truncated golden-ratio sample, not std::f64::consts::GOLDEN_RATIO.
+    #[allow(clippy::approx_constant)]
     let phi = 1.61803398874989;
 
     let detailed_config = GenConfig {

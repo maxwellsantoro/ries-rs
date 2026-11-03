@@ -556,6 +556,8 @@ mod tests {
     }
 
     #[test]
+    // Profile text stores a ten-digit gamma, not std::f64::consts::EULER_GAMMA.
+    #[allow(clippy::approx_constant)]
     fn test_parse_user_constant() {
         let mut profile = Profile::new();
         parse_user_constant(
