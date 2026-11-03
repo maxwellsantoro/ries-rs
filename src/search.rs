@@ -1327,7 +1327,7 @@ pub fn search_streaming_with_config(
 
                     stats.newton_calls += 1;
                     let initial_guess = search_config.target + x_delta;
-                    if let Some(refined_x) = newton_raphson_with_constants(
+                    if let Some(hit) = newton_raphson_with_constants(
                         &lhs.expr,
                         rhs.value,
                         initial_guess,
@@ -1336,15 +1336,10 @@ pub fn search_streaming_with_config(
                         search_config.show_newton,
                         search_config.derivative_margin,
                     ) {
-                        if !newton::refined_match_is_real(
-                            &lhs.expr,
-                            rhs.value,
-                            refined_x,
-                            search_config.target,
-                            &context.eval,
-                        ) {
+                        if !hit.real {
                             continue;
                         }
+                        let refined_x = hit.x;
                         stats.newton_success += 1;
                         let refined_error = refined_x - search_config.target;
                         let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;

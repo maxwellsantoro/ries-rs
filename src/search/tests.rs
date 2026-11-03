@@ -79,6 +79,11 @@ fn test_newton_raphson_keeps_steep_phi_root() {
         (got - 1.6180339887008952).abs() < 1e-18,
         "refined root moved: {got}"
     );
+    let ctx = crate::eval::EvalContext::default();
+    assert!(
+        super::newton::refined_match_is_real(&lhs, r.value, got, &ctx),
+        "steep phi root must stay (relative residual is about 1e-6)"
+    );
 
     // A steep but genuine near-root. The historical refine lands within an ulp
     // of the target; rejecting it reorders ordinary top-N.
@@ -89,10 +94,34 @@ fn test_newton_raphson_keeps_steep_phi_root() {
     let r = evaluate(&rhs, target).unwrap();
     let initial = target + -(l.value - r.value) / l.derivative;
     let got = newton_raphson(&lhs, r.value, initial, 15);
+    let got = got.expect("x9vC vs 21p-/ should refine");
+    let ctx = crate::eval::EvalContext::default();
     assert!(
-        got.is_some(),
-        "x9vC vs 21p-/ should refine (initial {initial}, target {target})"
+        super::newton::refined_match_is_real(&lhs, r.value, got, &ctx),
+        "steep near-root at 0.123456789 must stay"
     );
+
+    // Identities whose value is exact. A residual gate that only looked at
+    // absolute error would be tempted to drop the huge derivatives.
+    let ctx = crate::eval::EvalContext::default();
+    let exp = Expression::parse("xE").unwrap();
+    let exp_rhs = 40.0_f64.exp();
+    let exp_root = newton_raphson(&exp, exp_rhs, 40.0, 15).expect("exp(40)");
+    assert!((exp_root - 40.0).abs() < 1e-12);
+    assert!(super::newton::refined_match_is_real(
+        &exp, exp_rhs, exp_root, &ctx
+    ));
+    let recip = Expression::parse("xr").unwrap();
+    let recip_root = newton_raphson(&recip, 1e8, 1e-8, 15).expect("1/x = 1e8");
+    assert!((recip_root - 1e-8).abs() < 1e-18);
+    assert!(super::newton::refined_match_is_real(
+        &recip, 1e8, recip_root, &ctx
+    ));
+    let exp_sinpi = Expression::parse("xSE").unwrap();
+    let one_root = newton_raphson(&exp_sinpi, 1.0, 1e15, 15).expect("e^sinpi = 1");
+    assert!(super::newton::refined_match_is_real(
+        &exp_sinpi, 1.0, one_root, &ctx
+    ));
 }
 
 #[test]
@@ -1735,7 +1764,7 @@ fn test_newton_does_not_call_a_sub_ulp_step_exact() {
     let stuck = newton_raphson(&exp_sinpi, 2.0, two_52, 15);
     assert_eq!(stuck, Some(two_52));
     assert!(
-        !super::newton::refined_match_is_real(&exp_sinpi, 2.0, two_52, two_52, &ctx),
+        !super::newton::refined_match_is_real(&exp_sinpi, 2.0, two_52, &ctx),
         "e^sinpi(x) = 2 is not a root at 2^52 (value is 1)"
     );
     let root = newton_raphson(&exp_sinpi, 1.0, two_52, 15).expect("e^sinpi(x) = 1");
@@ -1744,7 +1773,7 @@ fn test_newton_does_not_call_a_sub_ulp_step_exact() {
         "true root should stay on 2^52, got {root}"
     );
     assert!(super::newton::refined_match_is_real(
-        &exp_sinpi, 1.0, two_52, two_52, &ctx
+        &exp_sinpi, 1.0, root, &ctx
     ));
 
     // The same early-accept used to stamp these on main. sinpi(x^2) is 0,
@@ -1754,7 +1783,6 @@ fn test_newton_does_not_call_a_sub_ulp_step_exact() {
         &sin_square,
         1.0,
         two_52,
-        two_52,
         &ctx
     ));
     let cos_square = Expression::parse("xsC").expect("cospi(x^2)");
@@ -1763,9 +1791,75 @@ fn test_newton_does_not_call_a_sub_ulp_step_exact() {
     let one_e15 = 1.0e15;
     let catalan = 0.915_965_594_177_219;
     assert!(
-        !super::newton::refined_match_is_real(&exp_sinpi, catalan, one_e15, one_e15, &ctx),
+        !super::newton::refined_match_is_real(&exp_sinpi, catalan, one_e15, &ctx),
         "e^sinpi(x) = catalan leaves a residual of about 0.084 at 1e15"
     );
+
+    // A step of about 0.32 passes the 1e-15*(1+|x|) test at |x| = 1e15 and
+    // lands one ulp away. The residual there is still O(1).
+    for target in [one_e15, -one_e15] {
+        let moved = newton_raphson(&exp_sinpi, 2.0, target, 15).expect("step test returns");
+        assert!(
+            moved != target,
+            "expected the step to leave {target}, got {moved}"
+        );
+        assert!(
+            !super::newton::refined_match_is_real(&exp_sinpi, 2.0, moved, &ctx),
+            "e^sinpi(x) = 2 at {moved} is not a root of target {target}"
+        );
+    }
+}
+
+#[test]
+fn test_residual_is_exact_rejects_the_old_flat_window() {
+    use crate::eval::evaluate;
+    use crate::expr::Expression;
+    use crate::symbol::Symbol;
+
+    // atan2(pi, 2) ≈ 1.0039. That sits inside the old ±0.01 flat window and
+    // outside a few ulps of 1. Restoring the window makes this assertion fail.
+    let atan = evaluate(&Expression::parse("p2A").unwrap(), 1.0).unwrap();
+    assert!(
+        (atan.value - 1.0).abs() < 0.01 && (atan.value - 1.0).abs() > 1e-4,
+        "atan2(pi, 2) = {}",
+        atan.value
+    );
+    assert!(super::residual_is_exact(1.0, 1.0));
+    assert!(super::residual_is_exact(1.0, 1.0 + 4.0 * f64::EPSILON));
+    assert!(
+        !super::residual_is_exact(1.0, atan.value),
+        "ulp window accepted a residual of {}",
+        (atan.value - 1.0).abs()
+    );
+    // cospi(sqrt(2^63)) ≈ 0.997, the near-miss that used to be stamped exact.
+    assert!(!super::residual_is_exact(0.997170624192306, 1.0));
+
+    // Even integer: cospi(x) is exactly 1, derivative 0, and target+e is a
+    // real perturbation so the LHS is kept. The flat matcher is what decides
+    // whether atan2(pi, 2) is an exact partner.
+    let mut config = fast_test_config();
+    config.max_lhs_complexity = 40;
+    config.max_rhs_complexity = 40;
+    config.constants = vec![Symbol::One, Symbol::Two, Symbol::Pi];
+    config.unary_ops = vec![Symbol::CosPi];
+    config.binary_ops = vec![Symbol::Atan2];
+    for (label, matches) in [
+        ("batch", super::search(64.0, &config, 8)),
+        (
+            "streaming",
+            super::search_streaming(64.0, &config, 8, false, None).0,
+        ),
+    ] {
+        let list = equation_list(&matches);
+        assert!(
+            is_exact_equation(&matches, "xC", "1"),
+            "{label} lost cospi(x) = 1: {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xC", "p2A"),
+            "{label} stamped cospi(x) = atan2(pi, 2) exact inside ±0.01: {list}"
+        );
+    }
 }
 
 #[test]
@@ -1859,6 +1953,13 @@ fn test_false_exact_identities_stay_out_of_large_integer_results() {
     assert!(
         !is_exact_equation(&at_1e15, "xSE", "G"),
         "e^sinpi(x) = catalan was exact at 1e15: {}",
+        equation_list(&at_1e15)
+    );
+    assert!(
+        at_1e15
+            .iter()
+            .all(|m| !(m.lhs.expr.to_postfix() == "xSE" && m.rhs.expr.to_postfix() == "2")),
+        "e^sinpi(x) = 2 stayed in the top 8 at 1e15 after leaving the target float: {}",
         equation_list(&at_1e15)
     );
 }

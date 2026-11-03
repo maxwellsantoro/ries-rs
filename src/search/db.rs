@@ -671,7 +671,7 @@ fn match_one_lhs(
         // Refine with Newton-Raphson.
         stats.newton_calls += 1;
         let initial_guess = config.target + x_delta;
-        if let Some(refined_x) = newton_raphson_with_constants(
+        if let Some(hit) = newton_raphson_with_constants(
             &lhs.expr,
             rhs.value,
             initial_guess,
@@ -680,15 +680,10 @@ fn match_one_lhs(
             config.show_newton,
             config.derivative_margin,
         ) {
-            if !super::newton::refined_match_is_real(
-                &lhs.expr,
-                rhs.value,
-                refined_x,
-                config.target,
-                &context.eval,
-            ) {
+            if !hit.real {
                 continue;
             }
+            let refined_x = hit.x;
             stats.newton_success += 1;
             let refined_error = refined_x - config.target;
             let is_exact = refined_error.abs() < EXACT_MATCH_TOLERANCE;
