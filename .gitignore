@@ -53,9 +53,8 @@ playwright-report/
 .claude/
 .github/hooks/
 
-# Local cargo config (for example target-cpu=native). The audit policy is tracked.
-.cargo/*
-!.cargo/audit.toml
+# Local cargo config
+.cargo/
 
 # Local binaries
 rust_out

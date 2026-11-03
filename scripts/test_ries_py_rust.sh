@@ -28,8 +28,8 @@ fi
 
 export PYO3_PYTHON="$PYTHON_BIN"
 
-# PyO3 0.22 officially supports up to Python 3.13. Allow the stable ABI test
-# path to proceed when the local interpreter is newer (for example Python 3.14).
+# PyO3 0.30 supports CPython 3.9 and newer. Allow the stable ABI test
+# path to proceed when the local interpreter is newer than that window.
 export PYO3_USE_ABI3_FORWARD_COMPATIBILITY="${PYO3_USE_ABI3_FORWARD_COMPATIBILITY:-1}"
 
 exec cargo test \

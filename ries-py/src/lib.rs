@@ -129,7 +129,7 @@ impl PyMatch {
 
     /// Convert the match to a Python dictionary.
     fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         dict.set_item("lhs", &self.lhs)?;
         dict.set_item("rhs", &self.rhs)?;
         dict.set_item("lhs_postfix", &self.lhs_postfix)?;
@@ -323,8 +323,8 @@ fn search(
 ///     Dictionary mapping preset names to descriptions
 #[pyfunction]
 fn list_presets() -> PyResult<Py<PyDict>> {
-    Python::with_gil(|py| {
-        let dict = PyDict::new_bound(py);
+    Python::attach(|py| {
+        let dict = PyDict::new(py);
         for preset in ries_core::Preset::all() {
             dict.set_item(preset.name(), preset.description())?;
         }
@@ -359,7 +359,7 @@ fn version() -> &'static str {
 /// x^2 = e
 /// x = sqrt(e)
 /// ln(x) = 1/2
-#[pymodule]
+#[pymodule(gil_used = true)]
 fn ries_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMatch>()?;
     m.add_function(wrap_pyfunction!(search, m)?)?;

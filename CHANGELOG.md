@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Python bindings use PyO3 0.30.1. abi3 wheels now require Python 3.9 or newer;
+  CPython 3.8 is no longer supported because PyO3 0.30 dropped it.
+
 ## [2.0.2] - 2026-06-27
 
 ### Fixed
