@@ -569,9 +569,9 @@ fn match_one_lhs(
                 );
             }
             // `residual_is_exact` is the named flat window. Exactness still
-            // requires the sides to agree with no unit floor.
+            // requires the sides to agree, and the solved x is the target.
             if super::residual_is_exact(lhs.value, rhs.value)
-                && super::sides_agree_within_ulps(lhs.value, rhs.value)
+                && super::match_is_exact(lhs.value, rhs.value, config.target, config.target)
                 && pool.would_accept(0.0, true)
             {
                 let m = Match {
@@ -649,7 +649,7 @@ fn match_one_lhs(
         if !config.refine_with_newton {
             let refined_x = config.target + x_delta;
             let refined_error = x_delta;
-            let is_exact = super::sides_agree_within_ulps(lhs.value, rhs.value);
+            let is_exact = super::match_is_exact(lhs.value, rhs.value, refined_x, config.target);
 
             if pool.would_accept(refined_error.abs(), is_exact) {
                 let m = Match {
@@ -693,7 +693,7 @@ fn match_one_lhs(
             let refined_x = hit.x;
             stats.newton_success += 1;
             let refined_error = refined_x - config.target;
-            let is_exact = super::sides_agree_within_ulps(lhs.value, rhs.value);
+            let is_exact = super::match_is_exact(lhs.value, rhs.value, refined_x, config.target);
 
             if pool.would_accept(refined_error.abs(), is_exact) {
                 let m = Match {

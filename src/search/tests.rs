@@ -2203,6 +2203,43 @@ fn test_exact_uses_sides_at_the_typed_target() {
             "{label} cube-root x-error {} is inside 1e-14; the window would not have dropped it",
             row.error
         );
+        assert!(
+            super::solved_x_within_ulps(row.x_value, million),
+            "{label} cube-root x {} is outside 8 ulps of 1e6",
+            row.x_value
+        );
+    }
+
+    // 64's cube root is about 2 ulps of 64 (2.84e-14), outside the old 1e-14
+    // window and inside 8 ulps. A 1-ulp cap or the absolute window drops it.
+    let sixty_four = 64.0;
+    let cbrt_64 = restricted_config(
+        vec![Symbol::Three, Symbol::Four],
+        vec![],
+        vec![Symbol::Root],
+        40,
+        4,
+    );
+    for (label, matches) in batch_and_streaming(sixty_four, &cbrt_64, 8) {
+        let list = equation_list(&matches);
+        assert!(
+            is_exact_equation(&matches, "3xv", "4"),
+            "{label} dropped x^(1/3) = 4: {list}"
+        );
+        let row = matches
+            .iter()
+            .find(|m| m.lhs.expr.to_postfix() == "3xv" && m.rhs.expr.to_postfix() == "4")
+            .expect("cube root of 64");
+        assert!(
+            row.error.abs() > crate::thresholds::EXACT_MATCH_TOLERANCE,
+            "{label} 64 cube-root x-error {} is inside 1e-14",
+            row.error
+        );
+        assert!(
+            super::solved_x_within_ulps(row.x_value, sixty_four),
+            "{label} 64 cube-root x {} is outside 8 ulps",
+            row.x_value
+        );
     }
 }
 
@@ -2223,8 +2260,11 @@ fn test_small_target_underflow_is_skipped() {
     let tiny = 1.774_999_999_999_999_7e-11;
     // x^2 has vanished into the constant. At 1e-8 the derivative of 2+x^2 is
     // 2e-8, above the flat-path threshold, so the skip has to run first.
-    for target in [tiny, 1e-8, -1e-8] {
-        for postfix in ["2xs+", "pxs+", "xsE"] {
+    // 1.1e-8 is past the old fixed cutoff and still bitwise. 2e-8 moves 2+x^2
+    // by one ulp of 2, and 6e-8 is still inside the 8-ulp exact window.
+    // exp(x^2) leaves that window before 6e-8, so it is not in the last set.
+    for target in [tiny, 1e-8, -1e-8, 1.1e-8, -1.1e-8, 2e-8] {
+        for postfix in ["2xs+", "pxs+", "xsE", "xsC", "4xs+", "5xs+"] {
             let lhs = evaluated_at(postfix, target);
             assert!(
                 super::should_skip_degenerate_lhs(&lhs, target, &ctx),
@@ -2233,13 +2273,35 @@ fn test_small_target_underflow_is_skipped() {
             );
         }
     }
+    for postfix in ["2xs+", "pxs+", "xsC", "4xs+", "5xs+"] {
+        let lhs = evaluated_at(postfix, 6e-8);
+        assert!(
+            super::should_skip_degenerate_lhs(&lhs, 6e-8, &ctx),
+            "{postfix} at 6e-8 still has an x term in floating point (value {})",
+            lhs.value
+        );
+    }
 
-    // One ulp of 2 past the boundary: the square no longer underflows.
-    let above = evaluated_at("2xs+", 2e-8);
-    assert_ne!(above.value, 2.0, "2 + (2e-8)^2 should move");
+    // 2+(2e-8)^2 is 2+1ulp. Bitwise inequality is not "a real function of x"
+    // while that ulp still passes the exact-side rule.
+    let moved = evaluated_at("2xs+", 2e-8);
+    assert_ne!(moved.value, 2.0, "2 + (2e-8)^2 should move by one ulp");
     assert!(
-        !super::should_skip_degenerate_lhs(&above, 2e-8, &ctx),
-        "2 + x^2 at 2e-8 is a real function of x"
+        super::sides_agree_within_ulps(moved.value, 2.0),
+        "2 + (2e-8)^2 = {} must still be inside the exact tolerance of 2",
+        moved.value
+    );
+
+    // Just past the 8-ulp window the addend is a real change and stays.
+    let past = evaluated_at("2xs+", 7e-8);
+    assert!(
+        !super::sides_agree_within_ulps(past.value, 2.0),
+        "2 + (7e-8)^2 = {} should have left the 8-ulp window",
+        past.value
+    );
+    assert!(
+        !super::should_skip_degenerate_lhs(&past, 7e-8, &ctx),
+        "2 + x^2 at 7e-8 has left the flush window"
     );
 
     // Target 0 is the probe point itself. x^2 is flat there and must stay.
@@ -2265,12 +2327,13 @@ fn test_small_target_underflow_is_skipped() {
     // Same vanished-x pattern when 0 is outside the domain, or when ±1 is
     // still a root (cospi(6) = 1) and only the 0.5 probe moves. True
     // identities hold at that probe and stay.
-    // cospi(plastic"/x) is a flat near-root, not a vanished term: its value
-    // at the target is not the value at 0. The exact flag may keep it.
-    for postfix in ["6x*C", "xf^E", "1xf^-", "xx^C", "xCWr"] {
+    // Same flush once the value is merely within a few ulps of the limit,
+    // including cospi(plastic"/x) and 2+x at 1e-15 (a couple of ulps of 2).
+    for postfix in ["6x*C", "xf^E", "1xf^-", "xx^C", "xCWr", "PxvC", "2x+"] {
+        let target = if postfix == "2x+" { 1e-15 } else { tiny };
         assert!(
-            super::should_skip_degenerate_lhs(&evaluated_at(postfix, tiny), tiny, &ctx),
-            "{postfix} still depends on x at {tiny}"
+            super::should_skip_degenerate_lhs(&evaluated_at(postfix, target), target, &ctx),
+            "{postfix} still depends on x at {target}"
         );
     }
     for postfix in ["xxsL", "xxqL", "xrxrL"] {
@@ -2279,23 +2342,41 @@ fn test_small_target_underflow_is_skipped() {
             "{postfix} is an identity at {tiny} and must stay"
         );
     }
-    // 2+x at 1e-15 still differs from 2 by a couple of ulps. That is not
-    // underflow of an x^2 term, so the skip leaves it alone.
     assert!(!super::should_skip_degenerate_lhs(
-        &evaluated_at("2x+", 1e-15),
-        1e-15,
+        &evaluated_at("xxr*", 1.1e-8),
+        1.1e-8,
+        &ctx
+    ));
+    // Equal to the limit at 0 for a real reason, not because x flushed.
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xsC", 2.0_f64.sqrt()),
+        2.0_f64.sqrt(),
+        &ctx
+    ));
+    assert!(!super::should_skip_degenerate_lhs(
+        &evaluated_at("xrC", 0.1),
+        0.1,
         &ctx
     ));
 
     let config = restricted_config(
-        vec![Symbol::One, Symbol::Two, Symbol::Pi],
-        vec![Symbol::Square, Symbol::Exp],
-        vec![Symbol::Add],
+        vec![
+            Symbol::One,
+            Symbol::Two,
+            Symbol::Three,
+            Symbol::Four,
+            Symbol::Five,
+            Symbol::Pi,
+        ],
+        vec![Symbol::Square, Symbol::Exp, Symbol::CosPi, Symbol::Recip],
+        vec![Symbol::Add, Symbol::Sub, Symbol::Mul],
         45,
         5,
     );
-    let vanished = ["2xs+", "xs2+", "pxs+", "xsp+", "xsE"];
-    for target in [tiny, 1e-8] {
+    let vanished = [
+        "2xs+", "xs2+", "pxs+", "xsp+", "xsE", "xsC", "pxs-", "3xs+", "3xs-", "4xs+", "5xs+",
+    ];
+    for target in [tiny, 1e-8, 1.1e-8, -1.1e-8, 2e-8, 6e-8] {
         for (label, matches) in batch_and_streaming(target, &config, 8) {
             let list = equation_list(&matches);
             for lhs in vanished {
@@ -2304,7 +2385,146 @@ fn test_small_target_underflow_is_skipped() {
                     "{label} reported {lhs} at {target}: {list}"
                 );
             }
+            if target.abs() == 1.1e-8 {
+                assert!(
+                    is_exact_equation(&matches, "xxr*", "1"),
+                    "{label} dropped x*(1/x) = 1 at {target}: {list}"
+                );
+            }
         }
+    }
+}
+
+#[test]
+fn test_exact_requires_solved_x_near_the_target() {
+    use crate::symbol::Symbol;
+
+    // Sides of e^x = 1 agree at 1e-15, and Newton walks to 0. That x-error is
+    // ~1e-15, far past 8 ulps of the target. The 1e6 cube root (~7 ulps) is
+    // covered by test_exact_uses_sides_at_the_typed_target.
+    let small = 1e-15;
+    assert!(!super::match_is_exact(1.0, 1.0, 0.0, small));
+    assert!(super::solved_x_within_ulps(
+        1.0e6 + 8.149_072_527_885_437e-10,
+        1.0e6
+    ));
+    assert!(super::solved_x_within_ulps(
+        64.0 + 2.842_170_943_040_401e-14,
+        64.0
+    ));
+    assert!(!super::solved_x_within_ulps(
+        1.0e6 + 9.0 * (1.0e6_f64.next_up() - 1.0e6),
+        1.0e6
+    ));
+
+    let near_zero = restricted_config(
+        vec![
+            Symbol::One,
+            Symbol::Two,
+            Symbol::Three,
+            Symbol::Four,
+            Symbol::Pi,
+        ],
+        vec![Symbol::Exp, Symbol::Recip],
+        vec![Symbol::Add, Symbol::Sub, Symbol::Pow],
+        50,
+        5,
+    );
+    let walked_off = [
+        ("xE", "1"),
+        ("1x-", "1"),
+        ("2x^", "1"),
+        ("2x+", "2"),
+        ("px^", "1"),
+        ("2x-", "2"),
+        ("3x^", "1"),
+        ("4x^", "1"),
+    ];
+    for target in [small, -small] {
+        for (label, matches) in batch_and_streaming(target, &near_zero, 16) {
+            let list = equation_list(&matches);
+            for (lhs, rhs) in walked_off {
+                assert!(
+                    !is_exact_equation(&matches, lhs, rhs),
+                    "{label} stamped {lhs} = {rhs} exact at {target}: {list}"
+                );
+            }
+        }
+    }
+
+    // x*(1/x) = 1 at 1e-15 is a real identity. A config that actually
+    // generates it must keep the row exact (the 1.1e-8 search covers the
+    // same identity; this is the smaller target).
+    let identity = restricted_config(
+        vec![Symbol::One],
+        vec![Symbol::Recip],
+        vec![Symbol::Mul],
+        50,
+        5,
+    );
+    for target in [small, -small] {
+        for (label, matches) in batch_and_streaming(target, &identity, 8) {
+            assert!(
+                is_exact_equation(&matches, "xxr*", "1"),
+                "{label} dropped x*(1/x) = 1 at {target}: {}",
+                equation_list(&matches)
+            );
+        }
+    }
+
+    // Level-2 rows whose sides barely move and whose solved x is ~1e-11 off.
+    let tiny = 1.774_999_999_999_999_7e-11;
+    assert!(!super::match_is_exact(1.0, 1.0, 4.2e-12, tiny));
+    assert!(!super::solved_x_within_ulps(0.0, tiny));
+    let flat_near_root = restricted_config(
+        vec![Symbol::One, Symbol::Pi, Symbol::E, Symbol::Plastic],
+        vec![Symbol::CosPi, Symbol::Square, Symbol::Exp, Symbol::Root],
+        vec![Symbol::Add],
+        60,
+        6,
+    );
+    for (label, matches) in batch_and_streaming(tiny, &flat_near_root, 16) {
+        let list = equation_list(&matches);
+        assert!(
+            !is_exact_equation(&matches, "PxvC", "1"),
+            "{label} stamped cospi(plastic\"/x) = 1 exact: {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "psEx+", "psE"),
+            "{label} stamped e^(pi^2)+x = e^(pi^2) exact: {list}"
+        );
+    }
+
+    // cospi(x) = 1 just off 2: the sides agree and Newton walks back to 2.
+    // The slope is too large for the flush skip, so the row stays, not exact.
+    let just_off = 2.00000001;
+    let cospi = restricted_config(vec![Symbol::One], vec![Symbol::CosPi], vec![], 40, 3);
+    for (label, matches) in batch_and_streaming(2.0, &cospi, 4) {
+        assert!(
+            is_exact_equation(&matches, "xC", "1"),
+            "{label} dropped cospi(x) = 1 at 2: {}",
+            equation_list(&matches)
+        );
+    }
+    for (label, matches) in batch_and_streaming(just_off, &cospi, 4) {
+        let list = equation_list(&matches);
+        assert!(
+            has_equation(&matches, "xC", "1"),
+            "{label} lost cospi(x) = 1 off 2, so the exactness check would be vacuous: {list}"
+        );
+        assert!(
+            !is_exact_equation(&matches, "xC", "1"),
+            "{label} stamped cospi(x) = 1 exact off an even integer: {list}"
+        );
+        let row = matches
+            .iter()
+            .find(|m| m.lhs.expr.to_postfix() == "xC")
+            .expect("cospi row");
+        assert!(
+            row.error.abs() > 8.0 * (just_off.next_up() - just_off).abs(),
+            "{label} cospi error {} is inside 8 ulps of the target",
+            row.error
+        );
     }
 }
 

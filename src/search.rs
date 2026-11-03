@@ -18,11 +18,12 @@ mod tests;
 use db::calculate_adaptive_search_radius;
 pub use db::{ComplexityTier, ExprDatabase, TieredExprDatabase};
 
-/// `|x|` at or below this, `x^2` underflows into an O(1) addend.
+/// Extra ulps of slope gap before a flush check is worth an evaluation at 0.
 ///
-/// `2 + (1e-8)^2` is exactly 2. At `2e-8` the square is one ulp of 2 and the
-/// sum moves, so the skip stops here.
-const SMALL_MAGNITUDE_UNDERFLOW: f64 = 1e-8;
+/// `x^2` has `|f' * x| = 2 |f - f(0)|`, so the 8-ulp boundary still looks like
+/// about 16 ulps of slope. 64 keeps that boundary inside the limit check, and
+/// an ordinary O(1) derivative returns before the extra evaluation.
+const FLUSH_SLOPE_MARGIN_ULPS: f64 = 64.0;
 
 /// Returns true when a near-zero-derivative LHS should be skipped as degenerate.
 ///
@@ -40,11 +41,14 @@ const SMALL_MAGNITUDE_UNDERFLOW: f64 = 1e-8;
 ///
 /// A value that holds only because a term has underflowed is skipped. For a
 /// huge float that is `2 + 1/x` (equals 2 everywhere large, and 2.5 at 2).
-/// For a tiny float the `x` term is gone at the target (`2 + x^2`, `cospi(6x)`,
-/// `e^(x^phi)`) while a probe at `0.5` still moves. Sampling off the lattice
-/// alone cannot see the large-float case: both the identity and the underflow
-/// are non-constant at 0.5. The tiny-float check runs before the derivative
-/// test, because at `1e-8` the derivative of `2 + x^2` is `2e-8`.
+/// For any other non-integer the `x` term is gone when the value is still
+/// within a few ulps of the limit at 0 (`2 + x^2`, `4 + x^2`, `cospi(x^2)`),
+/// while a probe at `0.5` still moves. There is no fixed `|x|` cutoff: `2 +
+/// x^2` is bitwise 2 at `1.1e-8` and still within 8 ulps of 2 out near `6e-8`.
+/// Sampling off the lattice alone cannot see the large-float case: both the
+/// identity and the underflow are non-constant at 0.5. The flush check runs
+/// before the derivative test, because at `1e-8` the derivative of `2 + x^2`
+/// is `2e-8`.
 pub(crate) fn should_skip_degenerate_lhs(
     lhs: &EvaluatedExpr,
     target: f64,
@@ -147,24 +151,49 @@ fn off_lattice_sample_moves(lhs: &EvaluatedExpr, eval: &EvalContext<'_>) -> bool
         .any(|probe| probe_moves(lhs, probe, eval))
 }
 
-/// True when `x` has disappeared from `lhs` at a tiny `target`.
+/// True when `x` has flushed out of `lhs` at `target`.
 ///
-/// The value matches the limit at 0. A moderate probe (`0.5`, `±1`) still
-/// moves, so this is underflow rather than a constant (`log_x(x^2) = 2`
-/// holds at those probes and stays). `0^phi` and `1/x` are undefined at 0;
-/// a subnormal stand-in is the same limit when the expression is defined for
-/// a tiny nonzero `x`. Target 0 is excluded: `x^2` is flat there but the
-/// value is genuine.
+/// The value is within the exact-match tolerance of the limit at 0, a point
+/// closer to 0 (`0.9 x`) still is, and a moderate probe (`0.25`, `0.5`, `±1`)
+/// moves. The closer point keeps a real root that only happens to equal that
+/// limit (`cospi(x^2)` at `sqrt(2)`, `cospi(1/x)` at `0.1`). The far probes
+/// separate underflow from an identity (`x*(1/x)`, `log_x(x^2) = 2` hold
+/// there and stay). `0^phi` and `1/x` are undefined at 0; a subnormal stand-in
+/// is the same limit when the expression is defined for a tiny nonzero `x`.
+///
+/// Exact nonzero integers are excluded. Every `|x| >= 2^52` is an integer, and
+/// `cospi(x) = 1` on the evens equals `cospi(0)` while a probe at `0.5` moves.
+/// Those stay on the integer-lattice rules. Target 0 is excluded too: `x^2`
+/// is flat there but the value is genuine.
 fn x_dependence_underflowed(lhs: &EvaluatedExpr, target: f64, eval: &EvalContext<'_>) -> bool {
-    let mag = target.abs();
-    if mag == 0.0 || mag > SMALL_MAGNITUDE_UNDERFLOW {
+    if !target.is_finite() || target == 0.0 || target.fract() == 0.0 {
+        return false;
+    }
+    // A near-linear change from 0 already exceeds many ulps of the value, so
+    // this cannot be a flushed constant. `cospi` near an even integer returns
+    // to 1 with a small derivative, but `|f' * x|` is still huge compared with
+    // an ulp, and that root must stay.
+    let slope_gap = lhs.derivative.abs() * target.abs();
+    if slope_gap.is_finite() && slope_gap > FLUSH_SLOPE_MARGIN_ULPS * ulp_of(lhs.value.abs()) {
         return false;
     }
     let Some(limit) = value_at_zero_limit(lhs, target, eval) else {
         return false;
     };
-    if limit != lhs.value {
+    if !sides_agree_within_ulps(lhs.value, limit) {
         return false;
+    }
+    // A root can equal the limit at 0 without a flushed term: cospi(x^2) = 1
+    // at sqrt(2), cospi(1/x) = 1 at 1/10. Closer to 0, a flushed term is still
+    // gone, while those roots move. 0.9 stays on the flushed side of the
+    // 8-ulp boundary (6e-8 for 2 + x^2) and off an even-integer reciprocal.
+    let closer = target * 0.9;
+    if closer == target || !closer.is_finite() {
+        return false;
+    }
+    match crate::eval::evaluate_search(&lhs.expr, closer, eval) {
+        Ok(near) if sides_agree_within_ulps(near.value, limit) => {}
+        _ => return false,
     }
     // 0.25 sits off the integers and half-integers, so cospi(0.25) is not
     // 0, ±1 and Lambert W stays defined. 0.5 alone misses 1/W(cospi(x)).
@@ -216,10 +245,10 @@ pub(crate) fn residual_is_exact(lhs_value: f64, rhs_value: f64) -> bool {
 
 /// True when the two sides agree to a few ulps of `max(|lhs|, |rhs|)`.
 ///
-/// Both values are the ones at the typed target. There is no fixed window in
-/// `x`. Newton can land inside `1e-14` of a different root of a steep function
-/// (`sinpi(1/x)` near `1e-11`), and a flat root can sit `1e-9` away in `x`
-/// while the sides at the target already match (`x^(1/3)` at `1e6`).
+/// Both values are the ones at the typed target. Necessary for an exact row,
+/// and not sufficient: Newton can land on a different root of a function whose
+/// sides barely move (`e^x = 1` at `1e-15`). [`match_is_exact`] also requires
+/// the solved `x`.
 pub(crate) fn sides_agree_within_ulps(lhs_value: f64, rhs_value: f64) -> bool {
     let diff = (lhs_value - rhs_value).abs();
     if diff == 0.0 {
@@ -230,6 +259,39 @@ pub(crate) fn sides_agree_within_ulps(lhs_value: f64, rhs_value: f64) -> bool {
     }
     let scale = lhs_value.abs().max(rhs_value.abs());
     scale.is_finite() && scale > 0.0 && diff <= 8.0 * f64::EPSILON * scale
+}
+
+/// One ulp of a non-negative magnitude.
+fn ulp_of(mag: f64) -> f64 {
+    if mag <= 0.0 || !mag.is_finite() {
+        return f64::from_bits(1);
+    }
+    let up = mag.next_up();
+    if !up.is_finite() {
+        return mag - mag.next_down();
+    }
+    up - mag
+}
+
+/// True when `solved_x` is within 8 ulps of `target`.
+///
+/// Eight ulps of `|target|` still covers a flat root: `x^(1/3)` at `1e6` is
+/// about 7 ulps off, and `x^(1/3) = 4` at `64` is about 2. It rejects a walk
+/// to 0 (`e^x = 1` at `1e-15`, error about `1e-15`).
+pub(crate) fn solved_x_within_ulps(solved_x: f64, target: f64) -> bool {
+    let diff = (solved_x - target).abs();
+    if diff == 0.0 {
+        return true;
+    }
+    if !diff.is_finite() || !solved_x.is_finite() || !target.is_finite() {
+        return false;
+    }
+    diff <= 8.0 * ulp_of(target.abs())
+}
+
+/// Exact when the sides agree at the typed target and the solved `x` is that target.
+pub(crate) fn match_is_exact(lhs_value: f64, rhs_value: f64, solved_x: f64, target: f64) -> bool {
+    sides_agree_within_ulps(lhs_value, rhs_value) && solved_x_within_ulps(solved_x, target)
 }
 #[cfg(test)]
 use newton::newton_raphson;
@@ -529,9 +591,10 @@ pub struct Match {
     /// Reported and ranked as an exact root.
     ///
     /// The two sides, both evaluated at the typed target, agree to a few ulps
-    /// of `max(|lhs|, |rhs|)`. A Newton hit that only passed the loose
-    /// local-root test is false, and so is a nearby root of a steep function
-    /// whose sides do not match at the target.
+    /// of `max(|lhs|, |rhs|)`, and `x_value` is within 8 ulps of the typed
+    /// target. A Newton hit that only passed the loose local-root test is
+    /// false, and so is a nearby root whose sides do not match at the target
+    /// or whose solved `x` walked off to a different root.
     pub exact: bool,
 }
 
@@ -1327,9 +1390,15 @@ pub fn search_streaming_with_config(
                             );
                         }
                         // `residual_is_exact` is the named flat window. Exactness
-                        // still requires the sides to agree with no unit floor.
+                        // still requires the sides to agree, and the solved x
+                        // is the target on this path so the ulp window holds.
                         if residual_is_exact(lhs.value, rhs.value)
-                            && sides_agree_within_ulps(lhs.value, rhs.value)
+                            && match_is_exact(
+                                lhs.value,
+                                rhs.value,
+                                search_config.target,
+                                search_config.target,
+                            )
                             && pool.would_accept(0.0, true)
                         {
                             let m = Match {
@@ -1392,7 +1461,8 @@ pub fn search_streaming_with_config(
                     if !search_config.refine_with_newton {
                         let refined_x = search_config.target + x_delta;
                         let refined_error = x_delta;
-                        let is_exact = sides_agree_within_ulps(lhs.value, rhs.value);
+                        let is_exact =
+                            match_is_exact(lhs.value, rhs.value, refined_x, search_config.target);
 
                         if pool.would_accept(refined_error.abs(), is_exact) {
                             let m = Match {
@@ -1432,7 +1502,8 @@ pub fn search_streaming_with_config(
                         let refined_x = hit.x;
                         stats.newton_success += 1;
                         let refined_error = refined_x - search_config.target;
-                        let is_exact = sides_agree_within_ulps(lhs.value, rhs.value);
+                        let is_exact =
+                            match_is_exact(lhs.value, rhs.value, refined_x, search_config.target);
 
                         if pool.would_accept(refined_error.abs(), is_exact) {
                             let m = Match {
@@ -1550,7 +1621,7 @@ pub fn search_one_sided_with_stats_and_config(
         }
 
         let error = rhs.value - config.target;
-        let is_exact = sides_agree_within_ulps(lhs.value, rhs.value);
+        let is_exact = match_is_exact(lhs.value, rhs.value, rhs.value, config.target);
         if !pool.would_accept(error.abs(), is_exact) {
             continue;
         }

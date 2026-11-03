@@ -133,34 +133,48 @@ This difference is intentional and should not be conflated in benchmark or repro
 
 The canonical comparator is `compare_matches` in `src/pool.rs`.
 
-A row is exact when the two sides, both evaluated at the typed target, agree
-to a few ulps of `max(|lhs|, |rhs|)` (`sides_agree_within_ulps`). There is no
-fixed window in `x`. `|x_value - target| < EXACT_MATCH_TOLERANCE` used to call
-a steep function exact when Newton had landed on a different nearby root
-(`sinpi(1/x) = ln(1)` near `1e-11`), and used to drop a flat identity whose
-sides already match (`x^(1/3) = (1+9)^2` at `1e6`, about `8e-10` away in `x`).
-Newton also keeps a steep root whose correction is at most 8 ulps and whose
-residual is within `1e-5 * max(|f(x)|, |rhs|)`, with a floor of `1e-300` so two
-vanished sides do not collapse the cap. That looser accept is not exact.
-`max(|rhs|, 1)` is not the scale: it turned every right-hand side below 1 into
-an absolute `1e-5` window.
+A row is exact when both of these hold (`match_is_exact`):
 
-An LHS whose value at a tiny nonzero target (`|x| <= 1e-8`) matches its limit
-at 0, while a probe at `0.25`, `0.5`, or `±1` still moves, is skipped before matching.
-`x^2` has underflowed into the constant (`2 + x^2`, `pi + x^2`, `exp(x^2)`,
-and the same pattern for `cospi(6x)`, `e^(x^phi)`, `1 - x^phi`, `1/W(cospi(x))`). Expressions
-undefined at 0 (`0^phi`, `1/x`) use a subnormal stand-in for that limit.
-A true identity such as `log_x(x^2) = 2` holds at the probes and stays. The
-same underflow idea still drops `2 + 1/x` once `|x| >= 2^52`. Target 0 is not
-part of the tiny-float skip: `x^2` is flat there but the value is genuine.
+- the two sides, both evaluated at the typed target, agree to a few ulps of
+  `max(|lhs|, |rhs|)` (`sides_agree_within_ulps`)
+- the solved `x` is within 8 ulps of the typed target (`solved_x_within_ulps`)
+
+Side agreement alone used to call a different root exact when the sides barely
+move (`e^x = 1` at `1e-15`, Newton walks to 0; `cospi(plastic"/x) = 1` near
+`1e-11`). The absolute window `|x_value - target| < EXACT_MATCH_TOLERANCE`
+used to drop a flat identity whose sides already match (`x^(1/3) = (1+9)^2`
+at `1e6`, about 7 ulps of `1e6`, and `x^(1/3) = 4` at `64`, about 2 ulps).
+Eight ulps of `|target|` keeps both. Newton also keeps a steep root whose
+correction is at most 8 ulps and whose residual is within
+`1e-5 * max(|f(x)|, |rhs|)`, with a floor of `1e-300` so two vanished sides do
+not collapse the cap. That looser accept is not exact. `max(|rhs|, 1)` is not
+the scale: it turned every right-hand side below 1 into an absolute `1e-5`
+window.
+
+An LHS is skipped when its value at a non-integer target is within that same
+side tolerance of its limit at 0, the value at `0.9 x` still is, and a probe at
+`0.25`, `0.5`, or `±1` still moves. The `0.9 x` probe keeps a root that only
+happens to equal the limit (`cospi(x^2) = 1` at `sqrt(2)`, `cospi(1/x) = 1`
+at `0.1`). The check follows the flush, not a fixed `|x|` cutoff: `2 + x^2`
+is bitwise 2 at `1.1e-8`, `4 + x^2` is still bitwise 4 at `2e-8`, and `2 + x^2`
+stays within 8 ulps of 2 out near `6e-8` (`cospi(x^2)`, `pi ± x^2`, and
+`3 ± x^2` with them). A derivative large enough that `|f' * x|` already exceeds
+many ulps of the value cannot be that flush, so ordinary targets do not pay
+for an extra evaluation at 0. Expressions undefined at 0 (`0^phi`, `1/x`) use
+a subnormal stand-in for that limit. A true identity such as `x*(1/x) = 1` or
+`log_x(x^2) = 2` holds at the probes and stays. Exact integers, including every
+`|x| >= 2^52`, are not part of this rule: `cospi(x) = 1` on the evens equals
+`cospi(0)`, and the integer-lattice check still drops `2 + 1/x` once `|x|` is
+that large. Target 0 is excluded too: `x^2` is flat there but the value is genuine.
 
 Ordering is:
 
 1. Exactness (exact before non-exact)
 2. Absolute error (`|x_value - target|`, smaller first) — **for non-exact matches
-   only**. Rows flagged exact are treated as equally exact: once the sides
-   agree at the target, the remaining x-error is not a quality signal, so
-   they collapse to a single error rank and are decided by complexity instead.
+   only**. Rows flagged exact are treated as equally exact: the sides already
+   agree at the target and the solved x is within 8 ulps, so the remaining
+   x-error is not a quality signal. They collapse to a single error rank and
+   are decided by complexity instead.
    This keeps the bounded pool from churning on sub-tolerance residuals and
    matches the original RIES intent of ranking exact forms by simplicity.
 3. Ranking-mode tie-break:
