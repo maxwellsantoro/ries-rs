@@ -279,6 +279,115 @@ fn test_no_slow_messages_suppresses_precision_warning() {
 }
 
 #[test]
+fn test_s_flag_prints_the_branch_in_report_and_classic_modes() {
+    // Report mode used to print `x = {rhs}` (`x = (1/7)^2`, `x = -7^2`).
+    let (report, _) = run_ries(&[
+        "2.506628274631",
+        "--deterministic",
+        "-s",
+        "-n",
+        "8",
+        "-l",
+        "0",
+    ]);
+    assert!(
+        report.contains("x = atan2(1, sqrt(1-1^2))/pi+2"),
+        "report -s should print the sine branch near 2.5\n{report}"
+    );
+    assert!(
+        !report.contains("x = (1/7)^2") && !report.contains("x = -7^2"),
+        "report -s should not present the raw right-hand side as x\n{report}"
+    );
+
+    let (classic, _) = run_ries(&[
+        "2.506628274631",
+        "--deterministic",
+        "--report",
+        "false",
+        "-s",
+        "-n",
+        "4",
+        "-l",
+        "0",
+    ]);
+    assert!(
+        classic.contains("x = atan2("),
+        "classic -s should solve for x\n{classic}"
+    );
+    assert!(
+        !classic.contains("x = (1/7)^2") && !classic.contains("x = -7^2"),
+        "classic -s should not present the raw right-hand side as x\n{classic}"
+    );
+}
+
+#[test]
+fn test_s_flag_large_period_prints_a_decimal_integer() {
+    let (stdout, _) = run_ries(&[
+        "2000002",
+        "--deterministic",
+        "--json",
+        "-s",
+        "-n",
+        "8",
+        "-l",
+        "1",
+        "--report",
+        "false",
+    ]);
+    assert!(
+        stdout.contains("\"equation\": \"cospi(x) = 1\""),
+        "expected cospi(x) = 1 among the matches\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"solve_for_x\": \"x = 2000002\""),
+        "the period shift should print as a decimal integer\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\"solve_for_x\": \"x = atan2"),
+        "a large exact integer must not be displayed as the principal inverse\n{stdout}"
+    );
+}
+
+#[test]
+fn test_s_flag_uses_mathematica_and_sympy_formatting() {
+    let (mathematica, _) = run_ries(&[
+        "2.5",
+        "--deterministic",
+        "--report",
+        "false",
+        "-s",
+        "-n",
+        "1",
+        "-l",
+        "0",
+        "--format",
+        "mathematica",
+    ]);
+    assert!(
+        mathematica.contains("ArcTan["),
+        "mathematica -s should format the solved expression\n{mathematica}"
+    );
+
+    let (sympy, _) = run_ries(&[
+        "2.5",
+        "--deterministic",
+        "--report",
+        "false",
+        "-s",
+        "-n",
+        "6",
+        "-l",
+        "1",
+        "--format",
+        "sympy",
+    ]);
+    assert!(
+        sympy.contains("**"),
+        "sympy -s should format powers with **\n{sympy}"
+    );
+}
+
+#[test]
 fn test_s_flag_solves_supported_equation_forms() {
     // At level 1 for this target, x^2 = 2*pi is a top match and should
     // transform into x = sqrt(2*pi) under -s.

@@ -572,13 +572,16 @@ fn main() {
         let shown: Vec<&search::Match> = matches.iter().take(effective_max_matches).collect();
         for m in shown.iter().copied() {
             let show_solve = args.solve && !args.no_solve;
+            let solved = show_solve
+                .then(|| solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value))
+                .flatten();
             if args.absolute {
                 print_match_absolute(
                     m,
                     show_solve,
                     output_format,
                     args.explicit_multiply,
-                    None,
+                    solved.as_ref(),
                     Some(&gen_config.symbol_table),
                 );
             } else {
@@ -587,7 +590,7 @@ fn main() {
                     show_solve,
                     output_format,
                     args.explicit_multiply,
-                    None,
+                    solved.as_ref(),
                     Some(&gen_config.symbol_table),
                 );
             }

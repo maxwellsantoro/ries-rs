@@ -172,9 +172,17 @@ pub fn build_json_output(
             let (solve_for_x, solve_for_x_postfix) = if include_solve_for_x {
                 let solved = solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value);
                 (
-                    solved
-                        .as_ref()
-                        .map(|e: &crate::expr::Expression| format!("x = {}", e.to_infix())),
+                    solved.as_ref().map(|e: &crate::expr::Expression| {
+                        format!(
+                            "x = {}",
+                            format_expression_for_display(
+                                e,
+                                output_format,
+                                explicit_multiply,
+                                Some(symbol_table),
+                            )
+                        )
+                    }),
                     solved
                         .as_ref()
                         .map(|e: &crate::expr::Expression| e.to_postfix()),

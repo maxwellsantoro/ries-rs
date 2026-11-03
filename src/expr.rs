@@ -32,6 +32,12 @@ pub struct Expression {
     complexity: u32,
     /// Whether this expression contains the variable x
     contains_x: bool,
+    /// Solver-inserted integers, as `(start_symbol, symbol_count, value)`.
+    ///
+    /// The postfix still evaluates to `value`. Printers render the span as a
+    /// decimal literal so a period shift is `+2000002` rather than a tower of
+    /// `2*5` factors. Search-generated expressions leave this empty.
+    decimal_literals: SmallVec<[(u32, u32, u64); 2]>,
 }
 
 /// Whether `child` must be parenthesized under `parent`.
@@ -100,6 +106,7 @@ impl Expression {
             symbols: SmallVec::new(),
             complexity: 0,
             contains_x: false,
+            decimal_literals: SmallVec::new(),
         }
     }
 
@@ -116,6 +123,7 @@ impl Expression {
             symbols: SmallVec::from_slice(symbols),
             complexity,
             contains_x,
+            decimal_literals: SmallVec::new(),
         }
     }
 
@@ -142,6 +150,7 @@ impl Expression {
             symbols,
             complexity,
             contains_x,
+            decimal_literals: SmallVec::new(),
         })
     }
 
@@ -215,6 +224,42 @@ impl Expression {
         self.symbols.push(sym);
     }
 
+    /// Remember that the whole expression is the decimal integer `value`.
+    ///
+    /// Call this only on the postfix that evaluates to `value`. Later
+    /// combinations shift the recorded span with the symbols.
+    pub(crate) fn mark_decimal_literal(&mut self, value: u64) {
+        let len = self.symbols.len();
+        if len == 0 || len > u32::MAX as usize {
+            return;
+        }
+        self.decimal_literals.push((0, len as u32, value));
+    }
+
+    pub(crate) fn append_decimal_literals(&mut self, other: &Expression, shift: u32) {
+        for &(start, len, value) in &other.decimal_literals {
+            self.decimal_literals.push((start + shift, len, value));
+        }
+    }
+
+    fn trim_decimal_literals(&mut self) {
+        let n = self.symbols.len() as u32;
+        self.decimal_literals
+            .retain(|(start, len, _)| start.saturating_add(*len) <= n);
+    }
+
+    /// If a decimal literal starts at `index`, return its text and advance past it.
+    fn take_decimal_literal(&self, index: &mut usize) -> Option<String> {
+        let (len, value) = self
+            .decimal_literals
+            .iter()
+            .find_map(|&(start, len, value)| {
+                (start as usize == *index && len > 0).then_some((len, value))
+            })?;
+        *index += len as usize;
+        Some(value.to_string())
+    }
+
     /// Remove the last symbol
     pub fn pop(&mut self) -> Option<Symbol> {
         let sym = self.symbols.pop()?;
@@ -224,6 +269,7 @@ impl Expression {
         if sym == Symbol::X {
             self.contains_x = self.symbols.contains(&Symbol::X);
         }
+        self.trim_decimal_literals();
         Some(sym)
     }
 
@@ -252,6 +298,7 @@ impl Expression {
         if sym == Symbol::X {
             self.contains_x = self.symbols.contains(&Symbol::X);
         }
+        self.trim_decimal_literals();
         Some(sym)
     }
 
@@ -290,7 +337,14 @@ impl Expression {
 
         let mut stack: Vec<(String, u8)> = Vec::new();
 
-        for &sym in &self.symbols {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(literal) = self.take_decimal_literal(&mut index) {
+                stack.push((literal, PREC_ATOM));
+                continue;
+            }
+            let sym = self.symbols[index];
+            index += 1;
             match sym.seft() {
                 Seft::A => {
                     stack.push((sym.display_name(), PREC_ATOM));
@@ -429,7 +483,14 @@ impl Expression {
 
         let mut stack: Vec<(String, u8)> = Vec::new();
 
-        for &sym in &self.symbols {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(literal) = self.take_decimal_literal(&mut index) {
+                stack.push((literal, PREC_ATOM));
+                continue;
+            }
+            let sym = self.symbols[index];
+            index += 1;
             match sym.seft() {
                 Seft::A => {
                     stack.push((table.name(sym).to_string(), PREC_ATOM));
@@ -605,7 +666,14 @@ impl Expression {
 
         let mut stack: Vec<(String, u8)> = Vec::new();
 
-        for &sym in &self.symbols {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(literal) = self.take_decimal_literal(&mut index) {
+                stack.push((literal, PREC_ATOM));
+                continue;
+            }
+            let sym = self.symbols[index];
+            index += 1;
             match sym.seft() {
                 Seft::A => {
                     let s = match sym {
@@ -731,7 +799,14 @@ impl Expression {
 
         let mut stack: Vec<(String, u8)> = Vec::new();
 
-        for &sym in &self.symbols {
+        let mut index = 0;
+        while index < self.symbols.len() {
+            if let Some(literal) = self.take_decimal_literal(&mut index) {
+                stack.push((literal, PREC_ATOM));
+                continue;
+            }
+            let sym = self.symbols[index];
+            index += 1;
             match sym.seft() {
                 Seft::A => {
                     let s = match sym {

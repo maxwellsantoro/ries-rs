@@ -502,14 +502,13 @@ fn eval_solved_infix(solved: &Expression) -> f64 {
 
 #[test]
 fn reported_targets_print_the_branch_they_claim() {
-    let sqrt_two_pi = 2.506_628_274_631;
     let phi = 1.618_033_988_7;
 
-    // sin(πx) = 1. The principal inverse is 0.5; the root near √(2π) is 2.5.
+    // sin(πx) = 1. The principal inverse is 0.5; the refined root near √(2π) is 2.5.
     let sin_solved = solve_for_x_at(
         &Expression::parse("xS").unwrap(),
         &Expression::parse("1").unwrap(),
-        sqrt_two_pi,
+        2.5,
     )
     .expect("sin equation is solvable");
     let sin_value = eval_solved_infix(&sin_solved);
@@ -523,7 +522,7 @@ fn reported_targets_print_the_branch_they_claim() {
     let cos_solved = solve_for_x_at(
         &Expression::parse("xC").unwrap(),
         &Expression::parse("1l").unwrap(),
-        sqrt_two_pi,
+        2.5,
     )
     .expect("cos equation is solvable");
     let cos_value = eval_solved_infix(&cos_solved);

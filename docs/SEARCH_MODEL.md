@@ -63,7 +63,7 @@ Equivalent abstract grammar (stack-discipline form):
 
 In infix form, parentheses follow the precedence and associativity rules in `src/expr.rs`. Power (`^`, including printed `^2` and `e^`) is right-associative and binds tighter than unary minus. Unary minus binds tighter than multiplication, division, and reciprocal (`1/`). Addition and subtraction are left-associative and bind least tightly. A subexpression is parenthesized when reprinting it at the same precedence would change the value (`(a^b)^c`, `a-(b-c)`, `1/(1/x)`, `-(1/(1/(-phi)))`). Parsing that infix with the same rules evaluates to the postfix value.
 
-Solve-for-x display uses `solve_for_x_at` and the matched root. Multi-valued inverses emit the real branch nearest that root: `±√y` for squares and even powers, `asin(y)/π + 2k` or `1 - asin(y)/π + 2k` for sine, `2k ± acos(y)/π` for cosine, and `atan(y)/π + k` for tangent. `solve_for_x_rhs_expression` remains the principal-branch inverse for callers that do not have a root.
+Solve-for-x display uses `solve_for_x_at` and the matched root. Multi-valued inverses emit the real branch nearest that root: `±√y` for squares and even integer powers (odd powers keep their single real root), `asin(y)/π + 2k` or `1 - asin(y)/π + 2k` for sine, `2k ± acos(y)/π` for cosine, and `atan(y)/π + k` for tangent. Integer shifts print as decimal literals. The function returns nothing when the hint is not finite, the inverse is not real, or the branch cannot be represented exactly. Text `-s` (report and classic) and `--format` use this same closed form. `solve_for_x_rhs_expression` remains the principal-branch inverse for callers that do not have a root.
 
 ## Search Space Partition
 
