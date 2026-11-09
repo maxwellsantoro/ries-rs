@@ -1138,7 +1138,6 @@ fn api_level_configs(level: u32, target: f64) -> (GenConfig, SearchConfig) {
         target,
         max_matches: 100,
         max_error: (target.abs() * 0.01).max(1e-12),
-        ranking_mode: ries_rs::pool::RankingMode::Parity,
         zero_value_threshold: 1e-4,
         newton_iterations: 15,
         refine_with_newton: true,
@@ -1172,7 +1171,8 @@ fn test_api_level_budgets() {
 
 #[test]
 fn test_default_api_level_finds_plain_equations() {
-    // Demo-shaped search: level 3, parity ranking, 1% error floor, 100-match pool.
+    // The default API ranks by complexity. This checks expression coverage at
+    // level 3 with a 1% error floor and a 100-match pool.
     let expectations = [
         (2.5, &[("2x*", "5"), ("x", "52/")][..]),
         (1.5, &[("2x*", "3"), ("x", "32/")]),
@@ -1209,13 +1209,7 @@ fn test_target_zero_finds_x_equals_ln_one() {
         "batch search for 0 should find exact x = ln(1)"
     );
 
-    // Streaming sees LHS out of complexity order and, under parity ranking,
-    // can fill the 100-match pool with other exacts before `x = ln(1)` holds
-    // a slot. Complexity ranking keeps the cheap identity, which is what shows
-    // the LHS was not pruned.
-    let mut streaming_cfg = cfg.clone();
-    streaming_cfg.ranking_mode = ries_rs::pool::RankingMode::Complexity;
-    let (streaming, _) = search_streaming_with_config(&gen, &streaming_cfg);
+    let (streaming, _) = search_streaming_with_config(&gen, &cfg);
     assert!(
         has_exact_postfix(&streaming, "x", "1l"),
         "streaming search for 0 should find exact x = ln(1)"
