@@ -196,13 +196,20 @@ Ordering is:
 
 This final lexical tie-break is what makes total ordering explicit and stable.
 
-Because exact matches rank by complexity, once the bounded result pool is full of
-exact matches the search can prune: no equation more complex than the simplest
-pooled exact match can enter. `TopKPool::exact_complexity_ceiling` exposes this
-bound, and the matcher uses it to skip Newton refinement for over-complex
-candidates and to stop early (LHS are processed in ascending complexity order).
-This optimization only narrows work that could never change the result set, so it
-preserves the ordering above exactly.
+Under complexity ranking, once the bounded result pool is full of exact
+matches, `TopKPool::exact_complexity_ceiling` returns the complexity of its
+worst-ranked entry, which has the highest retained complexity. A new exact
+match can be more complex than the simplest retained match and still displace
+the worst one.
+
+The batch matcher skips Newton refinement when the candidate's combined LHS and
+RHS complexity is strictly greater than the ceiling. Candidates at the ceiling
+remain eligible for the postfix tie-breaks. The scan can stop once the LHS
+alone exceeds the ceiling, because the remaining LHS expressions are processed
+in ascending complexity order and RHS complexity is nonnegative.
+
+Parity ranking disables both uses of the ceiling. Its signed legacy score
+precedes total complexity, so a more complex exact match can rank higher.
 
 ## Determinism Contract
 

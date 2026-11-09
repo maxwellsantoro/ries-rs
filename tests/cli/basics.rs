@@ -358,6 +358,64 @@ fn test_json_deterministic_golden_output_order_for_complexity_ranking_nonclassic
 }
 
 #[test]
+fn test_parity_ranking_keeps_higher_complexity_exact_matches() {
+    // Each search first finds x = 2 at complexity 28.
+    for (lhs_symbols, rhs_symbols, expected_lhs, expected_rhs) in [
+        ("1x+", "23", "1x+", "3"), // LHS alone exceeds the initial ceiling.
+        ("xr", "2r", "xr", "2r"),  // Only the combined equation exceeds it.
+    ] {
+        let (stdout, _) = run_ries(&[
+            "2",
+            "-l0",
+            "-n1",
+            "-S",
+            lhs_symbols,
+            "--S-RHS",
+            rhs_symbols,
+            "--deterministic",
+            "--parity-ranking",
+            "--report",
+            "false",
+            "--json",
+        ]);
+        let parsed: Value = serde_json::from_str(&stdout).expect("valid parity JSON");
+        let best = &parsed["results"][0];
+        assert_eq!(best["exact"], true);
+        assert_eq!(best["lhs_postfix"], expected_lhs, "{best}");
+        assert_eq!(best["rhs_postfix"], expected_rhs, "{best}");
+        assert!(best["complexity"].as_u64().unwrap() > 28, "{best}");
+    }
+}
+
+#[test]
+fn test_complexity_ranking_keeps_ceiling_ties_with_zero_weight_rhs() {
+    // x = 2 fills the pool at complexity 15. The LHS of 1+x = 3 alone
+    // reaches that ceiling, but the zero-weight RHS leaves a postfix tie-break.
+    let (stdout, _) = run_ries(&[
+        "2",
+        "-l0",
+        "-n1",
+        "-S",
+        "1x+",
+        "--S-RHS",
+        "23",
+        "--symbol-weights",
+        ":x:10 :1:1 :+:4 :2:5 :3:0",
+        "--deterministic",
+        "--complexity-ranking",
+        "--report",
+        "false",
+        "--json",
+    ]);
+    let parsed: Value = serde_json::from_str(&stdout).expect("valid complexity JSON");
+    let best = &parsed["results"][0];
+    assert_eq!(best["exact"], true);
+    assert_eq!(best["lhs_postfix"], "1x+", "{best}");
+    assert_eq!(best["rhs_postfix"], "3", "{best}");
+    assert_eq!(best["complexity"], 15);
+}
+
+#[test]
 fn test_json_deterministic_parity_vs_complexity_diverge_for_same_target() {
     let base_args = [
         "3.14159",

@@ -499,9 +499,8 @@ impl ExprDatabase {
 /// Match a single LHS expression against the RHS database, inserting any
 /// accepted matches into `pool` and updating `stats`.
 ///
-/// Returns `false` when an early-exit condition (`stop_at_exact` / `stop_below`)
-/// fires; the caller should stop processing further LHS. This is the shared
-/// inner loop used by both the serial and parallel matchers.
+/// Returns `false` when the complexity ceiling or an explicit early-exit
+/// condition is reached. This is the shared loop for serial and turbo matching.
 fn match_one_lhs(
     db: &ExprDatabase,
     lhs: &EvaluatedExpr,
@@ -511,18 +510,12 @@ fn match_one_lhs(
 ) -> bool {
     let config = context.config;
 
-    // Complexity-ceiling early exit: once the pool is full of exact matches,
-    // any equation built from this LHS has total complexity
-    // `lhs + rhs >= ceiling + 1 > ceiling` (every RHS has complexity >= 1), so
-    // it is strictly more complex than the simplest pooled exact match and can
-    // never enter — not even on a lexicographic tie. Because LHS are processed
-    // in ascending complexity order, this LHS and every remaining one are
-    // hopeless, so stop the whole scan. (The per-candidate skip below uses a
-    // strict `>` because there the RHS complexity is already included and ties
-    // are still reachable.)
+    // A ceiling is available only for complexity ranking. Since LHS are sorted
+    // by complexity, an LHS above the ceiling rules out all remaining pairs.
+    // At the ceiling an RHS with zero weight can still tie on complexity.
     let exact_ceiling = pool.exact_complexity_ceiling();
     if let Some(ceiling) = exact_ceiling {
-        if lhs.expr.complexity() >= ceiling {
+        if lhs.expr.complexity() > ceiling {
             return false;
         }
     }
@@ -611,8 +604,8 @@ fn match_one_lhs(
         }
 
         // Complexity-ceiling skip: when the pool is saturated with exact
-        // matches, a candidate strictly more complex than the simplest pooled
-        // exact match cannot win, so avoid the Newton refinement entirely.
+        // matches, complexity ranking rules out a candidate strictly more
+        // complex than the worst pooled exact match before Newton refinement.
         //
         // The bound is strict (`>`), not `>=`: a candidate whose total
         // complexity *equals* the ceiling ties on exactness and complexity, and

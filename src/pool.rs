@@ -380,20 +380,17 @@ impl TopKPool {
         }
     }
 
-    /// Complexity ceiling implied by a pool that is full of exact matches.
+    /// Complexity of the worst entry in a full, exact complexity-ranked pool.
     ///
-    /// When the pool is at capacity and its worst entry is already an exact
-    /// match, no candidate with complexity `>= ceiling` can ever enter: a
-    /// non-exact candidate loses on exactness, and an equally-exact candidate
-    /// loses on complexity (exact matches rank by complexity). Callers use this
-    /// to skip Newton refinement — and, since LHS are processed in ascending
-    /// complexity order, to stop the search entirely — once it fires.
+    /// Under complexity ranking, a non-exact candidate loses on exactness
+    /// and an exact candidate strictly above the ceiling loses on complexity.
+    /// Candidates at the ceiling may still enter on the postfix tie-breaks.
     ///
-    /// Returns `None` when the pool is not yet saturated with exact matches, so
-    /// the optimization never prunes while better matches are still reachable.
+    /// Returns `None` for parity ranking, while the pool has room, or when its
+    /// worst entry is inexact. A higher complexity can still improve parity rank.
     #[inline]
     pub fn exact_complexity_ceiling(&self) -> Option<u32> {
-        if self.heap.len() < self.capacity {
+        if self.ranking_mode != RankingMode::Complexity || self.heap.len() < self.capacity {
             return None;
         }
         let worst = self.heap.peek()?;
