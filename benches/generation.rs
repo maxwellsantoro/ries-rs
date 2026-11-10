@@ -9,6 +9,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 #[cfg(feature = "parallel")]
 use ries_rs::gen::generate_all_parallel;
 use ries_rs::gen::{generate_all, GenConfig};
+use std::cell::OnceCell;
 
 fn bench_lhs_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("lhs_generation");
@@ -137,13 +138,15 @@ fn bench_expression_count(c: &mut Criterion) {
         config.max_lhs_complexity = lhs_comp;
         config.max_rhs_complexity = rhs_comp;
 
-        let result = generate_all(&config, target);
-
-        group.bench_with_input(
-            BenchmarkId::new("count", name),
-            &(result.lhs.len(), result.rhs.len()),
-            |b, counts| b.iter(|| black_box(counts)),
-        );
+        // Defer generation until Criterion selects this case.
+        let counts = OnceCell::new();
+        group.bench_function(BenchmarkId::new("count", name), |b| {
+            let counts = counts.get_or_init(|| {
+                let result = generate_all(&config, target);
+                (result.lhs.len(), result.rhs.len())
+            });
+            b.iter(|| black_box(counts));
+        });
     }
 
     group.finish();

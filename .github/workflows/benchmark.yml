@@ -15,6 +15,10 @@ on:
         description: "Artifact name from that run (required for comparison)"
         required: false
         default: ""
+      smoke:
+        description: "Run one quick case per suite to verify baseline handling"
+        type: boolean
+        default: false
 
 jobs:
   bench:
@@ -23,6 +27,10 @@ jobs:
     permissions:
       contents: read
       actions: read
+    env:
+      # The benchmark harness unwinds. Use the same strategy for the CLI so
+      # Cargo builds a single copy of the library in target/release/deps.
+      CARGO_PROFILE_RELEASE_PANIC: unwind
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -64,25 +72,24 @@ jobs:
           RUN_ID: ${{ inputs.baseline_run_id }}
         run: ./tests/validate_benchmark_baseline.sh "$BASELINE" "$RUN_ID"
 
-      - name: Run benchmarks (compare against baseline)
-        if: inputs.baseline != ''
+      - name: Run Criterion benchmarks
         env:
           BASELINE: ${{ inputs.baseline }}
+          SMOKE: ${{ inputs.smoke }}
         run: |
-          cargo bench --locked --bench evaluation -- --baseline "$BASELINE"
-          cargo bench --locked --bench search -- --baseline "$BASELINE"
-          cargo bench --locked --bench generation -- --baseline "$BASELINE"
-
-      - name: Run benchmarks (save as 'main' baseline)
-        if: inputs.baseline == ''
-        run: |
-          cargo bench --locked --bench evaluation -- --save-baseline main
-          cargo bench --locked --bench search -- --save-baseline main
-          cargo bench --locked --bench generation -- --save-baseline main
+          if [[ -n "$BASELINE" ]]; then
+            args=(--baseline "$BASELINE")
+          else
+            args=(--save-baseline main)
+          fi
+          if [[ "$SMOKE" == true ]]; then
+            args+=(--quick '^(eval_simple|search_levels/level/1|lhs_generation/lhs/tiny)$')
+          fi
+          cargo bench --locked --bench evaluation --bench search --bench generation -- "${args[@]}"
 
       - name: Upload criterion report
         uses: actions/upload-artifact@v6
         with:
-          name: criterion-report-${{ github.sha }}
+          name: criterion-report-${{ github.sha }}${{ inputs.smoke && '-smoke' || '' }}
           path: target/criterion/
           retention-days: 90

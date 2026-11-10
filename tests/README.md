@@ -52,3 +52,6 @@ the prior workflow run ID, and its `criterion-report-<sha>` artifact name.
 A dispatch with all three fields empty saves a `main` baseline. Artifacts expire
 after 90 days; comparisons require an available artifact containing that named
 baseline.
+
+For an artifact round trip with one quick case per suite, enable `smoke` in
+both dispatches and select the `criterion-report-<sha>-smoke` artifact.
