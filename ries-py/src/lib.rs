@@ -289,6 +289,7 @@ fn search(
         match_all_digits: false,
         derivative_margin: ries_core::DEGENERATE_DERIVATIVE,
         ranking_mode: ries_core::pool::RankingMode::Complexity,
+        lhs_value_dedup: false,
     };
 
     // Perform search

@@ -24,7 +24,18 @@ fn test_s_flag_shows_equation_form_not_misleading_x_equals() {
 #[test]
 fn test_s_flag_without_complex_lhs_works_correctly() {
     // When LHS is just x, the -s flag should still work (though the output is the same)
-    let (stdout, _stderr) = run_ries(&["2.5", "--classic", "--report", "false", "-s", "-n", "1"]);
+    let (stdout, _stderr) = run_ries(&[
+        "2.5",
+        "--classic",
+        "--report",
+        "false",
+        "--one-sided",
+        "-S",
+        "x25/",
+        "-s",
+        "-n",
+        "1",
+    ]);
 
     // For 2.5, the first match should be x = 5/2, which is correct even with -s
     assert!(

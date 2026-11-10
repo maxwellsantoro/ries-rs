@@ -475,6 +475,214 @@ fn test_user_constant_in_search() {
 }
 
 #[test]
+fn test_numeric_deduplication_against_atomic_equation_oracle() {
+    use ries_rs::expr::EvaluatedExpr;
+    use ries_rs::pool::{compare_matches, RankingMode};
+    use ries_rs::profile::Profile;
+    use ries_rs::search::{search_one_sided_with_stats_and_config, Match, SearchStats};
+
+    type Search = fn(&GenConfig, &SearchConfig) -> (Vec<Match>, SearchStats);
+    let modes: &[(&str, Search)] = &[
+        ("batch", search_with_stats_and_config),
+        ("streaming", search_streaming_with_config),
+        ("one-sided", search_one_sided_with_stats_and_config),
+        ("adaptive", |gen, cfg| search_adaptive(gen, cfg, 0)),
+        #[cfg(feature = "parallel")]
+        (
+            "parallel",
+            ries_rs::search::search_parallel_with_stats_and_config,
+        ),
+        #[cfg(feature = "parallel")]
+        ("turbo", ries_rs::search::search_turbo_with_stats_and_config),
+    ];
+    let signatures = |matches: &[Match]| {
+        matches
+            .iter()
+            .map(|m| {
+                (
+                    m.lhs.expr.to_postfix(),
+                    m.rhs.expr.to_postfix(),
+                    m.x_value.to_bits(),
+                    m.complexity,
+                    m.exact,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // Cover the near collision, an exactness tie, and both old large-value sentinels.
+    for (first, second, tied) in [
+        (2.0, 2.000_000_004_9, false),
+        (2.0, 2.0_f64.next_up(), true),
+        (1e11, 2e11, false),
+        (-1e11, -2e11, false),
+    ] {
+        for weights in [[14, 20], [20, 14]] {
+            let mut gen = fast_config();
+            let literal_first = first == 2.0;
+            let first_symbol = if literal_first {
+                Symbol::Two
+            } else {
+                Symbol::UserConstant1
+            };
+            gen.constants = vec![first_symbol, Symbol::UserConstant0];
+            gen.unary_ops.clear();
+            gen.binary_ops.clear();
+            gen.max_length = 1;
+            gen.user_constants = [second, first]
+                .into_iter()
+                .zip([weights[1], weights[0]])
+                .take(if literal_first { 1 } else { 2 })
+                .enumerate()
+                .map(|(i, (value, weight))| UserConstant {
+                    weight,
+                    name: format!("u{i}"),
+                    description: "atomic oracle constant".into(),
+                    value,
+                    num_type: NumType::Transcendental,
+                })
+                .collect();
+            let mut profile = Profile::default();
+            profile.symbol_weights.insert(Symbol::Two, weights[0]);
+            gen.symbol_table =
+                SymbolTable::from_parts(&profile, &gen.user_constants, &[]).into_shared();
+
+            for target in [first, second] {
+                let atom = |symbol, value, derivative| {
+                    let mut expr = Expression::new();
+                    expr.push_with_table(symbol, &gen.symbol_table);
+                    EvaluatedExpr::new(expr, value, derivative, NumType::Transcendental)
+                };
+                let lhs = atom(Symbol::X, target, 1.0);
+
+                // Exhaust the admissible pairs directly. With length one the
+                // only LHS is x and each RHS atom is its own solved root.
+                let candidates: Vec<_> = gen
+                    .constants
+                    .iter()
+                    .zip([first, second])
+                    .filter_map(|(&symbol, root)| {
+                        let error: f64 = root - target;
+                        if error.abs() > 0.1 {
+                            return None;
+                        }
+                        let rhs = atom(symbol, root, 0.0);
+                        Some(Match {
+                            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                            lhs: lhs.clone(),
+                            rhs,
+                            x_value: root,
+                            error,
+                            // A one-ulp separation meets both exactness checks.
+                            exact: tied || root == target,
+                        })
+                    })
+                    .collect();
+
+                for ranking_mode in [RankingMode::Complexity, RankingMode::Parity] {
+                    let mut expected = candidates.clone();
+                    expected.sort_by(|a, b| compare_matches(a, b, ranking_mode));
+                    for capacity in [1, 2, 5] {
+                        let cfg = SearchConfig {
+                            target,
+                            max_error: 0.1,
+                            max_matches: capacity,
+                            ranking_mode,
+                            user_constants: gen.user_constants.clone(),
+                            ..Default::default()
+                        };
+                        let expected = &expected[..expected.len().min(capacity)];
+                        for (mode, search) in modes {
+                            let (matches, stats) = search(&gen, &cfg);
+                            let case = format!(
+                                "{mode}, target {target}, {ranking_mode:?}, capacity {capacity}, weights {weights:?}"
+                            );
+                            assert_eq!(stats.rhs_count, 2, "{case}");
+                            assert_eq!(signatures(&matches), signatures(expected), "{case}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_streaming_stop_priority_changes_results_without_ending_the_scan() {
+    use ries_rs::pool::{compare_matches, RankingMode};
+
+    let mut gen = fast_config();
+    gen.constants = vec![Symbol::One, Symbol::Two, Symbol::Three];
+    gen.unary_ops.clear();
+    gen.binary_ops = vec![Symbol::Add];
+    gen.max_length = 3;
+    for max_matches in [1, 10] {
+        let config = SearchConfig {
+            target: 2.0,
+            max_matches,
+            ranking_mode: RankingMode::Parity,
+            rhs_excluded_symbols: Some([Symbol::Add as u8].into()),
+            ..Default::default()
+        };
+        let (ranked, scanned) = search_streaming_with_config(&gen, &config);
+        for (stop_at_exact, stop_below) in [(true, None), (false, Some(1e-8))] {
+            let with_stop = SearchConfig {
+                stop_at_exact,
+                stop_below,
+                ..config.clone()
+            };
+            let (priority, stats) = search_streaming_with_config(&gen, &with_stop);
+            let (_, batch_stats) = search_with_stats_and_config(&gen, &with_stop);
+            assert!(batch_stats.early_exit);
+            assert!(!stats.early_exit);
+            assert_eq!(stats.lhs_count, scanned.lhs_count);
+            assert_eq!(stats.candidates_tested, scanned.candidates_tested);
+            assert_eq!(stats.newton_calls, scanned.newton_calls);
+
+            assert_eq!(priority[0].lhs.expr.to_postfix(), "x");
+            assert_eq!(priority[0].rhs.expr.to_postfix(), "2");
+            assert!(compare_matches(&ranked[0], &priority[0], RankingMode::Parity).is_lt());
+            let has_ranked_winner = priority
+                .iter()
+                .any(|m| m.lhs.expr == ranked[0].lhs.expr && m.rhs.expr == ranked[0].rhs.expr);
+            assert_eq!(has_ranked_winner, max_matches > 1);
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_turbo_parity_rank_one_with_small_capacities() {
+    use ries_rs::pool::RankingMode;
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    let gen_config = fast_config();
+    for target in [2.0, 2.5, std::f64::consts::SQRT_2] {
+        for capacity in [1, 2, 5] {
+            let config = SearchConfig {
+                target,
+                max_matches: capacity,
+                ranking_mode: RankingMode::Parity,
+                ..Default::default()
+            };
+            let (serial, _) = search_with_stats_and_config(&gen_config, &config);
+            let (turbo, _) = search_turbo_with_stats_and_config(&gen_config, &config);
+            assert!(!serial.is_empty() && !turbo.is_empty());
+            assert_eq!(
+                (
+                    serial[0].lhs.expr.to_postfix(),
+                    serial[0].rhs.expr.to_postfix()
+                ),
+                (
+                    turbo[0].lhs.expr.to_postfix(),
+                    turbo[0].rhs.expr.to_postfix()
+                ),
+                "target {target}, capacity {capacity}"
+            );
+        }
+    }
+}
+
+#[test]
 // Short gamma-like user-constant fixture, not std::f64::consts::EULER_GAMMA.
 #[allow(clippy::approx_constant)]
 fn test_batch_and_streaming_agree_on_user_constant_top_match() {
@@ -627,50 +835,6 @@ fn test_user_function_in_search() {
     );
 }
 
-/// Issue 1: streaming RHS dedup must use quantize_value, not inline (v * 1e8) as i64.
-/// The inline computation overflows (saturates to i64::MAX) for |v| > ~9.2e10.
-/// quantize_value maps large-but-finite values to i64::MAX-1 and reserves i64::MAX
-/// as the sentinel specifically for NaN. The inline code conflates large finite
-/// values with NaN by overflowing to the same i64::MAX sentinel.
-#[test]
-fn test_streaming_rhs_dedup_key_safe_for_large_values() {
-    use ries_rs::gen::quantize_value;
-
-    // For a value just above MAX_QUANTIZED_VALUE (1e10):
-    // - quantize_value returns i64::MAX-1 (the large-value sentinel)
-    // - the buggy inline (1e11 * 1e8).round() as i64 overflows to i64::MAX
-    let large = 1e11_f64;
-    let safe_key = quantize_value(large);
-
-    // quantize_value does NOT overflow to i64::MAX for large finite values.
-    assert_ne!(
-        safe_key,
-        i64::MAX,
-        "quantize_value must not overflow to i64::MAX for large finite values"
-    );
-    assert_eq!(
-        safe_key,
-        i64::MAX - 1,
-        "quantize_value returns i64::MAX-1 for large positive values"
-    );
-
-    // NaN returns i64::MAX (the true undefined-value sentinel) — distinct from i64::MAX-1.
-    let nan_key = quantize_value(f64::NAN);
-    assert_eq!(nan_key, i64::MAX, "NaN must map to i64::MAX sentinel");
-    assert_ne!(
-        safe_key, nan_key,
-        "large finite values must be distinct from NaN sentinel"
-    );
-
-    // The buggy inline computation overflows to i64::MAX, colliding with the NaN sentinel.
-    let buggy_key = (large * 1e8_f64).round() as i64;
-    assert_eq!(
-        buggy_key,
-        i64::MAX,
-        "demonstrates the bug: inline computation overflows to i64::MAX (same as NaN sentinel)"
-    );
-}
-
 /// Issue 2: the degenerate-expression test in both batch and streaming search paths
 /// must pass user_functions to the evaluator. When using evaluate_with_constants
 /// (which doesn't accept user_functions), UDF symbols in an LHS expression cause
@@ -726,7 +890,7 @@ fn test_streaming_search_with_udf_produces_results() {
 }
 
 /// Issue 4: search_adaptive LHS/RHS dedup should keep the simplest expression
-/// when two expressions are numerically equivalent (same quantized value/derivative).
+/// when two expressions share the same floating-point deduplication key.
 /// Regression: adaptive search must not produce higher-complexity results than necessary.
 #[test]
 fn test_adaptive_search_produces_valid_matches() {
@@ -906,10 +1070,8 @@ fn test_turbo_best_match_equals_sequential() {
 fn test_turbo_small_batch_generation_matches_sequential_best() {
     use ries_rs::search::search_turbo_with_stats_and_config;
 
-    // This small search stays below the serial batch limit, where canonical
-    // serial search deduplicates LHS expressions by target-local value and
-    // derivative before matching. Turbo must mirror that generation semantics,
-    // not always preserve raw streaming LHS expressions.
+    // Exercise the opt-in heuristic below the serial batch limit. Turbo
+    // should use the same representative policy as the serial matcher.
     let gen_config = GenConfig {
         max_lhs_complexity: 65,
         max_rhs_complexity: 10,
@@ -927,6 +1089,7 @@ fn test_turbo_small_batch_generation_matches_sequential_best() {
         target: 2.506314,
         max_matches: 16,
         max_error: 2.506314 * 0.01,
+        lhs_value_dedup: true,
         user_constants: gen_config.user_constants.clone(),
         user_functions: gen_config.user_functions.clone(),
         ..Default::default()
@@ -959,7 +1122,7 @@ fn test_turbo_level3_flat_exact_best_match_equals_sequential() {
     // the batch-generation safety limit and falls back to streaming, which
     // preserves raw LHS expressions. Batch LHS dedupe can replace xTEC
     // (`cospi(e^tanpi(x))`) with a lower-complexity degenerate representative
-    // for the same target-local (value, derivative) bucket; turbo must preserve
+    // for the same target-local (value, derivative) key; turbo must preserve
     // the streaming LHS universe in this case.
     let gen_config = GenConfig {
         max_lhs_complexity: 65,
@@ -1098,7 +1261,7 @@ fn test_turbo_finds_known_exact_match() {
 #[cfg(feature = "parallel")]
 #[test]
 fn test_parallel_rhs_override_matches_sequential() {
-    use ries_rs::search::search_parallel_with_stats_and_config;
+    use ries_rs::search::{search_parallel_with_stats_and_config, MatcherPath};
 
     let mut gen_config = fast_config();
     gen_config.rhs_constants = Some(vec![
@@ -1118,8 +1281,9 @@ fn test_parallel_rhs_override_matches_sequential() {
     };
 
     let (sequential, _) = search_with_stats_and_config(&gen_config, &search_config);
-    let (parallel, _) = search_parallel_with_stats_and_config(&gen_config, &search_config);
+    let (parallel, stats) = search_parallel_with_stats_and_config(&gen_config, &search_config);
 
+    assert_eq!(stats.matcher, Some(MatcherPath::Serial));
     assert_eq!(
         match_signatures(&sequential),
         match_signatures(&parallel),
@@ -1202,7 +1366,17 @@ fn test_target_zero_finds_x_equals_ln_one() {
     // `1-1` is a zero, but RHS dedupe keeps the cheaper `ln(1)` (complexity
     // 23 vs 25). The near-zero prune used to drop `x` itself, so that identity
     // could not be formed. Keeping `x` when the target is 0 surfaces it.
-    let (gen, cfg) = api_level_configs(3, 0.0);
+    let gen = GenConfig {
+        constants: vec![Symbol::One],
+        unary_ops: vec![Symbol::Ln],
+        binary_ops: vec![Symbol::Sub],
+        max_length: 3,
+        ..fast_config()
+    };
+    let cfg = SearchConfig {
+        target: 0.0,
+        ..Default::default()
+    };
     let (batch, _) = search_with_stats_and_config(&gen, &cfg);
     assert!(
         has_exact_postfix(&batch, "x", "1l"),

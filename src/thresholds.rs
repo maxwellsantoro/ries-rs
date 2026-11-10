@@ -236,12 +236,9 @@ pub const TIER_EARLY_EXIT_ERROR: f64 = 1e-8;
 // Quantization Thresholds
 // =============================================================================
 
-/// Scale factor for value quantization in deduplication
+/// Scale factor for the legacy value quantizer.
 ///
-/// Values are multiplied by this factor before rounding to integer
-/// for deduplication purposes.
-///
-/// Value: 1e8 (preserves ~8 significant digits)
+/// Values are multiplied by this factor before rounding to an integer bucket.
 pub const QUANTIZE_SCALE: f64 = 1e8;
 
 // =============================================================================

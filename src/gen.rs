@@ -36,8 +36,11 @@ const MAX_QUANTIZED_VALUE: f64 = 1e10;
 /// and unlikely to be useful, so they are filtered out during generation.
 const MAX_GENERATED_VALUE: f64 = 1e12;
 use crate::expr::{EvaluatedExpr, Expression, MAX_EXPR_LEN};
+use crate::pool::{legacy_parity_score_expr, RankingMode};
+use crate::search::SearchConfig;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::UserFunction;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// Configuration for expression generation
@@ -510,11 +513,11 @@ pub struct StreamingCallbacks<'a> {
     pub on_lhs: &'a mut dyn FnMut(&EvaluatedExpr) -> bool,
 }
 
-/// Quantize a value to reduce floating-point noise
-/// Key for LHS deduplication: (quantized value, quantized derivative)
+/// Pair of quantized values used by callers of [`quantize_value`].
 pub type LhsKey = (i64, i64);
 
-/// Uses ~8 significant digits for deduplication
+/// Round a value into a legacy numerical bucket. Search deduplication uses
+/// exact floating-point keys because a bucket can contain distinct roots.
 #[inline]
 pub fn quantize_value(v: f64) -> i64 {
     if !v.is_finite() || v.abs() > MAX_QUANTIZED_VALUE {
@@ -530,32 +533,86 @@ pub fn quantize_value(v: f64) -> i64 {
     (v * QUANTIZE_SCALE).round() as i64
 }
 
-fn dedupe_rhs_expressions(rhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
-    use std::collections::hash_map::Entry;
+pub(crate) fn lhs_dedup_key(expr: &EvaluatedExpr) -> (u64, u64) {
+    (expr.value.to_bits(), expr.derivative.to_bits())
+}
 
-    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
-    for expr in rhs_raw {
-        let key = quantize_value(expr.value);
-        match rhs_map.entry(key) {
-            Entry::Occupied(mut slot) => {
-                if expr.expr.complexity() < slot.get().expr.complexity() {
-                    *slot.get_mut() = expr;
-                }
-            }
-            Entry::Vacant(slot) => {
-                slot.insert(expr);
-            }
+/// Keeps one admissible RHS expression per bit-identical value.
+pub(crate) struct RhsRepresentatives<'a> {
+    search: Option<&'a SearchConfig>,
+    by_value: HashMap<u64, EvaluatedExpr>,
+}
+
+impl<'a> RhsRepresentatives<'a> {
+    pub(crate) fn new(search: Option<&'a SearchConfig>) -> Self {
+        Self {
+            search,
+            by_value: HashMap::new(),
         }
     }
-    rhs_map.into_values().collect()
+
+    pub(crate) fn insert(&mut self, expr: Cow<'_, EvaluatedExpr>) {
+        use std::collections::hash_map::Entry;
+
+        if self
+            .search
+            .is_some_and(|search| !search.rhs_symbol_allowed(&expr.expr))
+        {
+            return;
+        }
+        match self.by_value.entry(expr.value.to_bits()) {
+            Entry::Occupied(mut slot) if prefer_rhs(&expr.expr, &slot.get().expr, self.search) => {
+                slot.insert(expr.into_owned());
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(expr.into_owned());
+            }
+            Entry::Occupied(_) => {}
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.by_value.len()
+    }
+
+    pub(crate) fn into_values(self) -> impl Iterator<Item = EvaluatedExpr> {
+        self.by_value.into_values()
+    }
+}
+
+fn prefer_rhs(candidate: &Expression, current: &Expression, search: Option<&SearchConfig>) -> bool {
+    // For a fixed LHS and RHS value, exactness and error are identical.
+    let complexity = candidate.complexity().cmp(&current.complexity());
+    match search.map(|config| config.ranking_mode) {
+        Some(RankingMode::Parity) => legacy_parity_score_expr(candidate)
+            .cmp(&legacy_parity_score_expr(current))
+            .then(complexity)
+            .then_with(|| candidate.symbols().cmp(current.symbols()))
+            .is_lt(),
+        Some(RankingMode::Complexity) => complexity
+            .then_with(|| candidate.symbols().cmp(current.symbols()))
+            .is_lt(),
+        None => complexity.is_lt(),
+    }
+}
+
+fn dedupe_rhs_expressions(
+    rhs_raw: Vec<EvaluatedExpr>,
+    search: Option<&SearchConfig>,
+) -> Vec<EvaluatedExpr> {
+    let mut representatives = RhsRepresentatives::new(search);
+    for expr in rhs_raw {
+        representatives.insert(Cow::Owned(expr));
+    }
+    representatives.into_values().collect()
 }
 
 fn dedupe_lhs_expressions(lhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
     use std::collections::hash_map::Entry;
 
-    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
+    let mut lhs_map: HashMap<_, EvaluatedExpr> = HashMap::new();
     for expr in lhs_raw {
-        let key = (quantize_value(expr.value), quantize_value(expr.derivative));
+        let key = lhs_dedup_key(&expr);
         match lhs_map.entry(key) {
             Entry::Occupied(mut slot) => {
                 if expr.expr.complexity() < slot.get().expr.complexity() {
@@ -568,6 +625,17 @@ fn dedupe_lhs_expressions(lhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
         }
     }
     lhs_map.into_values().collect()
+}
+
+fn select_lhs_expressions(
+    lhs_raw: Vec<EvaluatedExpr>,
+    search: Option<&SearchConfig>,
+) -> Vec<EvaluatedExpr> {
+    if search.is_none_or(|config| config.lhs_value_dedup) {
+        dedupe_lhs_expressions(lhs_raw)
+    } else {
+        lhs_raw
+    }
 }
 
 /// Generate all valid expressions up to the configured limits
@@ -584,6 +652,15 @@ pub fn generate_all_with_context(
     config: &GenConfig,
     target: f64,
     eval_context: &EvalContext<'_>,
+) -> GeneratedExprs {
+    generate_all_with_rhs_policy(config, target, eval_context, None)
+}
+
+pub(crate) fn generate_all_with_rhs_policy(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+    search: Option<&SearchConfig>,
 ) -> GeneratedExprs {
     let mut lhs_raw = Vec::new();
     let mut rhs_raw = Vec::new();
@@ -627,10 +704,9 @@ pub fn generate_all_with_context(
         );
     }
 
-    // Deduplicate RHS by value, keeping simplest expression for each value
     GeneratedExprs {
-        lhs: dedupe_lhs_expressions(lhs_raw),
-        rhs: dedupe_rhs_expressions(rhs_raw),
+        lhs: select_lhs_expressions(lhs_raw, search),
+        rhs: dedupe_rhs_expressions(rhs_raw, search),
     }
 }
 
@@ -672,49 +748,7 @@ pub fn generate_all_with_limit_and_context(
     eval_context: &EvalContext<'_>,
     max_expressions: usize,
 ) -> Option<GeneratedExprs> {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-
-    let count = Arc::new(AtomicUsize::new(0));
-    let limit = max_expressions;
-
-    // Collect expressions if within limit
-    let mut lhs_raw = Vec::new();
-    let mut rhs_raw = Vec::new();
-
-    // Callback that counts expressions and stops when limit is hit
-    let mut callbacks = StreamingCallbacks {
-        on_lhs: &mut |expr| {
-            let current = count.fetch_add(1, Ordering::Relaxed) + 1;
-            if current > limit {
-                return false; // Abort generation
-            }
-            lhs_raw.push(expr.clone());
-            true
-        },
-        on_rhs: &mut |expr| {
-            let current = count.fetch_add(1, Ordering::Relaxed) + 1;
-            if current > limit {
-                return false; // Abort generation
-            }
-            rhs_raw.push(expr.clone());
-            true
-        },
-    };
-
-    generate_streaming_with_context(config, target, eval_context, &mut callbacks);
-
-    // Check if we exceeded the limit
-    let final_count = count.load(Ordering::Relaxed);
-    if final_count > limit {
-        return None;
-    }
-
-    // Deduplicate (same logic as generate_all)
-    Some(GeneratedExprs {
-        lhs: dedupe_lhs_expressions(lhs_raw),
-        rhs: dedupe_rhs_expressions(rhs_raw),
-    })
+    generate_bounded_with_rhs_policy(config, target, eval_context, max_expressions, false, None)
 }
 
 /// Generate expressions with an early-abort limit, preserving every LHS.
@@ -731,6 +765,17 @@ pub fn generate_all_preserving_lhs_with_limit_and_context(
     target: f64,
     eval_context: &EvalContext<'_>,
     max_expressions: usize,
+) -> Option<GeneratedExprs> {
+    generate_bounded_with_rhs_policy(config, target, eval_context, max_expressions, true, None)
+}
+
+pub(crate) fn generate_bounded_with_rhs_policy(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+    max_expressions: usize,
+    preserve_lhs: bool,
+    search: Option<&SearchConfig>,
 ) -> Option<GeneratedExprs> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -768,8 +813,12 @@ pub fn generate_all_preserving_lhs_with_limit_and_context(
     }
 
     Some(GeneratedExprs {
-        lhs: lhs_raw,
-        rhs: dedupe_rhs_expressions(rhs_raw),
+        lhs: if preserve_lhs {
+            lhs_raw
+        } else {
+            select_lhs_expressions(lhs_raw, search)
+        },
+        rhs: dedupe_rhs_expressions(rhs_raw, search),
     })
 }
 
@@ -900,7 +949,7 @@ pub fn count_expressions_with_limit_and_context(
 }
 
 #[inline]
-fn has_rhs_symbol_overrides(config: &GenConfig) -> bool {
+pub(crate) fn has_rhs_symbol_overrides(config: &GenConfig) -> bool {
     config.rhs_constants.is_some()
         || config.rhs_unary_ops.is_some()
         || config.rhs_binary_ops.is_some()
@@ -1560,11 +1609,21 @@ pub fn generate_all_parallel_with_context(
     target: f64,
     eval_context: &EvalContext<'_>,
 ) -> GeneratedExprs {
+    generate_parallel_with_rhs_policy(config, target, eval_context, None)
+}
+
+#[cfg(feature = "parallel")]
+pub(crate) fn generate_parallel_with_rhs_policy(
+    config: &GenConfig,
+    target: f64,
+    eval_context: &EvalContext<'_>,
+    search: Option<&SearchConfig>,
+) -> GeneratedExprs {
     use rayon::prelude::*;
 
     // Parallel path currently assumes shared LHS/RHS symbol sets.
     if has_rhs_symbol_overrides(config) {
-        return generate_all_with_context(config, target, eval_context);
+        return generate_all_with_rhs_policy(config, target, eval_context, search);
     }
 
     // Generate valid prefixes of length 1 and 2 to create smaller,
@@ -1705,10 +1764,9 @@ pub fn generate_all_parallel_with_context(
         rhs_raw.extend(rhs);
     }
 
-    // Deduplicate RHS by value, keeping simplest expression for each value
     GeneratedExprs {
-        lhs: dedupe_lhs_expressions(lhs_raw),
-        rhs: dedupe_rhs_expressions(rhs_raw),
+        lhs: select_lhs_expressions(lhs_raw, search),
+        rhs: dedupe_rhs_expressions(rhs_raw, search),
     }
 }
 
@@ -1958,25 +2016,55 @@ mod tests {
     }
 
     #[test]
-    fn test_dedupe_rhs_keeps_simplest_expression_within_quantized_bucket() {
+    fn test_dedupe_rhs_keeps_distinct_values_within_old_bucket() {
         let base = 2.0;
-        let rhs = dedupe_rhs_expressions(vec![
-            stub_eval_expr("11+", base + 0.49 / QUANTIZE_SCALE, 0.0),
-            stub_eval_expr("2", base, 0.0),
-        ]);
+        let rhs = dedupe_rhs_expressions(
+            vec![
+                stub_eval_expr("11+", base + 0.49 / QUANTIZE_SCALE, 0.0),
+                stub_eval_expr("2", base, 0.0),
+            ],
+            None,
+        );
 
-        assert_eq!(rhs.len(), 1);
-        assert_eq!(rhs[0].expr.to_postfix(), "2");
+        assert_eq!(rhs.len(), 2);
     }
 
     #[test]
-    fn test_dedupe_lhs_preserves_adjacent_derivative_buckets() {
+    fn test_rhs_deduplication_can_discard_parity_preferred_equivalent() {
+        use crate::pool::legacy_parity_score_expr;
+
+        // A tiny reference universe: both expressions evaluate to 3. Rank the
+        // raw candidates independently before applying the production deduper.
+        let raw = vec![
+            stub_eval_expr("3", 3.0, 0.0),
+            stub_eval_expr("12+", 3.0, 0.0),
+        ];
+        let parity_best = raw
+            .iter()
+            .min_by_key(|e| legacy_parity_score_expr(&e.expr))
+            .unwrap();
+        assert_eq!(parity_best.expr.to_postfix(), "12+");
+        let retained = dedupe_rhs_expressions(raw, None);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].expr.to_postfix(), "3");
+    }
+
+    #[test]
+    fn test_large_finite_values_share_quantization_bucket() {
+        assert_eq!(quantize_value(1e11), quantize_value(2e11));
+        assert_eq!(quantize_value(-1e11), quantize_value(-2e11));
+    }
+
+    #[test]
+    fn test_dedupe_lhs_keeps_distinct_values_and_derivatives_within_old_bucket() {
+        let delta = 0.49 / QUANTIZE_SCALE;
         let lhs = dedupe_lhs_expressions(vec![
             stub_eval_expr("x", 1.0, 1.0),
-            stub_eval_expr("x1+", 1.0, 1.0 + 0.51 / QUANTIZE_SCALE),
+            stub_eval_expr("x1+", 1.0 + delta, 1.0),
+            stub_eval_expr("xs", 1.0, 1.0 + delta),
         ]);
 
-        assert_eq!(lhs.len(), 2);
+        assert_eq!(lhs.len(), 3);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

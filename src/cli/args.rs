@@ -141,6 +141,10 @@ pub struct Args {
     #[arg(long)]
     pub streaming: bool,
 
+    /// Merge LHS expressions with the same value and derivative in batch searches (may change results)
+    #[arg(long)]
+    pub lhs_value_dedup: bool,
+
     /// Use adaptive search (like original RIES) for better precision
     /// Iteratively expands LHS/RHS complexity to match original RIES expression counts
     /// Generates ~500K expressions at level 2 (vs ~3K with default mode)
@@ -216,11 +220,11 @@ pub struct Args {
     #[arg(long)]
     pub stability_thorough: bool,
 
-    /// Stop search when an exact match is found
+    /// Stop at an exact match (streaming scans fully and prioritizes the simplest exact match)
     #[arg(long)]
     pub stop_at_exact: bool,
 
-    /// Stop search when error goes below this threshold
+    /// Stop below this error (streaming scans fully and prioritizes the simplest qualifying match)
     #[arg(long)]
     pub stop_below: Option<f64>,
 
@@ -670,6 +674,7 @@ pub fn print_option_list() {
         "--eval-expression",
         "--explicit-multiply",
         "--find-expression",
+        "--lhs-value-dedup",
         "--match-all-digits",
         "--mad",
         "--max-equate-value",

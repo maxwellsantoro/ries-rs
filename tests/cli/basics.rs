@@ -171,10 +171,20 @@ fn test_json_output_is_valid_and_machine_readable() {
 
 #[test]
 fn test_manifest_success_for_text_and_json_output() {
-    for (stem, extra_args) in [("text", Vec::<&str>::new()), ("json", vec!["--json"])] {
+    for (stem, extra_args, matcher, applied) in [
+        ("text", vec![], "serial", false),
+        ("json", vec!["--json", "--lhs-value-dedup"], "serial", true),
+        (
+            "fallback",
+            vec!["--json", "--lhs-value-dedup", "--max-memory", "512M"],
+            "streaming",
+            false,
+        ),
+    ] {
         let path = unique_tmp_path(stem);
         let path_arg = path.to_string_lossy().into_owned();
-        let is_json = !extra_args.is_empty();
+        let is_json = extra_args.contains(&"--json");
+        let requested = extra_args.contains(&"--lhs-value-dedup");
         let mut args = vec![
             "2.5",
             "-l",
@@ -188,12 +198,15 @@ fn test_manifest_success_for_text_and_json_output() {
             path_arg.as_str(),
         ];
         args.extend(extra_args.iter().copied());
-
         let (stdout, _stderr) = run_ries(&args);
         if !is_json {
             assert!(stdout.contains("Search completed") || stdout.contains("="));
         } else {
-            serde_json::from_str::<Value>(&stdout).expect("valid JSON output");
+            let result: Value = serde_json::from_str(&stdout).expect("valid JSON output");
+            assert_eq!(result["matcher"], matcher);
+            assert_eq!(result["streaming"], matcher == "streaming");
+            assert_eq!(result["lhs_value_dedup"], requested);
+            assert_eq!(result["lhs_value_dedup_applied"], applied);
         }
         assert!(
             path.is_file(),
@@ -207,6 +220,9 @@ fn test_manifest_success_for_text_and_json_output() {
             manifest["version"].as_str(),
             Some(env!("CARGO_PKG_VERSION"))
         );
+        assert_eq!(manifest["config"]["matcher"], matcher);
+        assert_eq!(manifest["config"]["lhs_value_dedup"], requested);
+        assert_eq!(manifest["config"]["lhs_value_dedup_applied"], applied);
         let _ = std::fs::remove_file(path);
     }
 }
@@ -352,7 +368,7 @@ fn test_json_deterministic_golden_output_order_for_complexity_ranking_nonclassic
             "-cospi(x) = (1/7)^2",
             "1/cospi(x) = -7^2",
             "x^2 = 2 pi",
-            "-cospi(x) = (1/8)^2",
+            "(-x)^2 = 2 pi",
         ]
     );
 }
@@ -506,12 +522,13 @@ fn test_symbol_weights_flag_changes_complexity() {
 
 #[test]
 fn test_classic_prefers_exact_match() {
-    let (stdout, _stderr) = run_ries(&["6.283185307179586", "--classic", "-n", "1", "-x"]);
-    assert!(
-        stdout.contains("x = 2 pi"),
-        "expected first classic match to prefer exact pi-based form\n{}",
-        stdout
-    );
+    let (stdout, _stderr) =
+        run_ries(&["6.283185307179586", "--classic", "-n", "1", "-x", "--json"]);
+    let parsed: Value = serde_json::from_str(&stdout).expect("valid classic JSON");
+    let best = &parsed["results"][0];
+    assert_eq!(best["exact"], true, "{best}");
+    let root = best["x_value"].as_f64().expect("reported root");
+    assert!((root - std::f64::consts::TAU).abs() <= 8.0 * f64::EPSILON * root.abs());
 }
 
 #[test]
@@ -975,6 +992,9 @@ fn test_format_zero_uses_compact_postfix_output() {
         "--classic",
         "--report",
         "false",
+        "--one-sided",
+        "-S",
+        "x25/",
         "-n",
         "1",
         "-F",
@@ -994,6 +1014,9 @@ fn test_format_three_uses_verbose_postfix_output() {
         "--classic",
         "--report",
         "false",
+        "--one-sided",
+        "-S",
+        "x25/",
         "-n",
         "1",
         "-F",
@@ -1058,10 +1081,13 @@ fn test_max_equate_value_filters_matches() {
 #[test]
 fn test_explicit_multiply_changes_infix_rendering() {
     let (stdout, _stderr) = run_ries(&[
-        "2.5066282746310002",
+        "6.283185307179586",
         "--classic",
         "--report",
         "false",
+        "--one-sided",
+        "-S",
+        "x2p*",
         "-n",
         "1",
         "--explicit-multiply",

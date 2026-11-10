@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Search now preserves structurally distinct left-hand sides by default. The
+  same search can return a different first equation, ordered result list, or
+  solved root. `--lhs-value-dedup` (Rust: `SearchConfig::lhs_value_dedup`) opts
+  materialized searches into the former value-and-derivative heuristic. It can
+  save matching work. Streaming always processes the generated LHS stream.
+- CLI JSON and run manifests record the actual matcher, the requested LHS
+  deduplication setting, and whether it was applied. The JSON `streaming` field
+  now reflects the matcher used, including automatic fallback.
+
+### Fixed
+- RHS deduplication keeps distinct floating-point values, even when close
+  values used to share a bucket. For bit-identical values, search selects a
+  representative using the requested ranking after applying RHS symbol filters.
+
 ## [2.1.0] - 2026-11-03
 
 ### Changed
