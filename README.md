@@ -311,8 +311,10 @@ When `--emit-manifest` is requested, failure to serialize or write the manifest
 prints an error and exits nonzero. A parent directory must already exist, and
 the destination must be a writable file path.
 
-Manifests summarize the supported run configuration and results; they are not a
-full source-bound replay or build attestation for every custom or profile option.
+From a repository checkout, replay a self-contained CLI run with
+`python3 tools/replay_manifest.py run.json --bin ries-rs`. The tool checks the
+recorded settings and results. Runs that rely on profile files may require
+manual reproduction.
 
 ## License
 

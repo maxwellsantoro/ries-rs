@@ -350,7 +350,7 @@ pub fn evaluate_with_workspace_and_context(
                 ) {
                     // Evaluate user function
                     let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                    let result = eval_user_function(sym, a, context, x)?;
+                    let result = eval_user_function(sym, a, context)?;
                     stack.push(result);
                 } else {
                     let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
@@ -436,7 +436,7 @@ fn evaluate_decimal_literal_expression(
                         | Symbol::UserFunction15
                 ) {
                     let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
-                    let result = eval_user_function(sym, a, context, x)?;
+                    let result = eval_user_function(sym, a, context)?;
                     stack.push(result);
                 } else {
                     let a = stack.pop().ok_or(EvalError::StackUnderflow)?;
@@ -690,7 +690,6 @@ fn eval_user_function(
     sym: Symbol,
     input: StackEntry,
     context: &EvalContext<'_>,
-    x: f64,
 ) -> Result<StackEntry, EvalError> {
     // Get the function index
     let idx = sym.user_function_index().ok_or(EvalError::Invalid)? as usize;
@@ -715,11 +714,14 @@ fn eval_user_function(
         // Execute each operation in the function body
         for op in &udf.body {
             match op {
+                // Rust callers can construct a body without the parser. A
+                // function may depend on x only through its stack argument.
+                UdfOp::Symbol(Symbol::X) => return Err(EvalError::Invalid),
                 UdfOp::Symbol(sym) => {
                     match sym.seft() {
                         Seft::A => {
                             // Constant - push onto stack
-                            let entry = eval_constant_with_user(*sym, x, context.user_constants)?;
+                            let entry = eval_constant_with_user(*sym, 0.0, context.user_constants)?;
                             stack.push(entry);
                         }
                         Seft::B => {
@@ -1057,6 +1059,9 @@ fn eval_unary(
             // Special case: W'(0) = 1 (by L'Hôpital's rule, since W(x) ≈ x near 0)
             let deriv = if a.val.abs() < 1e-10 {
                 a.deriv // W'(0) = 1
+            } else if a.val > 1.0 {
+                // Avoid overflowing x * (1 + W(x)) for large positive x.
+                (val / (1.0 + val)) / a.val * a.deriv
             } else {
                 let denom = a.val * (1.0 + val);
                 if denom.abs() > f64::MIN_POSITIVE {
@@ -1185,9 +1190,9 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             // For negative radicands, we need to check if the index is an odd integer
             // Non-integer indices of negative numbers have no real value
             if b.val < 0.0 {
-                // Check if the index is close to an integer
+                // Only exact odd integer indices define a real root here.
                 let rounded = a.val.round();
-                let is_integer = (a.val - rounded).abs() < 1e-10;
+                let is_integer = a.val == rounded;
 
                 if !is_integer {
                     // Non-integer index of negative number - no real value
@@ -1219,7 +1224,11 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
                 return Err(EvalError::Overflow);
             }
             // d(b^(1/a))/dx = b^(1/a) * (db/dx/(a*b) - ln(b)*da/dx/a²)
-            let deriv = if b.val.abs() > f64::MIN_POSITIVE {
+            let deriv = if b.val < 0.0 && a.deriv != 0.0 {
+                // The value exists at this odd index, but varying the index
+                // leaves the real domain arbitrarily close to the point.
+                f64::NAN
+            } else if b.val.abs() > f64::MIN_POSITIVE {
                 val * (b.deriv / (a.val * b.val) - b.val.abs().ln() * a.deriv / (a.val * a.val))
             } else if b.val == 0.0 && exp == 1.0 {
                 b.deriv
@@ -1325,6 +1334,21 @@ fn lambert_w(x: f64) -> Result<f64, EvalError> {
         l1 - l2 + l2 / l1
     };
 
+    // At large x, W*exp(W) and the Halley denominator can overflow even
+    // though W itself is finite. Newton iteration on W + ln(W) = ln(x)
+    // avoids all exponential and product overflow in this regime.
+    if x > 1e100 {
+        let log_x = x.ln();
+        for _ in 0..8 {
+            let correction = (w + w.ln() - log_x) / (1.0 + 1.0 / w);
+            w -= correction;
+            if correction.abs() <= f64::EPSILON * w.abs() {
+                break;
+            }
+        }
+        return Ok(w);
+    }
+
     // Halley's method iteration
     // For well-chosen initial guesses, 10-15 iterations are usually enough
     for _ in 0..25 {
@@ -1413,6 +1437,19 @@ mod tests {
         );
         assert!(result.derivative > 1e7 && result.derivative.is_finite());
         assert!(evaluate(&expr, (-1.0 / constants::E).next_down()).is_err());
+    }
+
+    #[test]
+    fn lambert_w_handles_maximum_finite_input() {
+        let result = evaluate(&Expression::parse("xW").unwrap(), f64::MAX).unwrap();
+        assert!(
+            (result.value - 703.227_033_104_770_2).abs() < 2e-13,
+            "{}",
+            result.value
+        );
+        let expected_derivative = (result.value / (1.0 + result.value)) / f64::MAX;
+        assert!(result.derivative > 0.0);
+        assert_eq!(result.derivative, expected_derivative);
     }
 
     #[test]
@@ -1571,6 +1608,17 @@ mod tests {
     }
 
     #[test]
+    fn negative_root_requires_a_fixed_exact_odd_index() {
+        let variable_index = Expression::parse("x8nv").unwrap();
+        assert!(evaluate(&variable_index, 3.00000000005).is_err());
+        let at_odd_index = evaluate(&variable_index, 3.0).unwrap();
+        assert!((at_odd_index.value + 2.0).abs() < 1e-12);
+        assert!(!at_odd_index.derivative.is_finite());
+        let fixed_index = Expression::parse("38nv").unwrap();
+        assert!((evaluate(&fixed_index, 0.0).unwrap().value + 2.0).abs() < 1e-12);
+    }
+
+    #[test]
     fn test_even_root_index_of_negative_is_rejected_past_i64() {
         // 3rd root of -8 is -2.
         let cube = Expression::parse("38nv").unwrap();
@@ -1588,8 +1636,9 @@ mod tests {
             evaluate(&indexed, -(2.0_f64.powi(62))),
             Err(EvalError::SqrtDomain)
         ));
-        let odd = evaluate(&indexed, 2.0_f64.powi(52) + 1.0).unwrap().value;
-        assert!(odd < 0.0, "odd root of a negative stays real, got {odd}");
+        let odd = evaluate(&indexed, 2.0_f64.powi(52) + 1.0).unwrap();
+        assert!(odd.value < 0.0, "odd root of a negative stays real");
+        assert!(!odd.derivative.is_finite());
         assert!(matches!(
             evaluate(&indexed, 4.0),
             Err(EvalError::SqrtDomain)

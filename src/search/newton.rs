@@ -39,13 +39,14 @@ pub(super) struct NewtonHit {
     pub real: bool,
 }
 
-/// Residual small enough, relative to the RHS, to call the iterate a root.
+/// Residual small enough, relative to the magnitude of the two sides, to call
+/// the iterate a root.
 fn newton_residual_acceptable(value: f64, rhs_value: f64) -> bool {
     let diff = (value - rhs_value).abs();
     if diff == 0.0 {
         return true;
     }
-    let scale = rhs_value.abs().max(1.0);
+    let scale = value.abs().max(rhs_value.abs());
     diff <= NEWTON_FINAL_TOLERANCE * scale
 }
 
@@ -55,9 +56,6 @@ fn newton_residual_acceptable(value: f64, rhs_value: f64) -> bool {
 /// window. `sinpi(1/x) = exp(-8)` at `1.77e-11` has sides near `3.3e-4` and a
 /// gap of about `1e-5`, which is a 3% relative miss and used to pass.
 const LOOSE_RELATIVE_CAP: f64 = 1e-5;
-/// Floor so two vanished sides do not make the cap zero. Far below any value
-/// the search treats as a real magnitude.
-const LOOSE_RESIDUAL_FLOOR: f64 = 1e-300;
 
 /// True when `x` is within a few ulps of a smooth root and the residual is
 /// small relative to both sides.
@@ -73,7 +71,7 @@ fn ulp_local_root(value: f64, derivative: f64, rhs_value: f64, x: f64) -> bool {
     if !derivative.is_finite() || derivative == 0.0 || !f.is_finite() {
         return false;
     }
-    let scale = value.abs().max(rhs_value.abs()).max(LOOSE_RESIDUAL_FLOOR);
+    let scale = value.abs().max(rhs_value.abs());
     if f.abs() > LOOSE_RELATIVE_CAP * scale {
         return false;
     }

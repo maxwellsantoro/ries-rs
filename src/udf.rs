@@ -23,7 +23,8 @@ pub struct UserFunction {
     #[allow(dead_code)]
     pub description: String,
     /// The body of the function as a postfix expression
-    /// Uses standard symbols plus special stack operations
+    /// The stack starts with the function argument. The body cannot read the
+    /// search variable directly.
     pub body: Vec<UdfOp>,
     /// Numeric type of result
     ///
@@ -109,6 +110,11 @@ fn parse_udf_formula(formula: &str) -> Result<Vec<UdfOp>, String> {
         match b as char {
             '|' => ops.push(UdfOp::Dup),
             '@' => ops.push(UdfOp::Swap),
+            'x' => {
+                return Err(
+                    "Function bodies cannot reference the search variable 'x'. Use the function argument already on the stack (duplicate it with '|').".to_string(),
+                );
+            }
             _ => {
                 // Try to parse as a standard symbol
                 if let Some(sym) = Symbol::from_byte(b) {
@@ -228,6 +234,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_rejects_global_search_variable() {
+        let error = UserFunction::parse("1:f:test:x*").unwrap_err();
+        assert!(error.contains("search variable"));
+        assert!(error.contains("function argument"));
+    }
+
+    #[test]
     fn test_parse_sinh() {
         // sinh(x) = (e^x - e^-x) / 2
         // In postfix: E|r-2/ (exp, dup, recip, subtract, 2, divide)
@@ -275,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_unknown_symbol() {
-        let result = UserFunction::parse("4:bad:bad function:xyz");
+        let result = UserFunction::parse("4:bad:bad function:y");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unknown symbol"));
     }

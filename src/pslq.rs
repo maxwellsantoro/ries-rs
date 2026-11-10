@@ -165,8 +165,9 @@ pub fn find_integer_relation(target: f64, config: &PslqConfig) -> Option<Integer
         x.push(*val);
     }
 
-    let coefficients =
-        find_two_term_relation(target, &constants, config).or_else(|| pslq(&x, config))?;
+    let coefficients = find_two_term_relation(target, &constants, config)
+        .or_else(|| find_small_three_term_relation(target, &constants, config))
+        .or_else(|| pslq(&x, config))?;
 
     // Check if the first coefficient (for target) is non-zero
     if coefficients[0] == 0 {
@@ -269,6 +270,54 @@ fn find_two_term_relation(
     }
 
     best.map(|(coeffs, _, _)| coeffs)
+}
+
+// The standard basis contains exact dependencies (for example ζ(2) = π²/6).
+// Search small three-term identities first so these dependencies do not mask a
+// simple relation involving the target. Keep this bounded independently of the cap.
+fn find_small_three_term_relation(
+    target: f64,
+    constants: &[(String, f64)],
+    config: &PslqConfig,
+) -> Option<Vec<i64>> {
+    let limit = config.max_coefficient.min(16);
+    let tolerance = config.tolerance * target.abs().max(1.0);
+    for height in 1..=limit {
+        for i in 0..constants.len() {
+            for j in i + 1..constants.len() {
+                let left = constants[i].1;
+                let right = constants[j].1;
+                if !left.is_finite() || !right.is_finite() || right == 0.0 {
+                    continue;
+                }
+                for a in 1..=height {
+                    for b in -height..=height {
+                        if b == 0 {
+                            continue;
+                        }
+                        let c_float = -((a as f64) * target + (b as f64) * left) / right;
+                        if !c_float.is_finite() || c_float.abs() > height as f64 + 0.5 {
+                            continue;
+                        }
+                        let c = c_float.round() as i64;
+                        if c == 0 || c.abs() > height {
+                            continue;
+                        }
+                        let residual =
+                            ((a as f64) * target + (b as f64) * left + (c as f64) * right).abs();
+                        if residual <= tolerance {
+                            let mut coeffs = vec![0_i128; constants.len() + 1];
+                            coeffs[0] = a as i128;
+                            coeffs[i + 1] = b as i128;
+                            coeffs[j + 1] = c as i128;
+                            return normalize_relation(coeffs, config.max_coefficient);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Core PSLQ algorithm implementation
@@ -471,7 +520,7 @@ fn detect_relation(
     let mut candidate_order: Vec<usize> = (0..y.len()).collect();
     candidate_order.sort_by(|&left, &right| y[left].abs().total_cmp(&y[right].abs()));
 
-    let residual_tolerance = tolerance * x.iter().map(|value| value.abs()).sum::<f64>().max(1.0);
+    let residual_tolerance = tolerance * x[0].abs().max(1.0);
     let mut best: Option<(Vec<i64>, f64, f64)> = None;
 
     for idx in candidate_order {
@@ -479,6 +528,10 @@ fn detect_relation(
         let Some(normalized) = normalize_relation(coeffs, max_coefficient) else {
             continue;
         };
+
+        if normalized[0] == 0 {
+            continue;
+        }
 
         let residual = x
             .iter()
@@ -767,6 +820,28 @@ mod tests {
         let rel = find_integer_relation(2.0 * PI, &config).expect("2*pi should be found");
         assert_eq!(rel.format(), "x - 2*π");
         assert!(rel.residual < EXACT_MATCH_TOLERANCE);
+    }
+
+    #[test]
+    fn detection_rejects_basis_only_and_uses_target_scale() {
+        // The second column is a basis-only relation; the first has a
+        // residual larger than target-scaled tolerance but smaller than
+        // the sum-of-basis tolerance previously used here.
+        let x = [1e-7, 1000.0, 1000.0];
+        let y = [0.0, 0.0, 1.0];
+        let b = vec![vec![1, 0, 0], vec![1, 1, 0], vec![-1, -1, 1]];
+        assert!(detect_relation(&x, &y, &b, 10, 1e-10).is_none());
+    }
+
+    #[test]
+    fn default_basis_finds_pi_plus_e_with_cli_tolerance() {
+        let config = PslqConfig {
+            tolerance: 1e-10,
+            ..PslqConfig::default()
+        };
+        let relation = find_integer_relation(5.859874482048838, &config).unwrap();
+        assert_eq!(relation.format(), "x - π - e");
+        assert!(relation.residual <= config.tolerance * 5.859874482048838);
     }
 
     #[test]

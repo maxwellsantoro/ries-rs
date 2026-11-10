@@ -4,6 +4,7 @@
 //! to JSON format.
 
 use ries_rs::expr::OutputFormat;
+use ries_rs::gen::{has_rhs_symbol_overrides, GenConfig};
 use ries_rs::pool::RankingMode;
 use ries_rs::search::{MatcherPath, SearchStats};
 use ries_rs::SymbolTable;
@@ -143,6 +144,20 @@ pub fn ranking_mode_name(mode: RankingMode) -> &'static str {
         RankingMode::Complexity => "complexity",
         RankingMode::Parity => "parity",
     }
+}
+
+/// Whether the matcher uses Rayon for generation or refinement.
+pub(crate) fn uses_parallelism(
+    matcher: Option<MatcherPath>,
+    parallel_requested: bool,
+    gen: &GenConfig,
+) -> bool {
+    cfg!(feature = "parallel")
+        && match matcher {
+            Some(MatcherPath::Parallel | MatcherPath::Turbo) => true,
+            Some(MatcherPath::Adaptive) => parallel_requested && !has_rhs_symbol_overrides(gen),
+            _ => false,
+        }
 }
 
 /// Get effective thread count based on parallel setting

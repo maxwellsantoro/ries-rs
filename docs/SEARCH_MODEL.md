@@ -44,6 +44,14 @@ Each symbol has a fixed arity category (`Seft` in code):
 
 The search model is defined over the active symbol set after applying CLI/profile filters (`-S`, `-N`, presets, user constants/functions, etc.).
 
+A user-defined function starts with its argument on the postfix stack. Use `|`
+to duplicate that argument. A function body cannot reference the search variable
+`x` directly, so a function applied to a constant stays constant during matching.
+
+For a negative radicand, the root operator requires an exactly represented odd
+integer index. If the index changes with `x` at that point, the evaluator can
+return the point value but supplies no finite derivative for refinement.
+
 ## Well-Formedness Rule (Postfix Grammar)
 
 `ries-rs` generates and evaluates only well-formed postfix expressions. Operationally:
@@ -163,12 +171,11 @@ move (`e^x = 1` at `1e-15`, Newton walks to 0; `cospi(plastic"/x) = 1` near
 `1e-11`). The absolute window `|x_value - target| < EXACT_MATCH_TOLERANCE`
 used to drop a flat identity whose sides already match (`x^(1/3) = (1+9)^2`
 at `1e6`, about 7 ulps of `1e6`, and `x^(1/3) = 4` at `64`, about 2 ulps).
-Eight ulps of `|target|` keeps both. Newton also keeps a steep root whose
-correction is at most 8 ulps and whose residual is within
-`1e-5 * max(|f(x)|, |rhs|)`, with a floor of `1e-300` so two vanished sides do
-not collapse the cap. That looser accept is not exact. `max(|rhs|, 1)` is not
-the scale: it turned every right-hand side below 1 into an absolute `1e-5`
-window.
+Eight ulps of `|target|` keeps both. Newton tests the residual against
+`1e-10 * max(|f(x)|, |rhs|)`. It also keeps a steep root whose correction is
+at most 8 ulps and whose residual is within `1e-5 * max(|f(x)|, |rhs|)`.
+Exactness is still decided at the original target. Using the actual side
+magnitudes prevents a change in equation scale from hiding a large relative miss.
 
 An LHS is skipped when its value at a non-integer target is within that same
 side tolerance of its limit at 0, the value at `0.9 x` still is, and a probe at
@@ -333,18 +340,30 @@ Both formats record `matcher`, `lhs_value_dedup` (requested), and
 requested. The top-level CLI JSON `streaming` flag reflects the actual path.
 Older manifests may omit these fields.
 
+Both formats report whether the selected matcher uses Rayon. Serial execution,
+including one-sided search, streaming fallback, and fast matches, reports one
+thread. A parallel matcher reports the size of its Rayon thread pool.
+
 New CLI manifests record the resolved settings under `config.replay`. The
 `generation` object contains the ordered symbol lists, effective weights,
 per-side limits, and definitions for custom symbols. Symbols are encoded as
 RIES byte values. The `matching` object records the pool size, filters,
 trig scale, and refinement settings. The `output` object records display and
-verification choices.
+verification choices. Self-contained CLI runs also record `cli_args` for
+`tools/replay_manifest.py`. The tool checks the resolved settings and ranked
+results against the original manifest. It uses an empty profile and refuses
+file paths from manifests. Runs that rely on profile files, implicit profile
+settings, or legacy implicit-target syntax may require manual reproduction.
+For older manifests, replay is limited to the settings that were recorded.
 
 With the `highprec` feature, `--precision` verifies the top results in text
-and JSON modes. JSON includes the verification results under
+and JSON modes. It refines the reported root locally in higher precision and
+checks the residual relative to the scale of the two sides. JSON includes the
+verification results under
 `high_precision_verification`. Each result has a `status` of `verified`,
-`failed`, or `unavailable`. An equation using an operator that the
-high-precision evaluator cannot evaluate has status `unavailable`.
+`failed`, or `unavailable`. Verification requires more than 53 bits of
+working precision. A request for 1 through 53 bits, or an equation with an
+unsupported operator, has status `unavailable`.
 
 `--match-all-digits` sets the maximum root error to half the place value of
 the last digit in the target as typed. For example, `0.3330` and `3.330e-1`
@@ -362,6 +381,7 @@ Recommended reproducibility workflow:
 
 ```bash
 ries-rs 3.141592653589793 --deterministic --json --emit-manifest run-manifest.json
+python3 tools/replay_manifest.py run-manifest.json --bin ries-rs
 ```
 
 ## Source of Truth

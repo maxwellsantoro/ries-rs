@@ -130,11 +130,13 @@ impl WasmMatch {
 #[derive(Clone, Debug, Serialize)]
 pub struct SearchOptions {
     /// Search level (0-5). Higher = more expressions searched
+    #[wasm_bindgen(skip)]
     pub level: u32,
     /// Maximum number of matches to return
+    #[wasm_bindgen(skip)]
     pub max_matches: usize,
     /// Domain preset name
-    #[wasm_bindgen(getter_with_clone)]
+    #[wasm_bindgen(skip)]
     pub preset: Option<String>,
 }
 
@@ -215,8 +217,19 @@ fn parse_search_options(options: Option<JsValue>) -> Result<SearchOptionsInput, 
     match options {
         None => Ok(SearchOptionsInput::default()),
         Some(value) if value.is_null() || value.is_undefined() => Ok(SearchOptionsInput::default()),
-        Some(value) => serde_wasm_bindgen::from_value(value)
-            .map_err(|e| JsValue::from_str(&format!("Invalid search options: {}", e))),
+        Some(value) => {
+            // SearchOptions exposes builders rather than public fields. Convert a
+            // builder instance to its plain representation before deserializing.
+            let to_json = js_sys::Reflect::get(&value, &JsValue::from_str("to_json"))?;
+            let plain = if to_json.is_function() {
+                use wasm_bindgen::JsCast;
+                to_json.unchecked_into::<js_sys::Function>().call0(&value)?
+            } else {
+                value
+            };
+            serde_wasm_bindgen::from_value(plain)
+                .map_err(|e| JsValue::from_str(&format!("Invalid search options: {}", e)))
+        }
     }
 }
 

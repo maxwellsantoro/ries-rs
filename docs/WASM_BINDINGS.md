@@ -47,7 +47,7 @@ Threaded builds also re-export `initThreadPool(n)` when built with the
 ## Quick Start
 
 ```javascript
-import init, { search, listPresets, version } from "ries-rs";
+import init, { search, SearchOptions, listPresets, version } from "ries-rs";
 
 await init();
 
@@ -62,9 +62,22 @@ const results = search(3.141592653589793, {
 
 console.log(results[0].to_string());
 console.log(results[0].to_json());
+
+// Fluent options can also be passed directly:
+const options = new SearchOptions().level(1).max_matches(4);
+console.log(search(2, options));
 ```
 
 ## `search(target, options?)`
+
+The default initializer works in browsers and Node.js ESM. Node's CommonJS
+`require("ries-rs")` loads the synchronous Node bindings directly. Node ESM
+also loads the bundled WASM synchronously at import; its default initializer and
+`initSync()` return those existing exports and ignore custom module arguments.
+
+`SearchOptions` has fluent `level`, `max_matches`, and `preset` methods;
+its `to_json()` method returns a plain options object. These methods consume
+the builder, so retain their returned value (or chain them).
 
 `target` is a required JavaScript number.
 
@@ -148,7 +161,14 @@ For browser parallelism:
 npm run build:threads
 ```
 
-This requires nightly Rust and `SharedArrayBuffer` headers:
+Then run `npm run build:web:site`, deploy its contents, and open the UI with
+`?threads=1`. The site builder copies `pkg-threads/` when it exists. The
+normal build remains the default; without cross-origin isolation the UI uses
+it even when the query parameter is present. Build both packages before
+packaging the site, and rebuild the threaded package whenever the code changes.
+
+This requires nightly Rust and `SharedArrayBuffer` headers on the page and its
+worker responses:
 
 ```text
 Cross-Origin-Opener-Policy: same-origin

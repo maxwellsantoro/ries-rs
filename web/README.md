@@ -11,6 +11,8 @@ bundle.
 - quick constant buttons for built-in constants
 - ranking-mode and match-precision controls (entered decimal digits, including trailing zeros, determine match precision)
 - cards/text result views with copy and download actions
+- LaTeX copy for rendered equations, including indexed roots, and SymPy copy
+  with an exact expression for the plastic constant
 - shareable URL parameters
 - dark/light theme toggle
 
@@ -90,9 +92,16 @@ For parallel search in browsers:
 
 ```bash
 npm run build:threads
+npm run build:web:site
 ```
 
-Requires nightly Rust and server headers for `SharedArrayBuffer`:
+Deploy `dist/web-site/` and open the page with `?threads=1`. The site
+builder copies the threaded package when present. Without cross-origin
+isolation the UI uses the regular package. Rebuild the threaded package after
+code changes.
+
+The build requires nightly Rust with `rust-src` and `wasm-pack`. Serve it
+with these headers to enable `SharedArrayBuffer`.
 
 ```
 Cross-Origin-Opener-Policy: same-origin

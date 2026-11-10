@@ -117,6 +117,9 @@ jobs:
         env:
           CI: true
 
+      - name: Test WASM package entry points
+        run: npm run test:wasm:package
+
       - name: Package WASM
         run: tar -czvf ries-rs-wasm.tar.gz pkg pkg-node pkg-bundler
 

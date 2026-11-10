@@ -4,15 +4,15 @@
 #![allow(clippy::field_reassign_with_default)]
 
 use ries_rs::eval;
-use ries_rs::expr::Expression;
+use ries_rs::expr::{EvaluatedExpr, Expression};
 use ries_rs::gen::{generate_all, GenConfig};
 use ries_rs::profile::UserConstant;
 use ries_rs::search::{
     search_adaptive, search_streaming_with_config, search_with_stats_and_config,
-    search_with_stats_and_options, ExprDatabase, SearchConfig,
+    search_with_stats_and_options, ExprDatabase, SearchConfig, SearchContext,
 };
 use ries_rs::symbol::{NumType, Symbol};
-use ries_rs::udf::UserFunction;
+use ries_rs::udf::{UdfOp, UserFunction};
 use ries_rs::SymbolTable;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -154,6 +154,86 @@ fn test_expr_database() {
     // Verify we can query the database using the range method
     let results = db.range(2.4, 2.6);
     assert!(!results.is_empty(), "Should find expressions near 2.5");
+}
+
+#[test]
+fn test_programmatic_function_cannot_hide_a_variable_in_rhs() {
+    let mut gen = fast_config();
+    gen.constants = vec![Symbol::One];
+    gen.unary_ops = vec![Symbol::UserFunction0];
+    gen.binary_ops.clear();
+    gen.user_functions.push(UserFunction {
+        weight: 1,
+        name: "f".into(),
+        description: String::new(),
+        body: vec![UdfOp::Symbol(Symbol::X), UdfOp::Symbol(Symbol::Mul)],
+        num_type: NumType::Transcendental,
+    });
+
+    let mut rhs = Expression::new();
+    rhs.push(Symbol::One);
+    rhs.push(Symbol::UserFunction0);
+    assert!(matches!(
+        eval::evaluate_with_constants_and_functions(&rhs, 2.1, &[], &gen.user_functions),
+        Err(eval::EvalError::Invalid)
+    ));
+    let generated = generate_all(&gen, 2.1);
+    assert!(generated
+        .rhs
+        .iter()
+        .all(|rhs| !rhs.expr.symbols().contains(&Symbol::UserFunction0)));
+}
+
+#[test]
+fn test_refinement_rejects_large_relative_residual_for_small_sides() {
+    let target = 1e15;
+    let config = SearchConfig {
+        target,
+        zero_value_threshold: 0.0,
+        user_constants: [
+            4e-11,
+            4.8e-11,
+            4e-11 * (0.125_f64 * std::f64::consts::PI).sin().exp(),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(slot, value)| UserConstant {
+            weight: 10,
+            name: format!("c{slot}"),
+            description: String::new(),
+            value,
+            num_type: NumType::Transcendental,
+        })
+        .collect(),
+        ..SearchConfig::default()
+    };
+    let context = SearchContext::new(&config);
+    let evaluate = |expr| {
+        let result = eval::evaluate_with_context(&expr, target, &context.eval).unwrap();
+        EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type)
+    };
+    let constant = |symbol| {
+        let mut expr = Expression::new();
+        expr.push(symbol);
+        evaluate(expr)
+    };
+    let mut lhs = Expression::parse("xSE").unwrap();
+    lhs.push(Symbol::UserConstant0);
+    lhs.push(Symbol::Mul);
+    let lhs = evaluate(lhs);
+
+    let mut db = ExprDatabase::new();
+    db.insert_rhs(vec![constant(Symbol::UserConstant1)]);
+    assert!(db
+        .find_matches_with_context(std::slice::from_ref(&lhs), &context)
+        .is_empty());
+
+    // The neighboring representable root is still accepted at the same scale.
+    let mut db = ExprDatabase::new();
+    db.insert_rhs(vec![constant(Symbol::UserConstant2)]);
+    let matches = db.find_matches_with_context(&[lhs], &context);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].x_value, target + 0.125);
 }
 
 /// Test that π can be found as an RHS
@@ -476,7 +556,6 @@ fn test_user_constant_in_search() {
 
 #[test]
 fn test_numeric_deduplication_against_atomic_equation_oracle() {
-    use ries_rs::expr::EvaluatedExpr;
     use ries_rs::pool::{compare_matches, RankingMode};
     use ries_rs::profile::Profile;
     use ries_rs::search::{search_one_sided_with_stats_and_config, Match, SearchStats};

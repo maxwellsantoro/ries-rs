@@ -64,10 +64,9 @@ pub const NEWTON_TOLERANCE: f64 = 1e-15;
 /// Value: 1e-100
 pub const DEGENERATE_DERIVATIVE: f64 = 1e-100;
 
-/// Maximum acceptable Newton-Raphson result for refinement success
+/// Tight relative residual tolerance for Newton-Raphson refinement.
 ///
-/// After Newton-Raphson refinement, if |f(x) - rhs| > this threshold,
-/// the result is considered not converged.
+/// Multiply by the larger magnitude of the two equation sides.
 ///
 /// Value: 1e-10
 pub const NEWTON_FINAL_TOLERANCE: f64 = 1e-10;

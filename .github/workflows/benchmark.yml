@@ -4,17 +4,48 @@ on:
   workflow_dispatch:
     inputs:
       baseline:
-        description: "Baseline name to compare against (leave empty to just save as 'main')"
+        description: "Criterion baseline name (empty saves 'main')"
         required: false
         default: ""
+      baseline_run_id:
+        description: "Workflow run ID containing the baseline artifact (required for comparison)"
+        required: false
+        default: ""
+      baseline_artifact:
+        description: "Artifact name from that run (required for comparison)"
+        required: false
+        default: ""
+      smoke:
+        description: "Run one quick case per suite to verify baseline handling"
+        type: boolean
+        default: false
 
 jobs:
   bench:
     name: Run benchmarks
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      # The benchmark harness unwinds. Use the same strategy for the CLI so
+      # Cargo builds a single copy of the library in target/release/deps.
+      CARGO_PROFILE_RELEASE_PANIC: unwind
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Validate selection
+        env:
+          BASELINE: ${{ inputs.baseline }}
+          RUN_ID: ${{ inputs.baseline_run_id }}
+          ARTIFACT: ${{ inputs.baseline_artifact }}
+        run: |
+          if [[ -z "$BASELINE" && -z "$RUN_ID" && -z "$ARTIFACT" ]]; then exit 0; fi
+          if [[ ! "$BASELINE" =~ ^[a-zA-Z0-9_-]+$ || ! "$RUN_ID" =~ ^[0-9]+$ || -z "$ARTIFACT" ]]; then
+            echo "Provide a valid baseline name, numeric run ID, and artifact name together." >&2
+            exit 1
+          fi
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -22,25 +53,43 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
 
-      - name: Run benchmarks (compare against baseline)
+      - name: Clear cached Criterion data
+        run: rm -rf target/criterion
+
+      - name: Restore selected Criterion artifact
+        if: inputs.baseline != ''
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.baseline_artifact }}
+          run-id: ${{ inputs.baseline_run_id }}
+          github-token: ${{ github.token }}
+          path: target/criterion
+
+      - name: Validate restored baseline
         if: inputs.baseline != ''
         env:
           BASELINE: ${{ inputs.baseline }}
-        run: |
-          cargo bench --bench evaluation -- --baseline "$BASELINE"
-          cargo bench --bench search    -- --baseline "$BASELINE"
-          cargo bench --bench generation -- --baseline "$BASELINE"
+          RUN_ID: ${{ inputs.baseline_run_id }}
+        run: ./tests/validate_benchmark_baseline.sh "$BASELINE" "$RUN_ID"
 
-      - name: Run benchmarks (save as 'main' baseline)
-        if: inputs.baseline == ''
+      - name: Run Criterion benchmarks
+        env:
+          BASELINE: ${{ inputs.baseline }}
+          SMOKE: ${{ inputs.smoke }}
         run: |
-          cargo bench --bench evaluation -- --save-baseline main
-          cargo bench --bench search    -- --save-baseline main
-          cargo bench --bench generation -- --save-baseline main
+          if [[ -n "$BASELINE" ]]; then
+            args=(--baseline "$BASELINE")
+          else
+            args=(--save-baseline main)
+          fi
+          if [[ "$SMOKE" == true ]]; then
+            args+=(--quick '^(eval_simple|search_levels/level/1|lhs_generation/lhs/tiny)$')
+          fi
+          cargo bench --locked --bench evaluation --bench search --bench generation -- "${args[@]}"
 
       - name: Upload criterion report
         uses: actions/upload-artifact@v6
         with:
-          name: criterion-report-${{ github.sha }}
+          name: criterion-report-${{ github.sha }}${{ inputs.smoke && '-smoke' || '' }}
           path: target/criterion/
           retention-days: 90

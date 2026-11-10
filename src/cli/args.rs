@@ -241,6 +241,7 @@ pub struct Args {
     /// Define a custom operation/function
     /// Format: "weight:name:description:formula"
     /// Formula uses postfix notation with | for dup and @ for swap
+    /// The function argument is already on the stack; bodies cannot access the global x.
     /// Example: --define "4:sinh:hyperbolic sine:E|r-2/"
     #[arg(long)]
     pub define: Vec<String>,
@@ -279,7 +280,7 @@ pub struct Args {
     pub newton_iterations: usize,
 
     /// Precision in bits for high-precision verification (e.g., 256 for ~77 digits)
-    /// Re-evaluates top matches at higher precision to verify/impostor detection
+    /// Verification is unavailable at 53 bits or fewer
     /// Requires --features highprec at compile time
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub precision: Option<u32>,
