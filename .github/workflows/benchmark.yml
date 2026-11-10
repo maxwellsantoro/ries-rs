@@ -4,7 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       baseline:
-        description: "Baseline name to compare against (leave empty to just save as 'main')"
+        description: "Criterion baseline name (empty saves 'main')"
+        required: false
+        default: ""
+      baseline_run_id:
+        description: "Workflow run ID containing the baseline artifact (required for comparison)"
+        required: false
+        default: ""
+      baseline_artifact:
+        description: "Artifact name from that run (required for comparison)"
         required: false
         default: ""
 
@@ -12,9 +20,24 @@ jobs:
   bench:
     name: Run benchmarks
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Validate selection
+        env:
+          BASELINE: ${{ inputs.baseline }}
+          RUN_ID: ${{ inputs.baseline_run_id }}
+          ARTIFACT: ${{ inputs.baseline_artifact }}
+        run: |
+          if [[ -z "$BASELINE" && -z "$RUN_ID" && -z "$ARTIFACT" ]]; then exit 0; fi
+          if [[ ! "$BASELINE" =~ ^[a-zA-Z0-9_-]+$ || ! "$RUN_ID" =~ ^[0-9]+$ || -z "$ARTIFACT" ]]; then
+            echo "Provide a valid baseline name, numeric run ID, and artifact name together." >&2
+            exit 1
+          fi
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -22,21 +45,40 @@ jobs:
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
 
+      - name: Clear cached Criterion data
+        run: rm -rf target/criterion
+
+      - name: Restore selected Criterion artifact
+        if: inputs.baseline != ''
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.baseline_artifact }}
+          run-id: ${{ inputs.baseline_run_id }}
+          github-token: ${{ github.token }}
+          path: target/criterion
+
+      - name: Validate restored baseline
+        if: inputs.baseline != ''
+        env:
+          BASELINE: ${{ inputs.baseline }}
+          RUN_ID: ${{ inputs.baseline_run_id }}
+        run: ./tests/validate_benchmark_baseline.sh "$BASELINE" "$RUN_ID"
+
       - name: Run benchmarks (compare against baseline)
         if: inputs.baseline != ''
         env:
           BASELINE: ${{ inputs.baseline }}
         run: |
-          cargo bench --bench evaluation -- --baseline "$BASELINE"
-          cargo bench --bench search    -- --baseline "$BASELINE"
-          cargo bench --bench generation -- --baseline "$BASELINE"
+          cargo bench --locked --bench evaluation -- --baseline "$BASELINE"
+          cargo bench --locked --bench search -- --baseline "$BASELINE"
+          cargo bench --locked --bench generation -- --baseline "$BASELINE"
 
       - name: Run benchmarks (save as 'main' baseline)
         if: inputs.baseline == ''
         run: |
-          cargo bench --bench evaluation -- --save-baseline main
-          cargo bench --bench search    -- --save-baseline main
-          cargo bench --bench generation -- --save-baseline main
+          cargo bench --locked --bench evaluation -- --save-baseline main
+          cargo bench --locked --bench search -- --save-baseline main
+          cargo bench --locked --bench generation -- --save-baseline main
 
       - name: Upload criterion report
         uses: actions/upload-artifact@v6

@@ -340,6 +340,10 @@ Both formats record `matcher`, `lhs_value_dedup` (requested), and
 requested. The top-level CLI JSON `streaming` flag reflects the actual path.
 Older manifests may omit these fields.
 
+Both formats report whether the selected matcher uses Rayon. Serial execution,
+including one-sided search, streaming fallback, and fast matches, reports one
+thread. A parallel matcher reports the size of its Rayon thread pool.
+
 New CLI manifests record the resolved settings under `config.replay`. The
 `generation` object contains the ordered symbol lists, effective weights,
 per-side limits, and definitions for custom symbols. Symbols are encoded as
@@ -357,8 +361,9 @@ and JSON modes. It refines the reported root locally in higher precision and
 checks the residual relative to the scale of the two sides. JSON includes the
 verification results under
 `high_precision_verification`. Each result has a `status` of `verified`,
-`failed`, or `unavailable`. An equation using an operator that the
-high-precision evaluator cannot evaluate has status `unavailable`.
+`failed`, or `unavailable`. Verification requires more than 53 bits of
+working precision. A request for 1 through 53 bits, or an equation with an
+unsupported operator, has status `unavailable`.
 
 `--match-all-digits` sets the maximum root error to half the place value of
 the last digit in the target as typed. For example, `0.3330` and `3.330e-1`

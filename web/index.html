@@ -581,11 +581,31 @@
       e: 'E',
       f: 'GoldenRatio',
       g: 'EulerGamma',
-      P: 'plastic',
+      P: 'CRootOf(Symbol("_ries_plastic")**3 - Symbol("_ries_plastic") - 1, 0)',
       z: 'zeta(3)',
       G: 'Catalan',
       x: 'x',
     };
+
+    // Root operands are primaries in RIES infix output; compound operands
+    // are parenthesized. Function calls (including log_(base)(arg)) are primaries.
+    function primaryEnd(expr, start) {
+      let end = start;
+      if (expr[end] === '(') {
+        return findMatchingParen(expr, end) + 1;
+      }
+      while (end < expr.length && /[a-zA-Z0-9_.]/.test(expr[end])) end++;
+      if (end === start) return start;
+      while (expr[end] === '(') end = findMatchingParen(expr, end) + 1;
+      return end;
+    }
+
+    function rootOperandLatex(operand) {
+      if (operand[0] === '(' && findMatchingParen(operand, 0) === operand.length - 1) {
+        operand = operand.slice(1, -1);
+      }
+      return toLatex(operand);
+    }
 
     function toLatex(expr) {
       const fnConversions = [
@@ -598,6 +618,16 @@
       ];
       var result = '', i = 0;
       while (i < expr.length) {
+        var indexEnd = primaryEnd(expr, i);
+        if (indexEnd > i && expr.startsWith('"/', indexEnd)) {
+          var radicandStart = indexEnd + 2;
+          var radicandEnd = primaryEnd(expr, radicandStart);
+          if (radicandEnd > radicandStart) {
+            result += '\\sqrt[{' + rootOperandLatex(expr.slice(i, indexEnd)) + '}]{' +
+              rootOperandLatex(expr.slice(radicandStart, radicandEnd)) + '}';
+            i = radicandEnd; continue;
+          }
+        }
         var matched = false;
         for (var fi = 0; fi < fnConversions.length; fi++) {
           var conv = fnConversions[fi];

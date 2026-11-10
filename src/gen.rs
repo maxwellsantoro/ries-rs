@@ -707,20 +707,21 @@ pub(crate) fn generate_all_with_rhs_policy(
     let mut lhs_raw = Vec::new();
     let mut rhs_raw = Vec::new();
 
-    if config.generate_lhs && config.generate_rhs && has_rhs_symbol_overrides(config) {
+    if config.generate_rhs && has_rhs_symbol_overrides(config) {
         // LHS pass with base symbol set.
-        let mut lhs_config = config.clone();
-        lhs_config.generate_lhs = true;
-        lhs_config.generate_rhs = false;
-        generate_recursive(
-            &lhs_config,
-            target,
-            *eval_context,
-            &mut Expression::new(),
-            0,
-            &mut lhs_raw,
-            &mut rhs_raw,
-        );
+        if config.generate_lhs {
+            let mut lhs_config = config.clone();
+            lhs_config.generate_rhs = false;
+            generate_recursive(
+                &lhs_config,
+                target,
+                *eval_context,
+                &mut Expression::new(),
+                0,
+                &mut lhs_raw,
+                &mut rhs_raw,
+            );
+        }
 
         // RHS pass with RHS-specific symbol overrides.
         let rhs_config = rhs_only_config(config);
@@ -921,19 +922,20 @@ pub fn generate_streaming_with_context(
     eval_context: &EvalContext<'_>,
     callbacks: &mut StreamingCallbacks,
 ) {
-    if config.generate_lhs && config.generate_rhs && has_rhs_symbol_overrides(config) {
-        let mut lhs_config = config.clone();
-        lhs_config.generate_lhs = true;
-        lhs_config.generate_rhs = false;
-        if !generate_recursive_streaming(
-            &lhs_config,
-            target,
-            *eval_context,
-            &mut Expression::new(),
-            0,
-            callbacks,
-        ) {
-            return;
+    if config.generate_rhs && has_rhs_symbol_overrides(config) {
+        if config.generate_lhs {
+            let mut lhs_config = config.clone();
+            lhs_config.generate_rhs = false;
+            if !generate_recursive_streaming(
+                &lhs_config,
+                target,
+                *eval_context,
+                &mut Expression::new(),
+                0,
+                callbacks,
+            ) {
+                return;
+            }
         }
 
         let rhs_config = rhs_only_config(config);
@@ -991,7 +993,8 @@ pub fn count_expressions_with_limit_and_context(
 }
 
 #[inline]
-pub(crate) fn has_rhs_symbol_overrides(config: &GenConfig) -> bool {
+/// Returns whether the RHS uses any symbol set or count overrides.
+pub fn has_rhs_symbol_overrides(config: &GenConfig) -> bool {
     config.rhs_constants.is_some()
         || config.rhs_unary_ops.is_some()
         || config.rhs_binary_ops.is_some()
@@ -1905,6 +1908,64 @@ mod tests {
             value,
             derivative,
             num_type: NumType::Transcendental,
+        }
+    }
+
+    #[test]
+    fn rhs_only_generation_honors_overrides_in_all_entry_points() {
+        let mut base = fast_test_config();
+        base.generate_lhs = false;
+        base.constants = vec![Symbol::One];
+        base.unary_ops.clear();
+        base.binary_ops = vec![Symbol::Add];
+        base.max_rhs_complexity = 50;
+        base.max_length = 5;
+
+        let mut count_limit = base.clone();
+        count_limit.rhs_symbol_max_counts = Some(HashMap::from([(Symbol::One, 2)]));
+        let mut operator_limit = base.clone();
+        operator_limit.rhs_binary_ops = Some(Vec::new());
+        let mut constant_override = base;
+        constant_override.rhs_constants = Some(vec![Symbol::Two]);
+
+        for (index, config) in [count_limit, operator_limit, constant_override]
+            .iter()
+            .enumerate()
+        {
+            let check = |expr: &EvaluatedExpr| {
+                let symbols = expr.expr.symbols();
+                match index {
+                    0 => assert!(symbols.iter().filter(|&&s| s == Symbol::One).count() <= 2),
+                    1 => assert!(!symbols.contains(&Symbol::Add)),
+                    2 => assert!(!symbols.contains(&Symbol::One)),
+                    _ => unreachable!(),
+                }
+            };
+            let batch = generate_all(config, 2.5);
+            assert!(batch.lhs.is_empty());
+            assert!(!batch.rhs.is_empty());
+            batch.rhs.iter().for_each(&check);
+            let bounded = generate_all_with_limit(config, 2.5, 10_000).unwrap();
+            assert!(bounded.lhs.is_empty());
+            bounded.rhs.iter().for_each(&check);
+            let mut streamed = 0;
+            let mut callbacks = StreamingCallbacks {
+                on_lhs: &mut |_| panic!("unexpected LHS"),
+                on_rhs: &mut |expr| {
+                    check(expr);
+                    streamed += 1;
+                    true
+                },
+            };
+            generate_streaming(config, 2.5, &mut callbacks);
+            assert!(streamed > 0);
+            #[cfg(feature = "parallel")]
+            {
+                let parallel = generate_all_parallel(config, 2.5);
+                assert!(parallel.lhs.is_empty());
+                assert!(!parallel.rhs.is_empty());
+                parallel.rhs.iter().for_each(&check);
+            }
         }
     }
 

@@ -34,6 +34,19 @@ fn test_rhs_only_symbols_filter_applies() {
 }
 
 #[test]
+fn test_one_sided_search_respects_rhs_symbols_and_operator_limits() {
+    let allowed = json_search(&["2", "-l", "0", "--one-sided", "-S", "1", "--S-RHS", "2"]);
+    assert_eq!(allowed["matcher"], "one_sided");
+    assert_eq!(allowed["results"][0]["equation"], "x = 2");
+    assert_eq!(allowed["results"][0]["exact"], true);
+
+    let unrestricted = json_search(&["3", "--one-sided", "-S", "1+"]);
+    assert_eq!(unrestricted["results"][0]["equation"], "x = 1+1+1");
+    let limited = json_search(&["3", "--one-sided", "-S", "1+", "--O-RHS", "+"]);
+    assert_eq!(limited["results_returned"], 0);
+}
+
+#[test]
 fn test_max_match_distance_applies() {
     // With calibrated weights the search can find matches with error ~1e-9.
     // Use a sub-noise threshold (1e-12) that is guaranteed to eliminate all matches.
@@ -298,6 +311,52 @@ fn test_json_output_reports_effective_parallel_flag_in_deterministic_mode() {
         parsed["search_stats"].get("peak_memory_bytes").is_some(),
         "missing peak_memory_bytes field"
     );
+}
+
+#[test]
+fn test_json_and_manifest_report_effective_matcher_parallelism() {
+    let parallel_feature = cfg!(feature = "parallel");
+    let default_matcher = if parallel_feature {
+        "parallel"
+    } else {
+        "serial"
+    };
+    let turbo_matcher = if parallel_feature { "turbo" } else { "serial" };
+    for (options, matcher, parallel) in [
+        (&[][..], default_matcher, parallel_feature),
+        (&["--turbo"][..], turbo_matcher, parallel_feature),
+        (&["--one-sided"][..], "one_sided", false),
+        (&["--max-memory", "512M"][..], "streaming", false),
+        (&["--stop-at-exact"][..], "fast_match", false),
+        (&["--adaptive"][..], "adaptive", parallel_feature),
+        (&["--adaptive", "--S-RHS", "2"][..], "adaptive", false),
+    ] {
+        let path = unique_tmp_path(matcher);
+        let output = Command::new(env!("CARGO_BIN_EXE_ries-rs"))
+            .env("RAYON_NUM_THREADS", "2")
+            .args(["2", "-l", "0", "-S", "x2", "--json", "--emit-manifest"])
+            .arg(&path)
+            .args(options)
+            .output()
+            .expect("run solver");
+        assert!(output.status.success(), "{:?}", output);
+        let json: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+        let manifest: Value = serde_json::from_slice(&std::fs::read(&path).expect("read manifest"))
+            .expect("manifest JSON");
+        std::fs::remove_file(path).expect("remove manifest");
+
+        let config = &manifest["config"];
+        let threads = if parallel { 2 } else { 1 };
+        assert_eq!(json["matcher"], matcher, "{options:?}");
+        assert_eq!(json["parallel"], parallel, "{options:?}");
+        assert_eq!(json["search_stats"]["threads"], threads, "{options:?}");
+        assert_eq!(json["matcher"], config["matcher"], "{options:?}");
+        assert_eq!(json["parallel"], config["parallel"], "{options:?}");
+        assert_eq!(
+            json["search_stats"]["threads"], config["replay"]["matching"]["threads"],
+            "{options:?}"
+        );
+    }
 }
 
 #[test]
@@ -1524,6 +1583,19 @@ fn precision_verifies_matches_without_manifest() {
     assert_eq!(row["lhs_postfix"], "xx+");
     assert_eq!(row["is_verified"], true);
     assert_eq!(row["highprec_error"], 0.0);
+}
+
+#[cfg(feature = "highprec")]
+#[test]
+fn low_precision_cannot_report_a_spurious_zero_root_error() {
+    for bits in ["1", "53"] {
+        let result = json_search(&["2.51", "-l", "0", "-S", "x25/", "--precision", bits]);
+        assert_eq!(result["results"][0]["equation"], "x = 5/2");
+        let row = &result["high_precision_verification"]["results"][0];
+        assert_eq!(row["status"], "unavailable");
+        assert_eq!(row["is_verified"], false);
+        assert!(row["highprec_error"].is_null());
+    }
 }
 
 #[test]

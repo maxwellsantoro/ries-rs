@@ -514,7 +514,7 @@ fn main() {
             ranking_mode,
             search_config.lhs_value_dedup,
             args.deterministic,
-            !args.deterministic && args.parallel,
+            cli::json_types::uses_parallelism(stats.matcher, use_parallel, &gen_config),
             args.adaptive,
             args.one_sided,
             use_report,

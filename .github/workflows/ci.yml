@@ -246,43 +246,29 @@ jobs:
       - name: Checkout ries-rs
         uses: actions/checkout@v5
 
-      - name: Detect bundled original RIES source
-        id: has-original
+      - name: Test parity and benchmark validation
+        run: python3 tests/test_ci_validation.py
+
+      - name: Download and verify original RIES source
         run: |
-          if [ -f ries-original/ries.c ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "ries-original/ries.c not found; skipping parity-check job steps."
-          fi
+          curl --fail --location --retry 3 https://www.mrob.com/pub/ries/src/ries.c.txt -o /tmp/ries-original.c
+          echo "df335f024d5ebd18134386edb7ca29ab25981c8b2e44be55b7a811d80bb57621  /tmp/ries-original.c" | sha256sum --check
 
-      - name: Setup C Compiler
-        if: steps.has-original.outputs.present == 'true'
-        run: sudo apt-get update && sudo apt-get install -y gcc
-
-      - name: Compile Original RIES
-        if: steps.has-original.outputs.present == 'true'
-        run: gcc ries-original/ries.c -lm -o ries-original/ries
+      - name: Compile original RIES
+        run: gcc -O2 /tmp/ries-original.c -lm -o /tmp/ries-original
 
       - name: Setup Rust
-        if: steps.has-original.outputs.present == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
-        if: steps.has-original.outputs.present == 'true'
         uses: Swatinem/rust-cache@v2
 
       - name: Build ries-rs
-        if: steps.has-original.outputs.present == 'true'
-        run: cargo build --release
+        run: cargo build --release --locked
 
-      - name: Run Parity Checks
-        if: steps.has-original.outputs.present == 'true'
+      - name: Run parity checks
         run: |
-          chmod +x tests/compare_with_original.sh
-          # Test Pi
-          ./tests/compare_with_original.sh 3.1415926535 2 6 ./ries-original/ries
-          # Test e
-          ./tests/compare_with_original.sh 2.7182818284 2 6 ./ries-original/ries
-          # Test Golden Ratio
-          ./tests/compare_with_original.sh 1.6180339887 2 6 ./ries-original/ries
+          ./tests/compare_with_original.sh 2 2 6 /tmp/ries-original
+          ./tests/compare_with_original.sh 3.1415926535 2 6 /tmp/ries-original
+          ./tests/compare_with_original.sh 2.7182818284 2 6 /tmp/ries-original
+          ./tests/compare_with_original.sh 1.6180339887 2 6 /tmp/ries-original

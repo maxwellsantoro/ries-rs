@@ -11,6 +11,8 @@ bundle.
 - quick constant buttons for built-in constants
 - ranking-mode and match-precision controls (entered decimal digits, including trailing zeros, determine match precision)
 - cards/text result views with copy and download actions
+- LaTeX copy for rendered equations, including indexed roots, and SymPy copy
+  with an exact expression for the plastic constant
 - shareable URL parameters
 - dark/light theme toggle
 

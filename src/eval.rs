@@ -1059,6 +1059,9 @@ fn eval_unary(
             // Special case: W'(0) = 1 (by L'Hôpital's rule, since W(x) ≈ x near 0)
             let deriv = if a.val.abs() < 1e-10 {
                 a.deriv // W'(0) = 1
+            } else if a.val > 1.0 {
+                // Avoid overflowing x * (1 + W(x)) for large positive x.
+                (val / (1.0 + val)) / a.val * a.deriv
             } else {
                 let denom = a.val * (1.0 + val);
                 if denom.abs() > f64::MIN_POSITIVE {
@@ -1331,6 +1334,21 @@ fn lambert_w(x: f64) -> Result<f64, EvalError> {
         l1 - l2 + l2 / l1
     };
 
+    // At large x, W*exp(W) and the Halley denominator can overflow even
+    // though W itself is finite. Newton iteration on W + ln(W) = ln(x)
+    // avoids all exponential and product overflow in this regime.
+    if x > 1e100 {
+        let log_x = x.ln();
+        for _ in 0..8 {
+            let correction = (w + w.ln() - log_x) / (1.0 + 1.0 / w);
+            w -= correction;
+            if correction.abs() <= f64::EPSILON * w.abs() {
+                break;
+            }
+        }
+        return Ok(w);
+    }
+
     // Halley's method iteration
     // For well-chosen initial guesses, 10-15 iterations are usually enough
     for _ in 0..25 {
@@ -1419,6 +1437,19 @@ mod tests {
         );
         assert!(result.derivative > 1e7 && result.derivative.is_finite());
         assert!(evaluate(&expr, (-1.0 / constants::E).next_down()).is_err());
+    }
+
+    #[test]
+    fn lambert_w_handles_maximum_finite_input() {
+        let result = evaluate(&Expression::parse("xW").unwrap(), f64::MAX).unwrap();
+        assert!(
+            (result.value - 703.227_033_104_770_2).abs() < 2e-13,
+            "{}",
+            result.value
+        );
+        let expected_derivative = (result.value / (1.0 + result.value)) / f64::MAX;
+        assert!(result.derivative > 0.0);
+        assert_eq!(result.derivative, expected_derivative);
     }
 
     #[test]

@@ -280,7 +280,7 @@ pub struct Args {
     pub newton_iterations: usize,
 
     /// Precision in bits for high-precision verification (e.g., 256 for ~77 digits)
-    /// Re-evaluates top matches at higher precision to verify/impostor detection
+    /// Verification is unavailable at 53 bits or fewer
     /// Requires --features highprec at compile time
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub precision: Option<u32>,

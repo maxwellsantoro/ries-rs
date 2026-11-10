@@ -261,6 +261,59 @@ test("SymPy output retains exact division, reciprocals and roots", async ({ page
   ]);
 });
 
+test("indexed roots render and copy as grouped LaTeX", async ({ page }) => {
+  await page.route("**/search-worker.js", async route => {
+    await route.fulfill({ contentType: "text/javascript", body: `
+      self.onmessage = ({ data }) => {
+        if (data.type === "init") self.postMessage({ type: "ready", version: "test" });
+        else if (data.type === "listPresets") self.postMessage({ type: "response", id: data.id, value: [] });
+        else if (data.type === "search") self.postMessage({ type: "response", id: data.id, value: [
+          { lhs: "x", rhs: '3"/2', lhs_postfix: "x", rhs_postfix: "32v" },
+          { lhs: "x", rhs: '(1+2)"/(pi+sqrt(2))', lhs_postfix: "x", rhs_postfix: "12+p2q+v" },
+          { lhs: "x", rhs: '(3"/2)"/(4"/5)', lhs_postfix: "x", rhs_postfix: "32v45vv" },
+          { lhs: "x", rhs: "1", solve_for_x: 'x = sqrt(2)+3"/phi', solve_for_x_postfix: "2q3fv+" },
+          { lhs: "x", rhs: "sinpi(2)+pi", lhs_postfix: "x", rhs_postfix: "2Sp+" },
+        ].map(match => ({ ...match, x_value: 1, error: 0, complexity: 1, constants: [] })) });
+      };` });
+  });
+  await page.goto("/web/");
+  await page.waitForSelector("#search-button:not([disabled])");
+  await page.fill("#target", "1");
+  await page.click("#search-button");
+  await expect(page.locator('[data-format="latex"]')).toHaveCount(5);
+  const values = await page.locator('[data-format="latex"]').evaluateAll(
+    buttons => buttons.map(button => (button as HTMLElement).dataset.value),
+  );
+  expect(values).toEqual([
+    String.raw`x = \sqrt[{3}]{2}`,
+    String.raw`x = \sqrt[{1+2}]{\pi+\sqrt{2}}`,
+    String.raw`x = \sqrt[{\sqrt[{3}]{2}}]{\sqrt[{4}]{5}}`,
+    String.raw`x = \sqrt{2}+\sqrt[{3}]{\varphi}`,
+    String.raw`x = \sin(\pi \cdot 2)+\pi`,
+  ]);
+  await expect(page.locator("#results-container .katex")).toHaveCount(5);
+  await expect(page.locator("#results-container .katex-error")).toHaveCount(0);
+});
+
+test("SymPy exports the plastic constant as an exact real root", async ({ page }) => {
+  await page.route("**/search-worker.js", async route => {
+    await route.fulfill({ contentType: "text/javascript", body: `
+      self.onmessage = ({ data }) => {
+        if (data.type === "init") self.postMessage({ type: "ready", version: "test" });
+        else if (data.type === "listPresets") self.postMessage({ type: "response", id: data.id, value: [] });
+        else if (data.type === "search") self.postMessage({ type: "response", id: data.id, value:
+          [{ lhs: "x", rhs: "plastic", lhs_postfix: "x", rhs_postfix: "P",
+            x_value: 1, error: 0, complexity: 1, constants: [] }] });
+      };` });
+  });
+  await page.goto("/web/");
+  await page.waitForSelector("#search-button:not([disabled])");
+  await page.fill("#target", "1");
+  await page.click("#search-button");
+  await expect(page.locator('[data-format="sympy"]')).toHaveAttribute("data-value",
+    'Eq(x, CRootOf(Symbol("_ries_plastic")**3 - Symbol("_ries_plastic") - 1, 0))');
+});
+
 test("threaded selection reaches the worker only when isolated", async ({ page }) => {
   await page.route("**/search-worker.js", async route => {
     await route.fulfill({ contentType: "text/javascript", body: `

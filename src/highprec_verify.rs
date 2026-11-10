@@ -95,7 +95,7 @@ pub fn verify_matches_highprec_with_trig_scale(
     user_constants: &[crate::profile::UserConstant],
     trig_argument_scale: f64,
 ) -> Vec<VerificationResult> {
-    if !(rug::float::prec_min()..=rug::float::prec_max()).contains(&precision_bits) {
+    if precision_bits <= f64::MANTISSA_DIGITS || precision_bits > rug::float::prec_max() {
         return matches
             .into_iter()
             .map(VerificationResult::unavailable)
@@ -567,6 +567,34 @@ mod tests {
 
         let report = format_verification_report(&[verified], 10);
         assert!(report.contains("Verified at high precision"));
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
+    fn precision_no_greater_than_f64_is_unavailable() {
+        let make = |s| {
+            crate::expr::EvaluatedExpr::new(
+                crate::expr::Expression::parse(s).unwrap(),
+                0.0,
+                0.0,
+                crate::symbol::NumType::Transcendental,
+            )
+        };
+        let candidate = crate::search::Match {
+            lhs: make("x"),
+            rhs: make("52/"),
+            x_value: 2.5,
+            error: 0.01,
+            complexity: 1,
+            exact: false,
+        };
+        for bits in [1, 52, 53] {
+            let results = verify_matches_highprec(vec![candidate.clone()], 2.51, bits, &[]);
+            assert_eq!(results[0].status(), VerificationStatus::Unavailable);
+            assert!(!results[0].is_verified);
+        }
+        let results = verify_matches_highprec(vec![candidate], 2.51, 54, &[]);
+        assert_ne!(results[0].status(), VerificationStatus::Unavailable);
     }
 
     #[cfg(feature = "highprec")]

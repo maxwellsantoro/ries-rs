@@ -6,14 +6,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use ries_rs::gen::GenConfig;
-use ries_rs::search::{MatcherPath, SearchConfig, SearchStats};
+use ries_rs::search::{SearchConfig, SearchStats};
 use ries_rs::udf::UdfOp;
 use ries_rs::{
     Match, MatchInfo, MatchMetrics, RunManifest, SearchConfigInfo, Symbol, UserConstantInfo,
 };
 use serde_json::{json, Value};
 
-use super::json_types::{effective_thread_count, ranking_mode_name};
+use super::json_types::{effective_thread_count, ranking_mode_name, uses_parallelism};
 use super::Args;
 
 /// Build a manifest from the effective settings and the ranked results.
@@ -27,12 +27,7 @@ pub fn build_manifest(
     matches: &[Match],
 ) -> RunManifest {
     let matcher = stats.matcher;
-    let parallel = cfg!(feature = "parallel")
-        && match matcher {
-            Some(MatcherPath::Parallel | MatcherPath::Turbo) => true,
-            Some(MatcherPath::Adaptive) => args.parallel && !args.deterministic,
-            _ => false,
-        };
+    let parallel = uses_parallelism(matcher, args.parallel && !args.deterministic, gen);
     let config = SearchConfigInfo {
         target: search.target,
         level,
