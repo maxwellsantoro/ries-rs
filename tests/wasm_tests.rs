@@ -130,3 +130,38 @@ fn test_wasm_search_exact_value() {
     let has_small_error = result.iter().any(|m| m.error.abs() < 1e-10);
     assert!(has_small_error, "should find very close matches for pi");
 }
+
+#[wasm_bindgen_test]
+fn test_target_text_is_validated() {
+    let options = search_options(0, 1);
+    for text in ["1garbage", "0x10", "NaN", "2"] {
+        Reflect::set(
+            &options,
+            &JsValue::from_str("targetText"),
+            &JsValue::from_str(text),
+        )
+        .unwrap();
+        assert!(
+            search(1.0, Some(options.clone())).is_err(),
+            "accepted {text}"
+        );
+    }
+}
+
+#[wasm_bindgen_test]
+fn test_preset_constants_are_named() {
+    let options = search_options(0, 16);
+    Reflect::set(
+        &options,
+        &JsValue::from_str("preset"),
+        &JsValue::from_str("analytic-nt"),
+    )
+    .unwrap();
+    let results = search(1.64493406685, Some(options)).unwrap();
+    assert!(results
+        .iter()
+        .any(|m| m.lhs.contains("z2") || m.rhs.contains("z2")));
+    assert!(results
+        .iter()
+        .all(|m| !m.lhs.contains("u0") && !m.rhs.contains("u0")));
+}

@@ -69,6 +69,8 @@ pub struct WasmMatch {
     pub operator_count: usize,
     /// Maximum tree depth of equation
     pub tree_depth: usize,
+    /// Preset constant names and values, in postfix slot order.
+    constants: Vec<(String, f64)>,
     /// Whether this is an exact match
     pub is_exact: bool,
 }
@@ -94,6 +96,7 @@ impl From<&crate::MatchSummary> for WasmMatch {
             complexity: summary.complexity,
             operator_count: summary.operator_count,
             tree_depth: summary.tree_depth,
+            constants: summary.constants.clone(),
             is_exact: summary.is_exact,
         }
     }
@@ -101,6 +104,12 @@ impl From<&crate::MatchSummary> for WasmMatch {
 
 #[wasm_bindgen]
 impl WasmMatch {
+    /// Preset constant names and values in postfix slot order.
+    #[wasm_bindgen(getter)]
+    pub fn constants(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.constants).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Get a string representation
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
@@ -182,6 +191,8 @@ struct SearchOptionsInput {
     ranking_mode: Option<String>,
     #[serde(rename = "matchAllDigits", alias = "match_all_digits")]
     match_all_digits: bool,
+    #[serde(rename = "targetText", alias = "target_text")]
+    target_text: Option<String>,
     #[serde(rename = "usePslq", alias = "use_pslq")]
     use_pslq: bool,
 }
@@ -194,6 +205,7 @@ impl Default for SearchOptionsInput {
             preset: None,
             ranking_mode: None,
             match_all_digits: false,
+            target_text: None,
             use_pslq: false,
         }
     }
@@ -219,19 +231,18 @@ fn parse_ranking_mode(value: Option<&str>) -> Result<crate::pool::RankingMode, J
     }
 }
 
-fn compute_significant_digits_tolerance(target: f64) -> f64 {
-    if target == 0.0 {
-        return 1e-15;
+fn validate_target_text(text: &str, target: f64) -> Result<(), JsValue> {
+    if text
+        .parse::<f64>()
+        .ok()
+        .filter(|n| n.is_finite() && *n == target)
+        .is_none()
+    {
+        return Err(JsValue::from_str(
+            "targetText must be a finite decimal literal equal to target",
+        ));
     }
-
-    let target_str = format!("{:.15}", target);
-    let trimmed = target_str.trim_end_matches('0');
-    let digits_after_decimal = trimmed
-        .find('.')
-        .map(|pos| trimmed.len().saturating_sub(pos + 1))
-        .unwrap_or(0);
-
-    (0.5 * 10_f64.powi(-(digits_after_decimal as i32))).max(1e-15)
+    Ok(())
 }
 
 /// Build a GenConfig from simple parameters
@@ -265,6 +276,9 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
     }
 
     let opts = parse_search_options(options)?;
+    if let Some(text) = opts.target_text.as_deref() {
+        validate_target_text(text, target)?;
+    }
     if opts.use_pslq {
         return Err(JsValue::from_str(
             "usePslq is not supported in the WebAssembly build yet.",
@@ -309,7 +323,7 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
 
     // Build search config
     let max_error = if opts.match_all_digits {
-        compute_significant_digits_tolerance(target)
+        crate::search::significant_digits_tolerance(target, opts.target_text.as_deref())
     } else {
         (target.abs() * 0.01).max(1e-12)
     };
@@ -351,11 +365,19 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
         }
     };
 
+    let eval_context = search_config.context().eval;
+
     // Convert to WasmMatch and limit to max_matches
     Ok(matches
         .into_iter()
         .take(opts.max_matches)
-        .map(WasmMatch::from)
+        .map(|m| {
+            WasmMatch::from(&crate::MatchSummary::from_match_with_context(
+                &m,
+                &eval_context,
+                &gen_config.symbol_table,
+            ))
+        })
         .collect())
 }
 

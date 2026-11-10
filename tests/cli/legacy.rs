@@ -205,3 +205,31 @@ fn test_e_bare_enable_all() {
         stdout
     );
 }
+
+#[test]
+fn rejects_invalid_search_levels() {
+    for level in ["typo", "NaN", "inf", "101"] {
+        let output = run_ries_raw(&["2", "--level", level, "--classic"]);
+        assert!(!output.status.success(), "accepted level {level}");
+    }
+}
+
+#[test]
+fn rhs_enable_restores_globally_excluded_pi() {
+    let (stdout, _) = run_ries(&[
+        "3.141592653589793",
+        "--deterministic",
+        "--report",
+        "false",
+        "-l",
+        "0",
+        "-N",
+        "p",
+        "--E-RHS",
+        "p",
+        "--max-matches",
+        "5",
+        "--json",
+    ]);
+    assert!(stdout.contains("\"rhs_postfix\": \"p\""), "{stdout}");
+}

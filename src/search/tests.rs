@@ -2006,9 +2006,11 @@ fn test_small_rhs_loose_roots_are_not_exact() {
         ),
     ] {
         let list = equation_list(&matches);
+        // With reduction before multiplying by pi, the old near-root no
+        // longer passes the relative residual cap at the landed float.
         assert!(
-            has_equation(&matches, "xrS", "er"),
-            "{label} dropped sinpi(1/x) = 1/e (relative gap about 4.9e-6 still passes the loose cap): {list}"
+            !has_equation(&matches, "xrS", "er"),
+            "{label} kept sinpi(1/x) = 1/e despite the corrected residual: {list}"
         );
         assert!(
             !is_exact_equation(&matches, "xrS", "er"),
@@ -2175,9 +2177,11 @@ fn test_exact_uses_sides_at_the_typed_target() {
     );
     for (label, matches) in batch_and_streaming(smaller, &sinpi_one, 8) {
         let list = equation_list(&matches);
+        // The correctly reduced argument no longer produces a qualifying
+        // nearby root for this fixture; it must not be labeled exact either.
         assert!(
-            has_equation(&matches, "xrS", "1"),
-            "{label} lost sinpi(1/x) = 1: {list}"
+            !has_equation(&matches, "xrS", "1"),
+            "{label} kept sinpi(1/x) = 1 despite the corrected residual: {list}"
         );
         assert!(
             !is_exact_equation(&matches, "xrS", "1"),

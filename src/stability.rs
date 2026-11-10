@@ -208,6 +208,20 @@ impl StabilityAnalyzer {
                         .partial_cmp(&b.match_.error.abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
+                .then_with(|| {
+                    a.match_
+                        .lhs
+                        .expr
+                        .to_postfix()
+                        .cmp(&b.match_.lhs.expr.to_postfix())
+                })
+                .then_with(|| {
+                    a.match_
+                        .rhs
+                        .expr
+                        .to_postfix()
+                        .cmp(&b.match_.rhs.expr.to_postfix())
+                })
         });
 
         results
@@ -225,6 +239,15 @@ impl StabilityAnalyzer {
 
 /// Format stability results for display
 pub fn format_stability_report(results: &[StabilityResult], max_display: usize) -> String {
+    format_stability_report_with(results, max_display, |expr| expr.to_infix())
+}
+
+/// Format stability results using the same equation rendering as the search.
+pub fn format_stability_report_with(
+    results: &[StabilityResult],
+    max_display: usize,
+    render: impl Fn(&crate::expr::Expression) -> String,
+) -> String {
     let mut output = String::new();
 
     // Group by stability class
@@ -249,8 +272,8 @@ pub fn format_stability_report(results: &[StabilityResult], max_display: usize) 
         for r in &stable {
             output.push_str(&format!(
                 "  {:<24} = {:<24}  [{}/{} levels] {{{}}}\n",
-                r.match_.lhs.expr.to_infix(),
-                r.match_.rhs.expr.to_infix(),
+                render(&r.match_.lhs.expr),
+                render(&r.match_.rhs.expr),
                 r.appearance_count,
                 r.total_levels,
                 r.match_.complexity
@@ -263,8 +286,8 @@ pub fn format_stability_report(results: &[StabilityResult], max_display: usize) 
         for r in &moderate {
             output.push_str(&format!(
                 "  {:<24} = {:<24}  [{}/{} levels] {{{}}}\n",
-                r.match_.lhs.expr.to_infix(),
-                r.match_.rhs.expr.to_infix(),
+                render(&r.match_.lhs.expr),
+                render(&r.match_.rhs.expr),
                 r.appearance_count,
                 r.total_levels,
                 r.match_.complexity
@@ -277,8 +300,8 @@ pub fn format_stability_report(results: &[StabilityResult], max_display: usize) 
         for r in &fragile {
             output.push_str(&format!(
                 "  {:<24} = {:<24}  [{}/{} levels] {{{}}}\n",
-                r.match_.lhs.expr.to_infix(),
-                r.match_.rhs.expr.to_infix(),
+                render(&r.match_.lhs.expr),
+                render(&r.match_.rhs.expr),
                 r.appearance_count,
                 r.total_levels,
                 r.match_.complexity
@@ -342,6 +365,32 @@ mod tests {
         assert!(fragile.is_some());
         assert_eq!(fragile.unwrap().class, StabilityClass::Fragile);
         assert_eq!(fragile.unwrap().appearance_count, 1);
+    }
+
+    #[test]
+    fn equal_scores_and_errors_have_stable_expression_order() {
+        let expected = vec![
+            ("2x*".to_string(), "5".to_string()),
+            ("x".to_string(), "5".to_string()),
+        ];
+        for _ in 0..20 {
+            let mut analyzer = StabilityAnalyzer::new(StabilityConfig::default());
+            analyzer.add_level(vec![
+                make_test_match("x", "5", 0.01),
+                make_test_match("2x*", "5", 0.01),
+            ]);
+            let actual: Vec<_> = analyzer
+                .analyze()
+                .iter()
+                .map(|r| {
+                    (
+                        r.match_.lhs.expr.to_postfix(),
+                        r.match_.rhs.expr.to_postfix(),
+                    )
+                })
+                .collect();
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]

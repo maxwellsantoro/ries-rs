@@ -47,9 +47,8 @@ pub use json_types::{build_json_output, format_bytes_binary, peak_memory_bytes};
 pub use manifest::build_manifest;
 
 pub use output::{
-    compute_significant_digits_tolerance, format_value, parse_display_format, print_footer,
-    print_header, print_match_absolute, print_match_relative, print_show_work_details,
-    DisplayFormat,
+    format_value, parse_display_format, print_footer, print_header, print_match_absolute,
+    print_match_relative, print_show_work_details, DisplayFormat,
 };
 
 pub use runtime::{cli_level_to_complexity, handle_special_modes, load_runtime_profile, CliExit};

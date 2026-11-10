@@ -412,6 +412,8 @@ pub struct SearchStats {
     pub pool_final_size: usize,
     /// Final best error in pool
     pub pool_best_error: f64,
+    /// Final adaptive error threshold used to size candidate windows.
+    pub pool_error_threshold: Option<f64>,
     /// Whether search exited early
     pub early_exit: bool,
 }
@@ -419,6 +421,16 @@ pub struct SearchStats {
 impl SearchStats {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn record_pool(&mut self, pool: &TopKPool) {
+        self.pool_insertions = pool.stats.insertions;
+        self.pool_rejections_error = pool.stats.rejections_error;
+        self.pool_rejections_dedupe = pool.stats.rejections_dedupe;
+        self.pool_evictions = pool.stats.evictions;
+        self.pool_final_size = pool.len();
+        self.pool_best_error = pool.minimum_error().unwrap_or(f64::INFINITY);
+        self.pool_error_threshold = Some(pool.best_error);
     }
 
     #[inline]
@@ -556,7 +568,9 @@ impl SearchStats {
             100.0 * self.pool_acceptance_rate()
         );
         println!("    Final size:      {:>10}", self.pool_final_size);
-        println!("    Best error:      {:>14.2e}", self.pool_best_error);
+        if self.pool_final_size != 0 {
+            println!("    Best error:      {:>14.2e}", self.pool_best_error);
+        }
     }
 }
 
@@ -609,6 +623,41 @@ pub fn level_to_complexity(level: u32) -> (u32, u32) {
     // an out-of-range level without validation.
     let budget = BASE.saturating_add(LEVEL_STEP.saturating_mul(level));
     (budget, budget)
+}
+
+/// Half the place value of the last decimal digit in a target.
+///
+/// Pass a validated original decimal literal to retain trailing zeros and
+/// scientific exponents. Numeric callers use the shortest round-trip decimal spelling.
+/// Numeric zero without a spelling uses a tolerance of `1e-15`.
+pub fn significant_digits_tolerance(target: f64, target_text: Option<&str>) -> f64 {
+    let numeric_text;
+    let text = match target_text {
+        Some(text) => text.trim(),
+        None if target == 0.0 => return 1e-15,
+        None => {
+            numeric_text = target.to_string();
+            &numeric_text
+        }
+    };
+    let (mantissa, exponent) = text.split_once(['e', 'E']).unwrap_or((text, "0"));
+    let exponent = exponent.parse::<i64>().unwrap_or_else(|_| {
+        if exponent.starts_with('-') {
+            i64::MIN
+        } else {
+            i64::MAX
+        }
+    });
+    let decimal_places = mantissa
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len() as i64);
+    let half_place_exponent = exponent.saturating_sub(decimal_places).saturating_sub(1);
+    // Parse directly so tolerances in the subnormal range retain their scale.
+    // A value below that range rounds to zero, requiring an exact f64 root.
+    format!("5e{half_place_exponent}")
+        .parse::<f64>()
+        .unwrap_or(0.0)
+        .min(f64::MAX)
 }
 
 /// Whether an LHS value should be dropped before matching.
@@ -1692,12 +1741,7 @@ pub fn search_streaming_with_config(
         );
     }
 
-    stats.pool_insertions = pool.stats.insertions;
-    stats.pool_rejections_error = pool.stats.rejections_error;
-    stats.pool_rejections_dedupe = pool.stats.rejections_dedupe;
-    stats.pool_evictions = pool.stats.evictions;
-    stats.pool_final_size = pool.len();
-    stats.pool_best_error = pool.best_error;
+    stats.record_pool(&pool);
     stats.search_time = search_start.elapsed();
     stats.early_exit = false;
 
@@ -1812,12 +1856,7 @@ pub fn search_one_sided_with_stats_and_config(
         }
     }
 
-    stats.pool_insertions = pool.stats.insertions;
-    stats.pool_rejections_error = pool.stats.rejections_error;
-    stats.pool_rejections_dedupe = pool.stats.rejections_dedupe;
-    stats.pool_evictions = pool.stats.evictions;
-    stats.pool_final_size = pool.len();
-    stats.pool_best_error = pool.best_error;
+    stats.record_pool(&pool);
     stats.gen_time = gen_time;
     stats.search_time = search_start.elapsed();
     stats.early_exit = early_exit;

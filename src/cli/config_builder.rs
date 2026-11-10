@@ -84,21 +84,38 @@ pub fn build_gen_config(
         config.rhs_symbol_max_counts = Some(parse_symbol_count_limits(spec_rhs)?);
     }
 
-    if allowed_rhs.is_some() || excluded_rhs.is_some() || op_limits_rhs.is_some() {
+    if allowed_rhs.is_some()
+        || excluded_rhs.is_some()
+        || enable_rhs.is_some()
+        || op_limits_rhs.is_some()
+    {
+        let restore_rhs = |symbols: &[Symbol], filtered: &[Symbol]| {
+            let mut result = filtered.to_vec();
+            if let Some(enabled) = enable_rhs {
+                for &symbol in symbols {
+                    if (enabled == "all" || enabled.bytes().any(|b| b == symbol as u8))
+                        && !result.contains(&symbol)
+                    {
+                        result.push(symbol);
+                    }
+                }
+            }
+            result
+        };
         let constants_base = if allowed_rhs.is_some() {
             all_constants.clone()
         } else {
-            config.constants.clone()
+            restore_rhs(&all_constants, &config.constants)
         };
         let unary_base = if allowed_rhs.is_some() {
             all_unary.clone()
         } else {
-            config.unary_ops.clone()
+            restore_rhs(&all_unary, &config.unary_ops)
         };
         let binary_base = if allowed_rhs.is_some() {
             all_binary.clone()
         } else {
-            config.binary_ops.clone()
+            restore_rhs(&all_binary, &config.binary_ops)
         };
 
         config.rhs_constants = Some(filter_symbols(
@@ -153,6 +170,28 @@ fn filter_symbols(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rhs_enable_restores_globally_excluded_symbol() {
+        let config = build_gen_config(
+            35,
+            35,
+            NumType::Transcendental,
+            Some("p"),
+            None,
+            None,
+            None,
+            Some("p"),
+            None,
+            None,
+            None,
+            &Profile::new(),
+            false,
+        )
+        .unwrap();
+        assert!(!config.constants.contains(&Symbol::Pi));
+        assert!(config.rhs_constants.unwrap().contains(&Symbol::Pi));
+    }
 
     #[test]
     fn test_build_gen_config_defaults() {

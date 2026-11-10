@@ -77,6 +77,7 @@ Supported `options` fields:
 | `preset` | `string \| null` | `null` | validated against `listPresets()` |
 | `rankingMode` | `"complexity" \| "parity"` | `"complexity"` | controls the tie-break ranking mode |
 | `matchAllDigits` | `boolean` | `false` | uses target-significant-digit tolerance instead of the default relative tolerance |
+| `targetText` | `string` | omitted | decimal spelling of `target`, including trailing zeros or an exponent; must parse to the same finite number |
 | `usePslq` | `boolean` | `false` | accepted for compatibility, but returns an error because PSLQ is not available in the WASM build |
 
 Notes:
@@ -85,6 +86,7 @@ Notes:
   not the CLI's `-l/--level` mapping (`35 + 10*L`).
 - Non-threaded WASM builds search sequentially; threaded builds can use the
   parallel engine after `initThreadPool(...)`.
+- With `matchAllDigits`, `targetText` preserves entered precision; without it the shortest round-trip number spelling determines tolerance.
 - `target` must be finite; `NaN` and `Infinity` return an error.
 
 ### API vs CLI level scale
@@ -120,6 +122,7 @@ See `docs/SEARCH_MODEL.md` for the full mapping rationale.
 | `complexity` | `number` | total complexity score |
 | `operator_count` | `number` | total operator count across both sides |
 | `tree_depth` | `number` | maximum tree depth across both sides |
+| `constants` | `Array<[string, number]>` | preset constant names and values in postfix slot order (character codes 128 onward) |
 | `is_exact` | `boolean` | whether the match is within exact-match tolerance |
 
 Methods:

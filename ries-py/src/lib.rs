@@ -106,6 +106,9 @@ pub struct PyMatch {
     /// Maximum tree depth of equation
     #[pyo3(get)]
     pub tree_depth: usize,
+    /// Preset constant names and values in postfix slot order.
+    #[pyo3(get)]
+    pub constants: Vec<(String, f64)>,
     /// Whether this is an exact match
     #[pyo3(get)]
     pub is_exact: bool,
@@ -142,6 +145,7 @@ impl PyMatch {
         dict.set_item("complexity", self.complexity)?;
         dict.set_item("operator_count", self.operator_count)?;
         dict.set_item("tree_depth", self.tree_depth)?;
+        dict.set_item("constants", &self.constants)?;
         dict.set_item("is_exact", self.is_exact)?;
         Ok(dict.unbind())
     }
@@ -168,6 +172,7 @@ impl From<&ries_core::MatchSummary> for PyMatch {
             complexity: summary.complexity,
             operator_count: summary.operator_count,
             tree_depth: summary.tree_depth,
+            constants: summary.constants.clone(),
             is_exact: summary.is_exact,
         }
     }
@@ -313,11 +318,19 @@ fn search(
         }
     });
 
+    let eval_context = search_config.context().eval;
+
     // Convert to PyMatch and limit to max_matches
     let py_matches: Vec<PyMatch> = matches
         .into_iter()
         .take(max_matches)
-        .map(PyMatch::from)
+        .map(|m| {
+            PyMatch::from(&ries_core::MatchSummary::from_match_with_context(
+                &m,
+                &eval_context,
+                &gen_config.symbol_table,
+            ))
+        })
         .collect();
 
     Ok(py_matches)

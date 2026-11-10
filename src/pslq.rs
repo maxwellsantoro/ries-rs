@@ -143,6 +143,13 @@ impl Default for PslqConfig {
 ///
 /// An optional integer relation if one is found
 pub fn find_integer_relation(target: f64, config: &PslqConfig) -> Option<IntegerRelation> {
+    if !target.is_finite()
+        || !config.tolerance.is_finite()
+        || config.tolerance < 0.0
+        || config.max_coefficient <= 0
+    {
+        return None;
+    }
     // Get the basis constants
     let constants = if config.extended_constants {
         extended_constants()
@@ -174,7 +181,7 @@ pub fn find_integer_relation(target: f64, config: &PslqConfig) -> Option<Integer
     residual = residual.abs();
 
     // Check if residual is small enough
-    if residual > config.tolerance * target.abs().max(1.0) {
+    if !residual.is_finite() || residual > config.tolerance * target.abs().max(1.0) {
         return None;
     }
 
@@ -199,7 +206,7 @@ fn find_two_term_relation(
 ) -> Option<Vec<i64>> {
     let residual_tolerance = config.tolerance * target.abs().max(1.0);
     let relation_len = constants.len() + 1;
-    let mut best: Option<(Vec<i64>, i64, f64)> = None;
+    let mut best: Option<(Vec<i64>, u64, f64)> = None;
 
     for (idx, (_, value)) in constants.iter().enumerate() {
         let value = *value;
@@ -225,7 +232,10 @@ fn find_two_term_relation(
         else {
             continue;
         };
-        if den == 0 || num.abs() > config.max_coefficient || den.abs() > config.max_coefficient {
+        if den == 0
+            || num.unsigned_abs() > config.max_coefficient as u64
+            || den.unsigned_abs() > config.max_coefficient as u64
+        {
             continue;
         }
 
@@ -243,9 +253,9 @@ fn find_two_term_relation(
 
         let height = normalized
             .iter()
-            .map(|coeff| coeff.abs())
+            .map(|coeff| coeff.unsigned_abs())
             .max()
-            .unwrap_or(config.max_coefficient);
+            .unwrap_or(config.max_coefficient as u64);
         match &best {
             None => best = Some((normalized, height, residual)),
             Some((_, best_height, best_residual)) => {
@@ -316,7 +326,7 @@ fn pslq(x: &[f64], config: &PslqConfig) -> Option<Vec<i64>> {
         b[i][i] = 1;
     }
 
-    reduce_h(&mut y, &mut h, &mut a, &mut b, 1, n - 2);
+    reduce_h(&mut y, &mut h, &mut a, &mut b, 1, n - 2)?;
 
     // Main iteration loop
     for _iteration in 0..config.max_iterations {
@@ -353,7 +363,7 @@ fn pslq(x: &[f64], config: &PslqConfig) -> Option<Vec<i64>> {
             &mut b,
             max_idx + 1,
             (max_idx + 1).min(n - 2),
-        );
+        )?;
 
         if let Some(coeffs) = detect_relation(x, &y, &b, config.max_coefficient, config.tolerance) {
             return Some(coeffs);
@@ -374,7 +384,7 @@ fn pslq(x: &[f64], config: &PslqConfig) -> Option<Vec<i64>> {
 
         // IEEE-754 doubles only preserve 53 bits of mantissa. If A grows beyond that,
         // the floating-point y/H state is no longer trustworthy for exact detection.
-        if max_abs_matrix_entry(&a) > (1_i128 << 52) {
+        if max_abs_matrix_entry(&a) > (1_u128 << 52) {
             break;
         }
     }
@@ -389,9 +399,9 @@ fn reduce_h(
     b: &mut [Vec<i128>],
     row_start: usize,
     max_active_col: usize,
-) {
+) -> Option<()> {
     if h.is_empty() || h[0].is_empty() || row_start >= h.len() {
-        return;
+        return Some(());
     }
 
     let max_col_count = h[0].len();
@@ -417,11 +427,12 @@ fn reduce_h(
 
             let t_int = t as i128;
             for k in 0..a[i].len() {
-                a[i][k] -= t_int * a[j][k];
-                b[k][j] += t_int * b[k][i];
+                a[i][k] = a[i][k].checked_sub(t_int.checked_mul(a[j][k])?)?;
+                b[k][j] = b[k][j].checked_add(t_int.checked_mul(b[k][i])?)?;
             }
         }
     }
+    Some(())
 }
 
 fn remove_corner(h: &mut [Vec<f64>], pivot_row: usize) {
@@ -502,7 +513,7 @@ fn normalize_relation(coeffs: Vec<i128>, max_coefficient: i64) -> Option<Vec<i64
 
     let mut gcd = 0_i128;
     for &coeff in &coeffs {
-        gcd = gcd_i128(gcd, coeff.abs());
+        gcd = gcd_i128(gcd, coeff.checked_abs()?);
     }
 
     let mut normalized = if gcd > 1 {
@@ -517,13 +528,16 @@ fn normalize_relation(coeffs: Vec<i128>, max_coefficient: i64) -> Option<Vec<i64
     if let Some(&first_non_zero) = normalized.iter().find(|&&coeff| coeff != 0) {
         if first_non_zero < 0 {
             for coeff in &mut normalized {
-                *coeff = -*coeff;
+                *coeff = coeff.checked_neg()?;
             }
         }
     }
 
     let cap = i128::from(max_coefficient);
-    if normalized.iter().any(|&coeff| coeff.abs() > cap) {
+    if normalized
+        .iter()
+        .any(|&coeff| coeff.unsigned_abs() > cap as u128)
+    {
         return None;
     }
 
@@ -549,11 +563,11 @@ fn gcd_i128(mut left: i128, mut right: i128) -> i128 {
     left.abs()
 }
 
-fn max_abs_matrix_entry(matrix: &[Vec<i128>]) -> i128 {
+fn max_abs_matrix_entry(matrix: &[Vec<i128>]) -> u128 {
     matrix
         .iter()
         .flat_map(|row| row.iter())
-        .map(|value| value.abs())
+        .map(|value| value.unsigned_abs())
         .max()
         .unwrap_or(0)
 }
@@ -562,6 +576,13 @@ fn max_abs_matrix_entry(matrix: &[Vec<i128>]) -> i128 {
 ///
 /// This is simpler than PSLQ but only finds rational relations (a/b).
 pub fn find_rational_approximation(x: f64, max_denominator: i64) -> Option<(i64, i64)> {
+    if !x.is_finite()
+        || max_denominator <= 0
+        || x.floor() < i64::MIN as f64
+        || x.floor() >= -(i64::MIN as f64)
+    {
+        return None;
+    }
     let a0 = x.floor() as i64;
     let mut remainder = x - a0 as f64;
 
@@ -584,8 +605,12 @@ pub fn find_rational_approximation(x: f64, max_denominator: i64) -> Option<(i64,
         let a = reciprocal.floor() as i64;
         remainder = reciprocal - a as f64;
 
-        let h_next = a * h_curr + h_prev;
-        let k_next = a * k_curr + k_prev;
+        let Some(h_next) = a.checked_mul(h_curr).and_then(|v| v.checked_add(h_prev)) else {
+            break;
+        };
+        let Some(k_next) = a.checked_mul(k_curr).and_then(|v| v.checked_add(k_prev)) else {
+            break;
+        };
 
         // Check denominator bound
         if k_next > max_denominator {
@@ -696,6 +721,25 @@ fn coefficients_product(ranges: &[i64], count: usize) -> Vec<Vec<i64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_nonfinite_and_overflowing_inputs() {
+        for x in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::MAX] {
+            assert!(find_rational_approximation(x, i64::MAX).is_none());
+            assert!(find_integer_relation(x, &PslqConfig::default()).is_none());
+        }
+        assert!(find_rational_approximation(1.5, 0).is_none());
+        assert!(find_integer_relation(
+            1.0,
+            &PslqConfig {
+                tolerance: f64::NAN,
+                ..PslqConfig::default()
+            }
+        )
+        .is_none());
+        assert!(normalize_relation(vec![i128::MIN, 1], i64::MAX).is_none());
+        let _ = find_rational_approximation(1.0e18 + 128.0, i64::MAX);
+    }
 
     #[test]
     fn test_rational_approximation_pi() {
@@ -816,7 +860,7 @@ mod tests {
             b[i][i] = 1;
         }
 
-        reduce_h(&mut y, &mut h, &mut a, &mut b, 1, n - 2);
+        reduce_h(&mut y, &mut h, &mut a, &mut b, 1, n - 2).unwrap();
         assert!(
             max_abs_matrix_entry(&a) > 1,
             "test vector should trigger a non-trivial reduction"

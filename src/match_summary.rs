@@ -1,7 +1,7 @@
 //! Shared match presentation fields for binding surfaces.
 
 use crate::search::Match;
-use crate::solver::{canonical_expression_key, solve_for_x_at};
+use crate::solver::canonical_expression_key;
 /// Presentation-ready fields derived from a search [`Match`].
 ///
 /// Binding surfaces (WASM, Python) convert this into their own types with
@@ -32,6 +32,8 @@ pub struct MatchSummary {
     pub operator_count: usize,
     /// Maximum tree depth of the equation
     pub tree_depth: usize,
+    /// Preset constant names and values in postfix slot order.
+    pub constants: Vec<(String, f64)>,
     /// Whether this is an exact match
     pub is_exact: bool,
 }
@@ -45,13 +47,37 @@ impl From<Match> for MatchSummary {
 impl MatchSummary {
     /// Build presentation fields from a search match.
     pub fn from_match(m: &Match) -> Self {
-        let lhs_infix = m.lhs.expr.to_infix_or_postfix();
-        let rhs_infix = m.rhs.expr.to_infix_or_postfix();
+        Self::build(m, &crate::eval::EvalContext::new(), None)
+    }
 
-        let solved = solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value);
-        let solve_for_x = solved
-            .as_ref()
-            .map(|e| format!("x = {}", e.to_infix_or_postfix()));
+    /// Build presentation fields using the same user symbols as the search.
+    pub fn from_match_with_context(
+        m: &Match,
+        context: &crate::eval::EvalContext<'_>,
+        table: &crate::symbol_table::SymbolTable,
+    ) -> Self {
+        Self::build(m, context, Some(table))
+    }
+
+    fn build(
+        m: &Match,
+        context: &crate::eval::EvalContext<'_>,
+        table: Option<&crate::symbol_table::SymbolTable>,
+    ) -> Self {
+        let format = |expr: &crate::expr::Expression| {
+            expr.try_to_infix_with_context(table, context.trig_argument_scale)
+                .unwrap_or_else(|_| expr.to_postfix())
+        };
+        let lhs_infix = format(&m.lhs.expr);
+        let rhs_infix = format(&m.rhs.expr);
+
+        let solved = crate::solver::solve_for_x_at_with_context(
+            &m.lhs.expr,
+            &m.rhs.expr,
+            m.x_value,
+            context,
+        );
+        let solve_for_x = solved.as_ref().map(|e| format!("x = {}", format(e)));
         let solve_for_x_postfix = solved.as_ref().map(|e| e.to_postfix());
 
         let canonical_key = canonical_expression_key(&m.lhs.expr)
@@ -72,6 +98,11 @@ impl MatchSummary {
             complexity: m.complexity,
             operator_count: m.lhs.expr.operator_count() + m.rhs.expr.operator_count(),
             tree_depth: m.lhs.expr.tree_depth().max(m.rhs.expr.tree_depth()),
+            constants: context
+                .user_constants
+                .iter()
+                .map(|c| (c.name.clone(), c.value))
+                .collect(),
             is_exact: m.exact,
         }
     }
@@ -106,5 +137,20 @@ mod tests {
         assert!(summary.operator_count > 0);
         assert!(summary.tree_depth > 0);
         assert!(!summary.canonical_key.is_empty());
+    }
+    #[test]
+    fn preset_slots_are_rendered_with_names_and_values() {
+        let profile = crate::presets::Preset::AnalyticNT.to_profile();
+        let table = crate::symbol_table::SymbolTable::from_profile(&profile);
+        let constants = &profile.constants;
+        let mut matched = make_match("x", "1", 0.0);
+        matched.rhs.expr = Expression::from_symbols(&[crate::symbol::Symbol::UserConstant0]);
+        matched.x_value = constants[0].value;
+        let context = crate::eval::EvalContext::from_slices(constants, &[]);
+        let summary = MatchSummary::from_match_with_context(&matched, &context, &table);
+        assert_eq!(summary.rhs, "z2");
+        assert_eq!(summary.solve_for_x.as_deref(), Some("x = z2"));
+        assert_eq!(summary.constants[0].0, "z2");
+        assert_eq!(summary.constants[0].1, constants[0].value);
     }
 }

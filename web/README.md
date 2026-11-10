@@ -9,7 +9,7 @@ bundle.
 
 - in-browser search against the WASM engine
 - quick constant buttons for built-in constants
-- ranking-mode and match-precision controls
+- ranking-mode and match-precision controls (entered decimal digits, including trailing zeros, determine match precision)
 - cards/text result views with copy and download actions
 - shareable URL parameters
 - dark/light theme toggle

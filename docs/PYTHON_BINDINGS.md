@@ -133,6 +133,7 @@ CLI bounds from `docs/SEARCH_MODEL.md` and call the Rust library directly.
 | `complexity` | `int` | total complexity score |
 | `operator_count` | `int` | total operator count across both sides |
 | `tree_depth` | `int` | maximum tree depth across both sides |
+| `constants` | `list[tuple[str, float]]` | preset constant names and values in postfix slot order (character codes 128 onward) |
 | `is_exact` | `bool` | whether the match is within exact-match tolerance |
 
 ## `PyMatch` Methods

@@ -76,8 +76,16 @@ pub fn build_manifest(
             MatchInfo {
                 lhs_postfix: m.lhs.expr.to_postfix(),
                 rhs_postfix: m.rhs.expr.to_postfix(),
-                lhs_infix: m.lhs.expr.to_infix_with_table(&gen.symbol_table),
-                rhs_infix: m.rhs.expr.to_infix_with_table(&gen.symbol_table),
+                lhs_infix: m.lhs.expr.to_infix_with_context(
+                    ries_rs::OutputFormat::Default,
+                    Some(&gen.symbol_table),
+                    search.trig_argument_scale,
+                ),
+                rhs_infix: m.rhs.expr.to_infix_with_context(
+                    ries_rs::OutputFormat::Default,
+                    Some(&gen.symbol_table),
+                    search.trig_argument_scale,
+                ),
                 error: m.error.abs(),
                 is_exact: m.exact,
                 complexity: m.complexity,

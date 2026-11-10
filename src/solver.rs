@@ -3,6 +3,7 @@
 //! This module provides tools to solve symbolic equations for x and
 //! to reduce expressions to a canonical form for deduplication.
 
+use crate::eval::{evaluate_with_context, EvalContext, DEFAULT_TRIG_ARGUMENT_SCALE};
 use crate::expr::Expression;
 use crate::symbol::{Seft, Symbol};
 
@@ -32,7 +33,7 @@ struct SolveNode {
 /// **principal branch**. Call [`solve_for_x_at`] when the matched root is
 /// known so the displayed expression evaluates to that root.
 pub fn solve_for_x_rhs_expression(lhs: &Expression, rhs: &Expression) -> Option<Expression> {
-    solve_for_x_inner(lhs, rhs, None)
+    solve_for_x_inner(lhs, rhs, None, &EvalContext::new())
 }
 
 /// Solve `lhs = rhs` for `x`, choosing the real inverse branch nearest `x_value`.
@@ -53,16 +54,26 @@ pub fn solve_for_x_rhs_expression(lhs: &Expression, rhs: &Expression) -> Option<
 /// to the principal branch. Integer shifts are exact for every finite integer
 /// `f64`, including magnitudes past 2^63.
 pub fn solve_for_x_at(lhs: &Expression, rhs: &Expression, x_value: f64) -> Option<Expression> {
+    solve_for_x_at_with_context(lhs, rhs, x_value, &EvalContext::new())
+}
+
+/// Solve at a matched root using the search's trig scale and user symbols.
+pub fn solve_for_x_at_with_context(
+    lhs: &Expression,
+    rhs: &Expression,
+    x_value: f64,
+    context: &EvalContext<'_>,
+) -> Option<Expression> {
     if !x_value.is_finite() {
         return None;
     }
-    let solved = solve_for_x_inner(lhs, rhs, Some(x_value))?;
-    let value = eval_expr(&solved, 0.0)?;
+    let solved = solve_for_x_inner(lhs, rhs, Some(x_value), context)?;
+    let value = eval_with_context(&solved, 0.0, context)?;
     if !matches_hint(value, x_value) {
         return None;
     }
-    let lhs_value = eval_expr(lhs, value)?;
-    let rhs_value = eval_expr(rhs, value)?;
+    let lhs_value = eval_with_context(lhs, value, context)?;
+    let rhs_value = eval_with_context(rhs, value, context)?;
     values_agree(lhs_value, rhs_value).then_some(solved)
 }
 
@@ -70,6 +81,7 @@ fn solve_for_x_inner(
     lhs: &Expression,
     rhs: &Expression,
     x_value: Option<f64>,
+    context: &EvalContext<'_>,
 ) -> Option<Expression> {
     if lhs.count_symbol(Symbol::X) != 1 {
         return None;
@@ -91,8 +103,8 @@ fn solve_for_x_inner(
                 if child.x_count != 1 {
                     return None;
                 }
-                let target = x_value.and_then(|x| eval_expr(&child.expr, x));
-                rhs_expr = unary_inverse_expression(op, &rhs_expr, target)?;
+                let target = x_value.and_then(|x| eval_with_context(&child.expr, x, context));
+                rhs_expr = unary_inverse_expression(op, &rhs_expr, target, context)?;
                 node = *child;
             }
             SolveNodeKind::Binary(op, left, right) => {
@@ -103,8 +115,8 @@ fn solve_for_x_inner(
                 }
 
                 if lx == 1 {
-                    let target = x_value.and_then(|x| eval_expr(&left.expr, x));
-                    rhs_expr = invert_binary_left(op, &rhs_expr, &right.expr, target)?;
+                    let target = x_value.and_then(|x| eval_with_context(&left.expr, x, context));
+                    rhs_expr = invert_binary_left(op, &rhs_expr, &right.expr, target, context)?;
                     node = *left;
                 } else {
                     rhs_expr = invert_binary_right(op, &left.expr, &rhs_expr)?;
@@ -186,37 +198,38 @@ fn unary_inverse_expression(
     op: Symbol,
     rhs_value: &Expression,
     target: Option<f64>,
+    context: &EvalContext<'_>,
 ) -> Option<Expression> {
     match op {
         Symbol::Neg => Some(append_unary_expression(rhs_value, Symbol::Neg)),
         Symbol::Recip => Some(append_unary_expression(rhs_value, Symbol::Recip)),
         Symbol::Square => {
             // x² = y ⟹ x = ±√y. Only the sign nearer `target` is real for that root.
-            let radicand = nonnegative_argument(rhs_value)?;
+            let radicand = nonnegative_argument(rhs_value, context)?;
             let principal = append_unary_expression(&radicand, Symbol::Sqrt);
-            choose_signed_root(principal, target)
+            choose_signed_root(principal, target, context)
         }
         Symbol::Sqrt => Some(append_unary_expression(rhs_value, Symbol::Square)), // √x = y ⟹ x = y²
         Symbol::Ln => Some(append_unary_expression(rhs_value, Symbol::Exp)),
         Symbol::Exp => Some(append_unary_expression(rhs_value, Symbol::Ln)),
         Symbol::TanPi => {
             // tan(πx) = y ⟹ x = atan(y)/π + k. y must be finite.
-            finite_constant(rhs_value)?;
+            finite_constant(rhs_value, context)?;
             let principal = atan_over_pi(rhs_value);
-            lift_periodic(principal, target, &[(false, 1, 0)])
+            lift_periodic(principal, target, &[(false, 1, 0)], context)
         }
         Symbol::SinPi => {
             // sin(πx) = y ⟹ x = asin(y)/π + 2k  or  x = 1 - asin(y)/π + 2k
             // Real only for y in [-1, 1].
-            let argument = unit_interval_argument(rhs_value)?;
+            let argument = unit_interval_argument(rhs_value, context)?;
             let principal = asin_over_pi(&argument);
-            lift_periodic(principal, target, &[(false, 2, 0), (true, 2, 1)])
+            lift_periodic(principal, target, &[(false, 2, 0), (true, 2, 1)], context)
         }
         Symbol::CosPi => {
             // cos(πx) = y ⟹ x = 2k ± acos(y)/π. Real only for y in [-1, 1].
-            let argument = unit_interval_argument(rhs_value)?;
+            let argument = unit_interval_argument(rhs_value, context)?;
             let principal = acos_over_pi(&argument);
-            lift_periodic(principal, target, &[(false, 2, 0), (true, 2, 0)])
+            lift_periodic(principal, target, &[(false, 2, 0), (true, 2, 0)], context)
         }
         Symbol::LambertW => {
             // W(x) = y ⟹ x = y·eʸ. The inverse of W is single-valued on the reals.
@@ -262,6 +275,7 @@ fn invert_binary_left(
     rhs_value: &Expression,
     known_right: &Expression,
     target: Option<f64>,
+    context: &EvalContext<'_>,
 ) -> Option<Expression> {
     match op {
         Symbol::Add => Some(combine_binary_expressions(
@@ -285,7 +299,7 @@ fn invert_binary_left(
             Symbol::Mul,
         )),
         // x^k = y ⟹ x = y^(1/k). ± only when k is an even integer.
-        Symbol::Pow => invert_power(rhs_value, known_right, target),
+        Symbol::Pow => invert_power(rhs_value, known_right, target, context),
         Symbol::Root => Some(combine_binary_expressions(
             rhs_value,
             known_right,
@@ -310,9 +324,11 @@ fn invert_power(
     radicand: &Expression,
     exponent: &Expression,
     target: Option<f64>,
+    context: &EvalContext<'_>,
 ) -> Option<Expression> {
-    let y = finite_constant(radicand)?;
-    let even = is_even_integer_value(finite_constant(exponent)?);
+    let y = finite_constant(radicand, context)?;
+    let exponent_value = finite_constant(exponent, context)?;
+    let even = is_even_integer_value(exponent_value);
     if even {
         if y < -1e-12 {
             return None;
@@ -323,9 +339,9 @@ fn invert_power(
             radicand.clone()
         };
         let root = combine_binary_expressions(exponent, &source, Symbol::Root);
-        return choose_signed_root(root, target);
+        return choose_signed_root(root, target, context);
     }
-    if y < 0.0 && !is_odd_integer_value(finite_constant(exponent)?) {
+    if y < 0.0 && !is_odd_integer_value(exponent_value) {
         return None;
     }
     Some(combine_binary_expressions(exponent, radicand, Symbol::Root))
@@ -380,7 +396,11 @@ fn is_x_atom(expression: &Expression) -> bool {
 }
 
 fn eval_expr(expr: &Expression, x: f64) -> Option<f64> {
-    crate::eval::evaluate(expr, x)
+    eval_with_context(expr, x, &EvalContext::new())
+}
+
+fn eval_with_context(expr: &Expression, x: f64, context: &EvalContext<'_>) -> Option<f64> {
+    evaluate_with_context(expr, x, context)
         .ok()
         .map(|result| result.value)
 }
@@ -389,8 +409,12 @@ fn eval_expr(expr: &Expression, x: f64) -> Option<f64> {
 ///
 /// The margin is relative to the root, so a negative root smaller than `1e-12`
 /// still wins. A tie, including a root at 0, stays non-negative.
-fn choose_signed_root(principal: Expression, target: Option<f64>) -> Option<Expression> {
-    let positive = eval_expr(&principal, 0.0)?;
+fn choose_signed_root(
+    principal: Expression,
+    target: Option<f64>,
+    context: &EvalContext<'_>,
+) -> Option<Expression> {
+    let positive = eval_with_context(&principal, 0.0, context)?;
     if !positive.is_finite() {
         return None;
     }
@@ -398,7 +422,7 @@ fn choose_signed_root(principal: Expression, target: Option<f64>) -> Option<Expr
         return Some(principal);
     };
     let negative = append_unary_expression(&principal, Symbol::Neg);
-    let Some(neg_value) = eval_expr(&negative, 0.0) else {
+    let Some(neg_value) = eval_with_context(&negative, 0.0, context) else {
         return Some(principal);
     };
     if !neg_value.is_finite() {
@@ -424,13 +448,21 @@ fn lift_periodic(
     principal: Expression,
     target: Option<f64>,
     families: &[(bool, i64, i64)],
+    context: &EvalContext<'_>,
 ) -> Option<Expression> {
-    let principal_value = eval_expr(&principal, 0.0)?;
+    let principal_value = eval_with_context(&principal, 0.0, context)?;
     if !principal_value.is_finite() {
         return None;
     }
     let Some(target) = target else {
         return Some(principal);
+    };
+
+    let scale = context.trig_argument_scale;
+    let normalized_target = if scale == DEFAULT_TRIG_ARGUMENT_SCALE {
+        target
+    } else {
+        (target * scale) / DEFAULT_TRIG_ARGUMENT_SCALE
     };
 
     let mut best: Option<(Expression, f64)> = None;
@@ -444,7 +476,7 @@ fn lift_periodic(
             principal_value
         };
         let base = signed + extra as f64;
-        let Some(k0) = nearest_branch_index((target - base) / period as f64) else {
+        let Some(k0) = nearest_branch_index((normalized_target - base) / period as f64) else {
             continue;
         };
         for delta in [-1.0_f64, 0.0, 1.0] {
@@ -458,13 +490,13 @@ fn lift_periodic(
             let Some(candidate) = linear_combo(&principal, principal_value, negate, offset) else {
                 continue;
             };
-            let Some(value) = eval_expr(&candidate, 0.0) else {
+            let Some(value) = eval_with_context(&candidate, 0.0, context) else {
                 continue;
             };
-            if !matches_hint(value, target) {
+            if !matches_hint(value, normalized_target) {
                 continue;
             }
-            let err = (value - target).abs();
+            let err = (value - normalized_target).abs();
             let replace = match &best {
                 None => true,
                 Some((prev, prev_err)) => {
@@ -480,7 +512,22 @@ fn lift_periodic(
 
     // No representable branch sits on the hint. Returning the principal value
     // here would display a different root (for example 0 instead of 2000002).
-    best.map(|(expr, _)| expr)
+    let (normalized, _) = best?;
+    if scale == DEFAULT_TRIG_ARGUMENT_SCALE {
+        return Some(normalized);
+    }
+    let pi = constant_expression(Symbol::Pi);
+    let angle = combine_binary_expressions(&normalized, &pi, Symbol::Mul);
+    if scale == 1.0 {
+        return Some(angle);
+    }
+    let magnitude = finite_positive_expression(scale.abs())?;
+    let divisor = if scale.is_sign_negative() {
+        append_unary_expression(&magnitude, Symbol::Neg)
+    } else {
+        magnitude
+    };
+    Some(combine_binary_expressions(&angle, &divisor, Symbol::Div))
 }
 
 fn nearest_branch_index(k: f64) -> Option<f64> {
@@ -546,6 +593,32 @@ fn signed_integer(offset: f64) -> Option<Expression> {
     } else {
         Some(append_unary_expression(&magnitude, Symbol::Neg))
     }
+}
+
+/// Encode a custom trig scale as a decimal literal with an exact binary
+/// postfix scaffold, so both display formats preserve its value.
+fn finite_positive_expression(n: f64) -> Option<Expression> {
+    if !n.is_finite() || n <= 0.0 {
+        return None;
+    }
+    if n == n.trunc() {
+        return integer_expression(n);
+    }
+    let bits = n.to_bits();
+    let biased = ((bits >> 52) & 0x7ff) as i32;
+    let mut mantissa = bits & ((1u64 << 52) - 1);
+    if biased != 0 {
+        mantissa |= 1u64 << 52;
+    }
+    let trailing = mantissa.trailing_zeros();
+    mantissa >>= trailing;
+    let shift = (1075 - biased.max(1)) as u32 - trailing;
+    let exponent = append_unary_expression(&horner_u64(u64::from(shift))?, Symbol::Neg);
+    let power =
+        combine_binary_expressions(&constant_expression(Symbol::Two), &exponent, Symbol::Pow);
+    let mut expression = combine_binary_expressions(&horner_u64(mantissa)?, &power, Symbol::Mul);
+    expression.mark_decimal_literal(n);
+    Some(expression)
 }
 
 /// Positive finite integer. The printer shows its decimal digits.
@@ -687,15 +760,15 @@ fn zero_expression() -> Expression {
     )
 }
 
-fn finite_constant(expr: &Expression) -> Option<f64> {
-    let value = eval_expr(expr, 0.0)?;
+fn finite_constant(expr: &Expression, context: &EvalContext<'_>) -> Option<f64> {
+    let value = eval_with_context(expr, 0.0, context)?;
     value.is_finite().then_some(value)
 }
 
 /// Argument of `asin` / `acos`. Values a few ulps outside `[-1, 1]` clamp to
 /// the endpoint so `sqrt(1-y^2)` stays real; anything further is not real.
-fn unit_interval_argument(expr: &Expression) -> Option<Expression> {
-    let y = finite_constant(expr)?;
+fn unit_interval_argument(expr: &Expression, context: &EvalContext<'_>) -> Option<Expression> {
+    let y = finite_constant(expr, context)?;
     const TOL: f64 = 1e-8;
     if y > 1.0 + TOL || y < -1.0 - TOL {
         return None;
@@ -713,8 +786,8 @@ fn unit_interval_argument(expr: &Expression) -> Option<Expression> {
 }
 
 /// Radicand of an even root. A tiny negative from rounding becomes 0.
-fn nonnegative_argument(expr: &Expression) -> Option<Expression> {
-    let y = finite_constant(expr)?;
+fn nonnegative_argument(expr: &Expression, context: &EvalContext<'_>) -> Option<Expression> {
+    let y = finite_constant(expr, context)?;
     if y >= 0.0 {
         return Some(expr.clone());
     }
@@ -1058,7 +1131,7 @@ mod tests {
     fn test_unary_inverse_negation() {
         // -x = y => x = -y (double negation)
         let rhs = expr("3");
-        let result = unary_inverse_expression(Symbol::Neg, &rhs, None);
+        let result = unary_inverse_expression(Symbol::Neg, &rhs, None, &EvalContext::new());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "3n");
     }
@@ -1067,7 +1140,7 @@ mod tests {
     fn test_unary_inverse_reciprocal() {
         // 1/x = y => x = 1/y
         let rhs = expr("3");
-        let result = unary_inverse_expression(Symbol::Recip, &rhs, None);
+        let result = unary_inverse_expression(Symbol::Recip, &rhs, None, &EvalContext::new());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "3r");
     }
@@ -1076,12 +1149,12 @@ mod tests {
     fn test_unary_inverse_square_sqrt() {
         // x^2 = y => x = sqrt(y)
         let rhs = expr("4");
-        let result = unary_inverse_expression(Symbol::Square, &rhs, None);
+        let result = unary_inverse_expression(Symbol::Square, &rhs, None, &EvalContext::new());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "4q");
 
         // sqrt(x) = y => x = y^2
-        let result = unary_inverse_expression(Symbol::Sqrt, &rhs, None);
+        let result = unary_inverse_expression(Symbol::Sqrt, &rhs, None, &EvalContext::new());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "4s");
     }
@@ -1090,11 +1163,11 @@ mod tests {
     fn test_unary_inverse_ln_exp() {
         // ln(x) = y => x = e^y
         let rhs = expr("2");
-        let result = unary_inverse_expression(Symbol::Ln, &rhs, None);
+        let result = unary_inverse_expression(Symbol::Ln, &rhs, None, &EvalContext::new());
         assert!(result.is_some());
 
         // e^x = y => x = ln(y)
-        let result = unary_inverse_expression(Symbol::Exp, &rhs, None);
+        let result = unary_inverse_expression(Symbol::Exp, &rhs, None, &EvalContext::new());
         assert!(result.is_some());
     }
 
@@ -1105,7 +1178,7 @@ mod tests {
         // x + k = y => x = y - k
         let rhs = expr("5");
         let known = expr("2");
-        let result = invert_binary_left(Symbol::Add, &rhs, &known, None);
+        let result = invert_binary_left(Symbol::Add, &rhs, &known, None, &EvalContext::new());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "52-");
     }
@@ -1115,7 +1188,7 @@ mod tests {
         // x - k = y => x = y + k
         let rhs = expr("3");
         let known = expr("2");
-        let result = invert_binary_left(Symbol::Sub, &rhs, &known, None);
+        let result = invert_binary_left(Symbol::Sub, &rhs, &known, None, &EvalContext::new());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "32+");
     }
@@ -1125,7 +1198,7 @@ mod tests {
         // x * k = y => x = y / k
         let rhs = expr("6");
         let known = expr("2");
-        let result = invert_binary_left(Symbol::Mul, &rhs, &known, None);
+        let result = invert_binary_left(Symbol::Mul, &rhs, &known, None, &EvalContext::new());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "62/");
     }
@@ -1135,7 +1208,7 @@ mod tests {
         // x / k = y => x = y * k
         let rhs = expr("3");
         let known = expr("2");
-        let result = invert_binary_left(Symbol::Div, &rhs, &known, None);
+        let result = invert_binary_left(Symbol::Div, &rhs, &known, None, &EvalContext::new());
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_postfix(), "32*");
     }
@@ -1304,7 +1377,8 @@ mod tests {
         // or a tiny negative root. Reintroducing an absolute 1e-12 margin, or
         // applying this helper to an odd power, fails here.
         let principal = expr("4q");
-        let chosen = choose_signed_root(principal, Some(-2.0)).expect("even root");
+        let chosen =
+            choose_signed_root(principal, Some(-2.0), &EvalContext::new()).expect("even root");
         let value = eval_expr(&chosen, 0.0).unwrap();
         assert!(
             value < 0.0,
@@ -1313,14 +1387,15 @@ mod tests {
 
         let tiny = expr("2125**25**n^q");
         let hint = -2.0_f64.powi(-50);
-        let chosen = choose_signed_root(tiny, Some(hint)).expect("tiny root");
+        let chosen = choose_signed_root(tiny, Some(hint), &EvalContext::new()).expect("tiny root");
         let value = eval_expr(&chosen, 0.0).unwrap();
         assert!(
             value < 0.0 && (value - hint).abs() <= hint.abs() * 1e-6,
             "relative sign choice failed: {value} vs {hint}"
         );
 
-        let odd = invert_power(&expr("8"), &expr("3"), Some(-2.0)).expect("odd root");
+        let odd = invert_power(&expr("8"), &expr("3"), Some(-2.0), &EvalContext::new())
+            .expect("odd root");
         let odd_value = eval_expr(&odd, 0.0).unwrap();
         assert!(
             odd_value > 0.0 && (odd_value - 2.0).abs() < 1e-9,
@@ -1339,13 +1414,22 @@ mod tests {
         // `solve_for_x_at` also returns None for these, but that is the later
         // equation gate. This asserts the domain check itself.
         assert!(
-            unit_interval_argument(&expr("2")).is_none(),
+            unit_interval_argument(&expr("2"), &EvalContext::new()).is_none(),
             "asin/acos argument 2 is not real"
         );
-        assert!(unit_interval_argument(&expr("1")).is_some());
-        assert!(unit_interval_argument(&expr("1n")).is_some());
-        assert!(unary_inverse_expression(Symbol::SinPi, &expr("2"), Some(0.5)).is_none());
-        assert!(unary_inverse_expression(Symbol::CosPi, &expr("2"), None).is_none());
+        assert!(unit_interval_argument(&expr("1"), &EvalContext::new()).is_some());
+        assert!(unit_interval_argument(&expr("1n"), &EvalContext::new()).is_some());
+        assert!(unary_inverse_expression(
+            Symbol::SinPi,
+            &expr("2"),
+            Some(0.5),
+            &EvalContext::new()
+        )
+        .is_none());
+        assert!(
+            unary_inverse_expression(Symbol::CosPi, &expr("2"), None, &EvalContext::new())
+                .is_none()
+        );
     }
 
     #[test]

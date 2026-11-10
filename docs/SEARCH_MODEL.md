@@ -65,6 +65,12 @@ In infix form, parentheses follow the precedence and associativity rules in `src
 
 Solve-for-x display uses `solve_for_x_at` and the matched root. Multi-valued inverses emit the real branch nearest that root: `±√y` for squares and even integer powers (odd powers keep their single real root), `asin(y)/π + 2k` or `1 - asin(y)/π + 2k` for sine, `2k ± acos(y)/π` for cosine, and `atan(y)/π + k` for tangent. Integer shifts print as decimal literals and evaluate to that exact integer for every finite integer `f64`, including magnitudes past 2^63. The function returns nothing when the hint is not finite, the inverse is not real, or the branch cannot be represented exactly. Text `-s` (report and classic) and `--format` use this same closed form. `solve_for_x_rhs_expression` remains the principal-branch inverse for callers that do not have a root.
 
+For the default trig scale, the evaluator reduces the argument before
+multiplying by π and handles representable integers and half-integers exactly.
+`--trig-argument-scale` changes the evaluation and the displayed infix
+equations. `solve_for_x_at_with_context` uses the same scale and custom
+symbols as the search when choosing and checking the inverse branch.
+
 ## Search Space Partition
 
 RIES-style search builds equations by matching:
@@ -119,6 +125,8 @@ For CLI `-l/--level = L`:
 - `max_rhs_complexity = 35 + 10*L`
 
 This is calibrated for practical coverage while avoiding expression explosion.
+Explicit CLI levels must be finite and in the range 0 through 100. Fractional
+levels and the legacy shorthand `-l 2.5` without a positional target are supported.
 
 ### Library helper (`src/search.rs::level_to_complexity`)
 
@@ -334,7 +342,21 @@ verification choices.
 
 With the `highprec` feature, `--precision` verifies the top results in text
 and JSON modes. JSON includes the verification results under
-`high_precision_verification`.
+`high_precision_verification`. Each result has a `status` of `verified`,
+`failed`, or `unavailable`. An equation using an operator that the
+high-precision evaluator cannot evaluate has status `unavailable`.
+
+`--match-all-digits` sets the maximum root error to half the place value of
+the last digit in the target as typed. For example, `0.3330` and `3.330e-1`
+both use a tolerance of `0.00005`. An explicit `--max-match-distance` takes
+precedence. JSON reports the effective `trig_argument_scale` for interpreting
+postfix results and reports the minimum retained root error as
+`search_stats.best_error` (`null` for an empty pool). The internal radius
+threshold is recorded separately as `adaptive_error_threshold`.
+
+`--stability-check` compares results from the same matcher at each
+tolerance level. The stability runs disable first-hit stopping, even when the
+main search uses it.
 
 Recommended reproducibility workflow:
 

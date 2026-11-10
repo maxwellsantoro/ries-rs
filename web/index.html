@@ -626,7 +626,7 @@
       return result;
     }
 
-    function postfixToSympy(postfix) {
+    function postfixToSympy(postfix, constants = []) {
       if (!postfix) {
         return '';
       }
@@ -638,6 +638,11 @@
       }
 
       for (const token of postfix) {
+        const slot = token.codePointAt(0) - 128;
+        if (slot >= 0 && slot < constants.length) {
+          stack.push('Float(' + JSON.stringify(String(constants[slot][1])) + ')');
+          continue;
+        }
         if (Object.prototype.hasOwnProperty.call(POSTFIX_SYMPY_ATOMS, token)) {
           stack.push(POSTFIX_SYMPY_ATOMS[token]);
           continue;
@@ -1104,7 +1109,19 @@
       };
     }
 
+    function parseTarget(target) {
+      const text = target.trim();
+      if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(text)) return null;
+      const value = Number(text);
+      return Number.isFinite(value) ? value : null;
+    }
+
     async function performSearch(target) {
+      const targetValue = parseTarget(target);
+      if (targetValue === null) {
+        setStatus('Invalid target number. Please enter a finite decimal number.', 'error');
+        return;
+      }
       if (searchInProgress || (!wasmModule && wasmRuntime !== 'worker')) {
         return;
       }
@@ -1125,14 +1142,12 @@
       try {
         const options = getSearchOptions();
 
-        // Parse target as float64
-        const targetValue = parseFloat(target);
-
         // Build search config object (target is passed separately, not in config)
         // Web build supports rankingMode and matchAllDigits in addition to the base search options.
         const searchConfig = {
           level: options.level,
           maxMatches: options.maxMatches,
+          targetText: target.trim(),
         };
 
         // Only add preset if it's not empty
@@ -1182,9 +1197,7 @@
         return;
       }
 
-      // Validate target is a number (Number() is strict; parseFloat allows trailing garbage)
-      const numValue = Number(target);
-      if (isNaN(numValue)) {
+      if (parseTarget(target) === null) {
         setStatus('Invalid target number. Please enter a valid number.', 'error');
         return;
       }
@@ -1297,8 +1310,8 @@
         copySympyBtn.textContent = 'SymPy';
         copySympyBtn.dataset.format = 'sympy';
         copySympyBtn.dataset.value = match.solve_for_x_postfix
-          ? 'Eq(x, ' + postfixToSympy(match.solve_for_x_postfix) + ')'
-          : 'Eq(' + postfixToSympy(match.lhs_postfix || '') + ', ' + postfixToSympy(match.rhs_postfix || '') + ')';
+          ? 'Eq(x, ' + postfixToSympy(match.solve_for_x_postfix, match.constants) + ')'
+          : 'Eq(' + postfixToSympy(match.lhs_postfix || '', match.constants) + ', ' + postfixToSympy(match.rhs_postfix || '', match.constants) + ')';
         actionsDiv.appendChild(copySympyBtn);
 
         cardInner.appendChild(leftDiv);

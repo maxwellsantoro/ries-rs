@@ -68,7 +68,7 @@ pub struct StabilityRunConfig<'a> {
 
 /// Run optional stability analysis across progressively tighter tolerances.
 pub fn run_stability_check(
-    base_matches: Vec<Match>,
+    base_matches: Option<Vec<Match>>,
     config: StabilityRunConfig<'_>,
 ) -> Vec<StabilityResult> {
     let stability_config = if config.thorough {
@@ -78,11 +78,20 @@ pub fn run_stability_check(
     };
     let tolerance_factors = stability_config.tolerance_factors.clone();
     let mut analyzer = StabilityAnalyzer::new(stability_config);
-    analyzer.add_level(base_matches);
 
     let base_error = config.search_config.max_error;
-    for factor in tolerance_factors.into_iter().skip(1) {
-        let mut tighter_config = config.search_config.clone();
+    let mut base_matches = base_matches;
+    let mut full_config = config.search_config.clone();
+    full_config.stop_at_exact = false;
+    full_config.stop_below = None;
+    for (index, factor) in tolerance_factors.into_iter().enumerate() {
+        if index == 0 {
+            if let Some(matches) = base_matches.take() {
+                analyzer.add_level(matches);
+                continue;
+            }
+        }
+        let mut tighter_config = full_config.clone();
         tighter_config.max_error = base_error * factor;
         let result = run_search(
             config.gen_config,
