@@ -32,6 +32,7 @@ pub(super) fn newton_raphson(
 ///
 /// Exactness is not decided here. The caller checks the two sides at the typed
 /// target; the residual at the landed float can be zero on a different root.
+#[derive(Clone, Copy)]
 pub(super) struct NewtonHit {
     pub x: f64,
     /// Accepted by the tight residual test or the loose local-root test.

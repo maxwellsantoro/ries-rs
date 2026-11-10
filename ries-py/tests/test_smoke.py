@@ -1,3 +1,6 @@
+from threading import Event, Thread
+from time import perf_counter
+
 import ries_rs
 
 
@@ -42,3 +45,26 @@ def test_search_rejects_unknown_preset():
         assert "Unknown preset" in str(exc)
     else:
         raise AssertionError("expected ValueError for unknown preset")
+
+
+def test_search_allows_another_python_thread_to_run():
+    stop = Event()
+    ready = Event()
+    ticks = []
+
+    def heartbeat():
+        ready.set()
+        while not stop.wait(0.002):
+            ticks.append(perf_counter())
+
+    thread = Thread(target=heartbeat)
+    thread.start()
+    try:
+        assert ready.wait(2)
+        begin = perf_counter()
+        ries_rs.search(9.5124027528, level=5, max_matches=16, parallel=False)
+        end = perf_counter()
+        assert any(begin < tick < end for tick in ticks)
+    finally:
+        stop.set()
+        thread.join()

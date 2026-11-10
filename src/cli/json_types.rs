@@ -33,6 +33,41 @@ pub struct JsonRunOutput {
     pub output_format: String,
     pub results: Vec<JsonMatch>,
     pub search_stats: JsonSearchStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub high_precision_verification: Option<JsonVerification>,
+}
+
+#[derive(Serialize)]
+pub struct JsonVerification {
+    precision_bits: u32,
+    results: Vec<JsonVerificationResult>,
+}
+
+#[derive(Serialize)]
+struct JsonVerificationResult {
+    lhs_postfix: String,
+    rhs_postfix: String,
+    is_verified: bool,
+    highprec_error: Option<f64>,
+    error_ratio: Option<f64>,
+}
+
+impl JsonVerification {
+    pub fn new(precision_bits: u32, results: &[ries_rs::VerificationResult]) -> Self {
+        Self {
+            precision_bits,
+            results: results
+                .iter()
+                .map(|r| JsonVerificationResult {
+                    lhs_postfix: r.original.lhs.expr.to_postfix(),
+                    rhs_postfix: r.original.rhs.expr.to_postfix(),
+                    is_verified: r.is_verified,
+                    highprec_error: r.highprec_error.filter(|error| error.is_finite()),
+                    error_ratio: r.error_ratio.filter(|ratio| ratio.is_finite()),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// JSON structure for a single match result
@@ -245,6 +280,7 @@ pub fn build_json_output(
         report_mode_requested,
         output_format: output_format_name,
         results,
+        high_precision_verification: None,
         search_stats: JsonSearchStats {
             expressions_generated_lhs: stats.lhs_count,
             expressions_generated_rhs: stats.rhs_count,

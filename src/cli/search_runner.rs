@@ -36,15 +36,14 @@ pub fn run_search(
     let (matches, stats) = if one_sided {
         crate::search::search_one_sided_with_stats_and_config(gen_config, search_config)
     } else if adaptive {
-        crate::search::search_adaptive(gen_config, search_config, level)
+        crate::search::search_adaptive_with_parallelism(gen_config, search_config, level, parallel)
     } else if streaming {
         crate::search::search_streaming_with_config(gen_config, search_config)
     } else {
         #[cfg(feature = "parallel")]
         {
             if turbo {
-                // Turbo parallelizes the match phase too; it implies parallel
-                // generation. Trades byte-identical results for throughput.
+                // Turbo refines wide candidate windows in parallel.
                 crate::search::search_turbo_with_stats_and_config(gen_config, search_config)
             } else if parallel {
                 crate::search::search_parallel_with_stats_and_config(gen_config, search_config)

@@ -37,7 +37,7 @@ const MAX_QUANTIZED_VALUE: f64 = 1e10;
 const MAX_GENERATED_VALUE: f64 = 1e12;
 use crate::expr::{EvaluatedExpr, Expression, MAX_EXPR_LEN};
 use crate::pool::{legacy_parity_score_expr, RankingMode};
-use crate::search::SearchConfig;
+use crate::search::{digit_signature, MatchFilters, SearchConfig};
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::UserFunction;
 use std::borrow::Cow;
@@ -533,14 +533,22 @@ pub fn quantize_value(v: f64) -> i64 {
     (v * QUANTIZE_SCALE).round() as i64
 }
 
-pub(crate) fn lhs_dedup_key(expr: &EvaluatedExpr) -> (u64, u64) {
-    (expr.value.to_bits(), expr.derivative.to_bits())
+pub(crate) fn lhs_dedup_key(
+    expr: &EvaluatedExpr,
+    filters: MatchFilters,
+) -> (u64, u64, Option<[usize; 9]>) {
+    (
+        expr.value.to_bits(),
+        expr.derivative.to_bits(),
+        filters.numeric_anagram.then(|| digit_signature(&expr.expr)),
+    )
 }
 
 /// Keeps one admissible RHS expression per bit-identical value.
 pub(crate) struct RhsRepresentatives<'a> {
     search: Option<&'a SearchConfig>,
     by_value: HashMap<u64, EvaluatedExpr>,
+    by_value_and_digits: HashMap<(u64, [usize; 9]), EvaluatedExpr>,
 }
 
 impl<'a> RhsRepresentatives<'a> {
@@ -548,20 +556,36 @@ impl<'a> RhsRepresentatives<'a> {
         Self {
             search,
             by_value: HashMap::new(),
+            by_value_and_digits: HashMap::new(),
         }
     }
 
     pub(crate) fn insert(&mut self, expr: Cow<'_, EvaluatedExpr>) {
-        use std::collections::hash_map::Entry;
-
-        if self
-            .search
-            .is_some_and(|search| !search.rhs_symbol_allowed(&expr.expr))
-        {
+        if self.search.is_some_and(|search| {
+            !search.rhs_symbol_allowed(&expr.expr) || !search.filters.allows_side(&expr)
+        }) {
             return;
         }
-        match self.by_value.entry(expr.value.to_bits()) {
-            Entry::Occupied(mut slot) if prefer_rhs(&expr.expr, &slot.get().expr, self.search) => {
+        let value = expr.value.to_bits();
+        if self
+            .search
+            .is_some_and(|search| search.filters.numeric_anagram)
+        {
+            let key = (value, digit_signature(&expr.expr));
+            Self::keep_preferred(self.by_value_and_digits.entry(key), expr, self.search);
+        } else {
+            Self::keep_preferred(self.by_value.entry(value), expr, self.search);
+        }
+    }
+
+    fn keep_preferred<K>(
+        entry: std::collections::hash_map::Entry<'_, K, EvaluatedExpr>,
+        expr: Cow<'_, EvaluatedExpr>,
+        search: Option<&SearchConfig>,
+    ) {
+        use std::collections::hash_map::Entry;
+        match entry {
+            Entry::Occupied(mut slot) if prefer_rhs(&expr.expr, &slot.get().expr, search) => {
                 slot.insert(expr.into_owned());
             }
             Entry::Vacant(slot) => {
@@ -572,11 +596,13 @@ impl<'a> RhsRepresentatives<'a> {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.by_value.len()
+        self.by_value.len() + self.by_value_and_digits.len()
     }
 
     pub(crate) fn into_values(self) -> impl Iterator<Item = EvaluatedExpr> {
-        self.by_value.into_values()
+        self.by_value
+            .into_values()
+            .chain(self.by_value_and_digits.into_values())
     }
 }
 
@@ -607,15 +633,28 @@ fn dedupe_rhs_expressions(
     representatives.into_values().collect()
 }
 
-fn dedupe_lhs_expressions(lhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
+pub(crate) fn compare_expression_order(a: &EvaluatedExpr, b: &EvaluatedExpr) -> std::cmp::Ordering {
+    a.expr
+        .complexity()
+        .cmp(&b.expr.complexity())
+        .then_with(|| a.expr.symbols().cmp(b.expr.symbols()))
+}
+
+fn dedupe_lhs_expressions(
+    lhs_raw: Vec<EvaluatedExpr>,
+    filters: MatchFilters,
+) -> Vec<EvaluatedExpr> {
     use std::collections::hash_map::Entry;
 
     let mut lhs_map: HashMap<_, EvaluatedExpr> = HashMap::new();
     for expr in lhs_raw {
-        let key = lhs_dedup_key(&expr);
+        if !filters.allows_side(&expr) {
+            continue;
+        }
+        let key = lhs_dedup_key(&expr, filters);
         match lhs_map.entry(key) {
             Entry::Occupied(mut slot) => {
-                if expr.expr.complexity() < slot.get().expr.complexity() {
+                if compare_expression_order(&expr, slot.get()).is_lt() {
                     *slot.get_mut() = expr;
                 }
             }
@@ -632,7 +671,10 @@ fn select_lhs_expressions(
     search: Option<&SearchConfig>,
 ) -> Vec<EvaluatedExpr> {
     if search.is_none_or(|config| config.lhs_value_dedup) {
-        dedupe_lhs_expressions(lhs_raw)
+        dedupe_lhs_expressions(
+            lhs_raw,
+            search.map_or_else(MatchFilters::default, |c| c.filters),
+        )
     } else {
         lhs_raw
     }
@@ -975,6 +1017,51 @@ fn should_include_expression(
         } else {
             config.generate_rhs && complexity <= config.max_rhs_complexity
         }
+}
+
+impl GenConfig {
+    /// Check a precomputed side against the active grammar and generation limits.
+    pub fn allows_evaluated_side(&self, side: &EvaluatedExpr) -> bool {
+        let lhs = side.expr.contains_x();
+        let (constants, unary_ops, binary_ops, limits) = if lhs {
+            (
+                &self.constants,
+                &self.unary_ops,
+                &self.binary_ops,
+                &self.symbol_max_counts,
+            )
+        } else {
+            (
+                self.rhs_constants.as_ref().unwrap_or(&self.constants),
+                self.rhs_unary_ops.as_ref().unwrap_or(&self.unary_ops),
+                self.rhs_binary_ops.as_ref().unwrap_or(&self.binary_ops),
+                self.rhs_symbol_max_counts
+                    .as_ref()
+                    .unwrap_or(&self.symbol_max_counts),
+            )
+        };
+        let symbols = side.expr.symbols();
+        let (enabled, complexity_limit) = if lhs {
+            (self.generate_lhs, self.max_lhs_complexity)
+        } else {
+            (self.generate_rhs, self.max_rhs_complexity)
+        };
+
+        enabled
+            && side.expr.complexity() <= complexity_limit
+            && symbols.len() <= self.max_length
+            && side.value.is_finite()
+            && side.value.abs() <= MAX_GENERATED_VALUE
+            && side.num_type >= self.min_num_type
+            && symbols.iter().all(|sym| match sym.seft() {
+                Seft::A => *sym == Symbol::X || constants.contains(sym),
+                Seft::B => unary_ops.contains(sym),
+                Seft::C => binary_ops.contains(sym),
+            })
+            && limits
+                .iter()
+                .all(|(&symbol, &max)| side.expr.count_symbol(symbol) <= max)
+    }
 }
 
 /// Calculate the appropriate complexity limit based on whether expression contains x
@@ -2058,11 +2145,14 @@ mod tests {
     #[test]
     fn test_dedupe_lhs_keeps_distinct_values_and_derivatives_within_old_bucket() {
         let delta = 0.49 / QUANTIZE_SCALE;
-        let lhs = dedupe_lhs_expressions(vec![
-            stub_eval_expr("x", 1.0, 1.0),
-            stub_eval_expr("x1+", 1.0 + delta, 1.0),
-            stub_eval_expr("xs", 1.0, 1.0 + delta),
-        ]);
+        let lhs = dedupe_lhs_expressions(
+            vec![
+                stub_eval_expr("x", 1.0, 1.0),
+                stub_eval_expr("x1+", 1.0 + delta, 1.0),
+                stub_eval_expr("xs", 1.0, 1.0 + delta),
+            ],
+            MatchFilters::default(),
+        );
 
         assert_eq!(lhs.len(), 3);
     }

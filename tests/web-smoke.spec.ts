@@ -168,3 +168,42 @@ test("web UI accepts legacy camelCase URL params for shared links", async ({ pag
   expect(renderedCount).toBeGreaterThan(0);
   expect(renderedCount).toBeLessThanOrEqual(5);
 });
+
+test("a worker error clears the pending search and allows a retry", async ({ page }) => {
+  let launches = 0;
+  await page.route("**/search-worker.js", async (route) => {
+    launches += 1;
+    if (launches !== 1) {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      contentType: "text/javascript",
+      body: `
+        self.onmessage = ({ data }) => {
+          if (data.type === "init") {
+            self.postMessage({ type: "ready", version: "test" });
+          } else if (data.type === "listPresets") {
+            self.postMessage({ type: "response", id: data.id, value: [] });
+          } else if (data.type === "search") {
+            throw new Error("Injected worker failure");
+          }
+        };
+      `,
+    });
+  });
+
+  await page.goto("/web/index.html");
+  const search = page.locator("#search-button");
+  await expect(search).toBeEnabled();
+  await page.fill("#target", "3.141592653589793");
+  await search.click();
+  await expect(page.locator("#status")).toContainText("Search failed");
+  await expect(search).toBeEnabled();
+
+  await search.click();
+  await expect(page.locator("#status")).toContainText("Found");
+  await expect(page.locator("#worker-status")).toContainText("WASM ready");
+  await expect(page.locator("#results-section")).toBeVisible();
+  expect(launches).toBe(2);
+});

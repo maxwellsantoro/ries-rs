@@ -3,7 +3,7 @@
 //! Finds equations by matching LHS and RHS expressions.
 
 use crate::eval::EvalContext;
-use crate::expr::EvaluatedExpr;
+use crate::expr::{EvaluatedExpr, Expression};
 use crate::pool::{RankingMode, TopKPool};
 use crate::profile::UserConstant;
 use crate::thresholds::{DEGENERATE_DERIVATIVE, DEGENERATE_TEST_THRESHOLD, NEWTON_FINAL_TOLERANCE};
@@ -15,6 +15,7 @@ mod newton;
 #[cfg(test)]
 mod tests;
 
+use crate::gen::compare_expression_order;
 use db::calculate_adaptive_search_radius;
 pub use db::{ComplexityTier, ExprDatabase, TieredExprDatabase};
 
@@ -436,7 +437,7 @@ impl SearchStats {
     ///
     /// Generation-side counts and timing are owned by the caller and are not
     /// merged. The largest-candidate-window record keeps whichever side observed
-    /// the wider window. Used to combine per-thread stats from the turbo matcher.
+    /// the wider window.
     #[cfg(feature = "parallel")]
     pub fn merge_search_counters(&mut self, other: &SearchStats) {
         self.lhs_tested = self.lhs_tested.saturating_add(other.lhs_tested);
@@ -879,6 +880,61 @@ pub struct SearchConfig {
     /// change ranked equations and solved roots. Streaming preserves the
     /// generated LHS stream. Defaults to false.
     pub lhs_value_dedup: bool,
+
+    /// Eligibility and canonical deduplication rules applied before ranking.
+    pub filters: MatchFilters,
+}
+
+/// Optional constraints on the equations admitted to the search pool.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MatchFilters {
+    pub min_equate_value: Option<f64>,
+    pub max_equate_value: Option<f64>,
+    pub min_match_distance: Option<f64>,
+    pub expression_constraints: Option<crate::gen::ExpressionConstraintOptions>,
+    pub numeric_anagram: bool,
+    pub canonical: bool,
+}
+
+impl MatchFilters {
+    pub(crate) fn allows_side(&self, side: &EvaluatedExpr) -> bool {
+        self.min_equate_value.is_none_or(|min| side.value >= min)
+            && self.max_equate_value.is_none_or(|max| side.value <= max)
+            && self.expression_constraints.is_none_or(|constraints| {
+                crate::gen::expression_respects_constraints(&side.expr, constraints)
+            })
+    }
+
+    pub(crate) fn allows_pair(&self, lhs: &Expression, rhs: &Expression) -> bool {
+        if !self.numeric_anagram {
+            return true;
+        }
+        let digits = digit_signature(lhs);
+        digits != [0; 9] && digits == digit_signature(rhs)
+    }
+
+    pub(crate) fn allows_error(&self, error: f64) -> bool {
+        self.min_match_distance.is_none_or(|min| error.abs() >= min)
+    }
+
+    /// Check all filters for a match produced outside the regular search.
+    pub fn allows_match(&self, m: &Match) -> bool {
+        self.allows_side(&m.lhs)
+            && self.allows_side(&m.rhs)
+            && self.allows_pair(&m.lhs.expr, &m.rhs.expr)
+            && self.allows_error(m.error)
+    }
+}
+
+pub(crate) fn digit_signature(expression: &Expression) -> [usize; 9] {
+    let mut counts = [0; 9];
+    for symbol in expression.symbols() {
+        let byte = *symbol as u8;
+        if (b'1'..=b'9').contains(&byte) {
+            counts[(byte - b'1') as usize] += 1;
+        }
+    }
+    counts
 }
 
 impl Default for SearchConfig {
@@ -906,6 +962,7 @@ impl Default for SearchConfig {
             derivative_margin: DEGENERATE_DERIVATIVE,
             ranking_mode: RankingMode::Complexity,
             lhs_value_dedup: false,
+            filters: MatchFilters::default(),
         }
     }
 }
@@ -914,6 +971,16 @@ impl SearchConfig {
     /// Build an explicit search context for this configuration.
     pub fn context(&self) -> SearchContext<'_> {
         SearchContext::new(self)
+    }
+
+    fn pool(&self) -> TopKPool {
+        TopKPool::new_with_diagnostics(
+            self.max_matches,
+            self.max_error,
+            self.show_db_adds,
+            self.ranking_mode,
+        )
+        .with_canonical_dedup(self.filters.canonical)
     }
 
     #[inline]
@@ -1098,6 +1165,16 @@ pub fn search_adaptive(
     search_config: &SearchConfig,
     level: u32,
 ) -> (Vec<Match>, SearchStats) {
+    search_adaptive_with_parallelism(base_config, search_config, level, true)
+}
+
+/// Adaptive search with explicit control over parallel expression generation.
+pub fn search_adaptive_with_parallelism(
+    base_config: &crate::gen::GenConfig,
+    search_config: &SearchConfig,
+    level: u32,
+    parallel: bool,
+) -> (Vec<Match>, SearchStats) {
     use crate::expr::EvaluatedExpr;
     use crate::gen::{lhs_dedup_key, RhsRepresentatives};
     use std::borrow::Cow;
@@ -1136,34 +1213,38 @@ pub fn search_adaptive(
         config.max_lhs_complexity = lhs_c;
         config.max_rhs_complexity = rhs_c;
 
+        let generate_serial = || {
+            crate::gen::generate_all_with_rhs_policy(
+                &config,
+                search_config.target,
+                &context.eval,
+                Some(search_config),
+            )
+        };
+        #[cfg(feature = "parallel")]
+        let generated = if parallel {
+            crate::gen::generate_parallel_with_rhs_policy(
+                &config,
+                search_config.target,
+                &context.eval,
+                Some(search_config),
+            )
+        } else {
+            generate_serial()
+        };
+        #[cfg(not(feature = "parallel"))]
         let generated = {
-            #[cfg(feature = "parallel")]
-            {
-                crate::gen::generate_parallel_with_rhs_policy(
-                    &config,
-                    search_config.target,
-                    &context.eval,
-                    Some(search_config),
-                )
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                crate::gen::generate_all_with_rhs_policy(
-                    &config,
-                    search_config.target,
-                    &context.eval,
-                    Some(search_config),
-                )
-            }
+            let _ = parallel;
+            generate_serial()
         };
 
         let lhs_count = if search_config.lhs_value_dedup {
             for expr in generated.lhs {
-                let key = lhs_dedup_key(&expr);
+                let key = lhs_dedup_key(&expr, search_config.filters);
                 lhs_map
                     .entry(key)
                     .and_modify(|existing| {
-                        if expr.expr.complexity() < existing.expr.complexity() {
+                        if compare_expression_order(&expr, existing).is_lt() {
                             *existing = expr.clone();
                         }
                     })
@@ -1327,11 +1408,13 @@ fn merge_priority_match(
     mut matches: Vec<Match>,
     priority: Match,
     max_matches: usize,
+    canonical: bool,
 ) -> Vec<Match> {
-    if let Some(idx) = matches
-        .iter()
-        .position(|m| m.lhs.expr == priority.lhs.expr && m.rhs.expr == priority.rhs.expr)
-    {
+    let key = canonical.then(|| crate::pool::canonical_match_key(&priority));
+    if let Some(idx) = matches.iter().position(|m| match &key {
+        Some(key) => crate::pool::canonical_match_key(m) == *key,
+        None => m.lhs.expr == priority.lhs.expr && m.rhs.expr == priority.rhs.expr,
+    }) {
         matches.remove(idx);
     }
     matches.insert(0, priority);
@@ -1360,13 +1443,7 @@ pub fn search_streaming_with_config(
     stats.matcher = Some(MatcherPath::Streaming);
     let context = SearchContext::new(search_config);
 
-    let initial_max_error = search_config.max_error.max(1e-12);
-    let mut pool = TopKPool::new_with_diagnostics(
-        search_config.max_matches,
-        initial_max_error,
-        search_config.show_db_adds,
-        search_config.ranking_mode,
-    );
+    let mut pool = search_config.pool();
 
     // === Pass 1: Build RHS database ===
     // Pass the original gen_config unchanged so the generator's internal
@@ -1420,6 +1497,9 @@ pub fn search_streaming_with_config(
             on_rhs: &mut |_| true,
             on_lhs: &mut |lhs| {
                 stats.lhs_count += 1;
+                if !search_config.filters.allows_side(lhs) {
+                    return true;
+                }
 
                 // Skip LHS with value too close to 0. Target 0 is exempt so
                 // `x = ln(1)` is reachable. See `prune_near_zero_lhs`.
@@ -1450,6 +1530,9 @@ pub fn search_streaming_with_config(
                         rhs_db.count_in_range(lhs.value - half, lhs.value + half),
                     );
                     for rhs in rhs_db.iter_tiers_in_range(lhs.value - half, lhs.value + half) {
+                        if !search_config.filters.allows_pair(&lhs.expr, &rhs.expr) {
+                            continue;
+                        }
                         stats.candidates_tested += 1;
                         if search_config.show_match_checks {
                             eprintln!(
@@ -1468,6 +1551,7 @@ pub fn search_streaming_with_config(
                                 search_config.target,
                             )
                             && pool.would_accept(0.0, true)
+                            && search_config.filters.allows_error(0.0)
                         {
                             let m = Match {
                                 lhs: lhs.clone(),
@@ -1505,6 +1589,9 @@ pub fn search_streaming_with_config(
                 stats.record_candidate_window(lhs, rhs_db.count_in_range(low, high));
 
                 for rhs in rhs_db.iter_tiers_in_range(low, high) {
+                    if !search_config.filters.allows_pair(&lhs.expr, &rhs.expr) {
+                        continue;
+                    }
                     stats.candidates_tested += 1;
                     if search_config.show_match_checks {
                         eprintln!(
@@ -1529,7 +1616,9 @@ pub fn search_streaming_with_config(
                         let is_exact =
                             match_is_exact(lhs.value, rhs.value, refined_x, search_config.target);
 
-                        if pool.would_accept(refined_error.abs(), is_exact) {
+                        if pool.would_accept(refined_error.abs(), is_exact)
+                            && search_config.filters.allows_error(refined_error)
+                        {
                             let m = Match {
                                 lhs: lhs.clone(),
                                 rhs: rhs.clone(),
@@ -1570,7 +1659,9 @@ pub fn search_streaming_with_config(
                         let is_exact =
                             match_is_exact(lhs.value, rhs.value, refined_x, search_config.target);
 
-                        if pool.would_accept(refined_error.abs(), is_exact) {
+                        if pool.would_accept(refined_error.abs(), is_exact)
+                            && search_config.filters.allows_error(refined_error)
+                        {
                             let m = Match {
                                 lhs: lhs.clone(),
                                 rhs: rhs.clone(),
@@ -1612,7 +1703,12 @@ pub fn search_streaming_with_config(
 
     let matches = pool.into_sorted();
     let matches = if let Some(priority_match) = best_stop_match {
-        merge_priority_match(matches, priority_match, search_config.max_matches)
+        merge_priority_match(
+            matches,
+            priority_match,
+            search_config.max_matches,
+            search_config.filters.canonical,
+        )
     } else {
         matches
     };
@@ -1637,18 +1733,12 @@ pub fn search_one_sided_with_stats_and_config(
     rhs_only.generate_lhs = false;
     rhs_only.generate_rhs = true;
 
-    let generated =
+    let mut generated =
         generate_all_with_rhs_policy(&rhs_only, config.target, &context.eval, Some(config));
     let gen_time = gen_start.elapsed();
 
     let search_start = SearchTimer::start();
-    let initial_max_error = config.max_error.max(1e-12);
-    let mut pool = TopKPool::new_with_diagnostics(
-        config.max_matches,
-        initial_max_error,
-        config.show_db_adds,
-        config.ranking_mode,
-    );
+    let mut pool = config.pool();
     let mut stats = SearchStats::new();
     stats.matcher = Some(MatcherPath::OneSided);
     let mut early_exit = false;
@@ -1675,7 +1765,16 @@ pub fn search_one_sided_with_stats_and_config(
     stats.rhs_count = generated.rhs.len();
     stats.lhs_tested = 1;
 
+    if !config.filters.allows_side(&lhs) {
+        stats.gen_time = gen_time;
+        stats.search_time = search_start.elapsed();
+        return (Vec::new(), stats);
+    }
+    generated.rhs.sort_unstable_by(compare_expression_order);
     for rhs in generated.rhs {
+        if !config.filters.allows_pair(&lhs.expr, &rhs.expr) {
+            continue;
+        }
         stats.candidates_tested += 1;
         if config.show_match_checks {
             eprintln!(
@@ -1686,7 +1785,7 @@ pub fn search_one_sided_with_stats_and_config(
 
         let error = rhs.value - config.target;
         let is_exact = match_is_exact(lhs.value, rhs.value, rhs.value, config.target);
-        if !pool.would_accept(error.abs(), is_exact) {
+        if !pool.would_accept(error.abs(), is_exact) || !config.filters.allows_error(error) {
             continue;
         }
 
@@ -1845,31 +1944,22 @@ pub fn search_parallel_with_stats_and_config(
     (matches, stats)
 }
 
-/// Turbo search: canonical generation plus a parallel match/Newton phase.
+/// Turbo search: materialized generation with parallel Newton refinement for wide windows.
 ///
-/// This trades the parallel path's byte-identical full-output guarantee for
-/// throughput. It returns the same single best (rank-1) match as serial search (see
-/// [`ExprDatabase::find_matches_turbo_with_stats_and_context`] for why), but the
-/// lower-ranked tail may differ from serial and may vary with thread count.
-/// Turbo also tolerates a larger materialized expression set than the serial /
-/// parallel paths before falling back to streaming, trading memory for speed.
+/// Candidate acceptance and ranking follow the serial matcher. Turbo tolerates
+/// a larger materialized expression set before falling back to streaming.
 #[cfg(feature = "parallel")]
 pub fn search_turbo_with_stats_and_config(
     gen_config: &crate::gen::GenConfig,
     config: &SearchConfig,
 ) -> (Vec<Match>, SearchStats) {
-    use crate::gen::{count_expressions_with_limit_and_context, generate_bounded_with_rhs_policy};
+    use crate::gen::generate_bounded_with_rhs_policy;
 
     if !config.target.is_finite() {
         return (Vec::new(), SearchStats::default());
     }
 
-    // A first-hit stopping condition is inherently order-dependent. Letting
-    // each turbo band stop at its own first qualifying match can skip a better
-    // match in that band (or in another band), violating turbo's rank-1 parity
-    // guarantee. Preserve both the requested stopping semantics and canonical
-    // result ordering by using the parallel-generation, serial-matching search
-    // for these configurations.
+    // A first-hit search has no use for speculative refinements past the stop.
     if config.stop_at_exact || config.stop_below.is_some() {
         return search_parallel_with_stats_and_config(gen_config, config);
     }
@@ -1878,40 +1968,19 @@ pub fn search_turbo_with_stats_and_config(
     // expression set than the default batch path before falling back to the
     // serial streaming matcher. (The serial/parallel paths stream above ~2M to
     // bound memory; turbo's whole purpose is to use more resources.)
-    const SERIAL_BATCH_LIMIT: usize = 2_000_000;
     const MAX_EXPRESSIONS_BEFORE_STREAMING: usize = 64_000_000;
     let context = SearchContext::new(config);
 
     let gen_start = SearchTimer::start();
-    let generated = if count_expressions_with_limit_and_context(
+    let Some(generated) = generate_bounded_with_rhs_policy(
         gen_config,
         config.target,
         &context.eval,
-        SERIAL_BATCH_LIMIT,
-    )
-    .is_some()
-    {
-        generate_bounded_with_rhs_policy(
-            gen_config,
-            config.target,
-            &context.eval,
-            SERIAL_BATCH_LIMIT,
-            false,
-            Some(config),
-        )
-        .expect("preflight count established serial batch generation is within limit")
-    } else {
-        let Some(generated) = generate_bounded_with_rhs_policy(
-            gen_config,
-            config.target,
-            &context.eval,
-            MAX_EXPRESSIONS_BEFORE_STREAMING,
-            false,
-            Some(config),
-        ) else {
-            return search_streaming_with_config(gen_config, config);
-        };
-        generated
+        MAX_EXPRESSIONS_BEFORE_STREAMING,
+        false,
+        Some(config),
+    ) else {
+        return search_streaming_with_config(gen_config, config);
     };
     let gen_time = gen_start.elapsed();
 

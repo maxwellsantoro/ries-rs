@@ -27,7 +27,7 @@ pub struct Args {
     #[arg(short = 'l', long, default_value = "2")]
     pub level: String,
 
-    /// Maximum number of matches to display
+    /// Maximum number of matches to display (the search pool is capped at 1,000,000)
     #[arg(short = 'n', long = "max-matches", default_value = "16")]
     pub max_matches: usize,
 
@@ -119,15 +119,11 @@ pub struct Args {
     #[arg(long, default_value = "true")]
     pub parallel: bool,
 
-    /// Turbo mode: parallelize the match/Newton phase across all cores.
+    /// Refine wide candidate windows in parallel and admit results in serial order.
     ///
-    /// Unlike `--parallel` (which parallelizes only generation and is
-    /// byte-identical to serial), turbo also runs LHS matching on every core and
-    /// uses more memory. It returns the same single best match as serial search,
-    /// but the lower-ranked results may differ and may vary with thread count.
-    /// First-hit options such as `--stop-at-exact` fall back to serial search so
-    /// discovery order cannot violate that best-match guarantee.
-    /// Use it for raw speed; use `--deterministic` for reproducibility.
+    /// Materialized serial and turbo runs return the same ranked matches.
+    /// Turbo can materialize larger searches before switching to streaming.
+    /// First-hit options such as `--stop-at-exact` use serial matching.
     #[arg(long)]
     pub turbo: bool,
 
@@ -249,7 +245,7 @@ pub struct Args {
     #[arg(long)]
     pub define: Vec<String>,
 
-    /// Maximum acceptable error for matches (default: 1% of |target|)
+    /// Maximum acceptable absolute error (default: 1% of |target|, with a 1e-12 floor)
     #[arg(long, alias = "mad")]
     pub max_match_distance: Option<f64>,
 
@@ -368,7 +364,7 @@ pub struct Args {
     #[arg(long = "no-slow-messages")]
     pub no_slow_messages: bool,
 
-    /// Restrict matches to those sharing target digit-anagram signature
+    /// Require both sides to use the same nonempty multiset of digits
     #[arg(long = "numeric-anagram")]
     pub numeric_anagram: bool,
 

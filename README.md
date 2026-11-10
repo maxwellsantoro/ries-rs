@@ -146,16 +146,15 @@ Deterministic machine-readable output:
 ries-rs 3.141592653589793 --deterministic --json --emit-manifest run.json
 ```
 
-Turbo mode (parallelize matching across all cores for maximum speed):
+Turbo mode can refine wide candidate windows in parallel.
 
 ```bash
 ries-rs 2.506314 -l3 --turbo
 ```
 
-`--turbo` runs the match/Newton phase on every core. Materialized serial and
-turbo searches aim for the same best match. The lower-ranked tail may differ
-between runs and thread counts. Use `--deterministic` when you need reproducible
-output.
+`--turbo` refines wide RHS candidate windows in parallel and admits the results
+in serial order. Materialized serial and turbo searches return the same ranked
+matches. Turbo can materialize larger searches before switching to streaming.
 
 Search preserves distinct left-hand sides by default. For a materialized search,
 `--lhs-value-dedup` can reduce matching work by merging left-hand sides with the
@@ -200,11 +199,9 @@ for end-to-end CLI runs and generation-only scaling:
   near break-even on this workload because it parallelizes generation only,
   while the dominant matching/Newton phase stays serial to preserve
   byte-identical results.
-- `--turbo` parallelizes the matching/Newton phase itself, trading the
-  byte-identical guarantee (and extra memory) for large end-to-end speedups on
-  multi-core machines — measured `4x`–`35x` over the serial path on level-3
-  targets (8 cores). It still returns the same single best match as serial; see
-  [`docs/SEARCH_MODEL.md`](docs/SEARCH_MODEL.md) for the turbo contract.
+- `--turbo` parallelizes Newton refinement for wide RHS candidate windows. It
+  uses the same traversal, adaptive gates, and result pool as serial matching.
+  See [the search model](docs/SEARCH_MODEL.md#turbo-contract) for the contract.
 - Generation-only scaling:
   [`docs/benchmarks/2026-02-25-generation-parallel-scaling.md`](docs/benchmarks/2026-02-25-generation-parallel-scaling.md)
   reports `3.18x` median speedup for parallel generation.

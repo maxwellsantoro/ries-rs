@@ -16,13 +16,12 @@ use clap::Parser;
 use cli::{
     build_gen_config, build_json_output, build_manifest, canon_reduction_enabled,
     cli_level_to_complexity, compute_significant_digits_tolerance,
-    expression_constraints_from_args, filter_matches, format_bytes_binary, format_value,
-    handle_special_modes, load_runtime_profile, normalize_legacy_args, parse_diagnostics,
-    parse_display_format, parse_memory_size_bytes, parse_symbol_sets, peak_memory_bytes,
-    print_footer, print_header, print_match_absolute, print_match_relative,
-    print_show_work_details, print_symbol_table, run_search, run_stability_check, Args, CliExit,
-    DisplayFormat, ExpressionConstraintArgs, NormalizedArgs, PostProcessOptions,
-    StabilityRunConfig,
+    expression_constraints_from_args, format_bytes_binary, format_value, handle_special_modes,
+    load_runtime_profile, normalize_legacy_args, parse_diagnostics, parse_display_format,
+    parse_memory_size_bytes, parse_symbol_sets, peak_memory_bytes, print_footer, print_header,
+    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table,
+    run_search, run_stability_check, Args, CliExit, DisplayFormat, ExpressionConstraintArgs,
+    NormalizedArgs, StabilityRunConfig,
 };
 #[cfg(test)]
 use ries_rs::solve_for_x_rhs_expression;
@@ -83,7 +82,6 @@ fn main() {
             "Warning: --precision flag specified but ries-rs was not compiled with 'highprec' feature."
         );
         eprintln!("         Recompile with: cargo build --features highprec");
-        eprintln!("         Using standard f64 precision (~15 digits) for verification.");
     }
 
     let mut trig_argument_scale = eval::DEFAULT_TRIG_ARGUMENT_SCALE;
@@ -217,18 +215,31 @@ fn main() {
         }
     };
 
-    // Determine pool size based on mode
+    // Report mode retains extra candidates for its categories.
+    const MAX_POOL_SIZE: usize = 1_000_000;
     let use_report = args.report && !args.classic;
-    let effective_max_matches = if use_report {
-        args.max_matches.max(args.top_k * 10)
-    } else {
-        args.max_matches
+    let Some((effective_max_matches, pool_size)) = (|| {
+        let displayed = if use_report {
+            args.max_matches.max(args.top_k.checked_mul(10)?)
+        } else {
+            args.max_matches
+        };
+        let capacity = displayed.checked_mul(if use_report { 10 } else { 1 })?;
+        (capacity <= MAX_POOL_SIZE).then_some((displayed, capacity))
+    })() else {
+        eprintln!(
+            "Error: --max-matches and --top-k must request a search pool of at most {MAX_POOL_SIZE} entries."
+        );
+        std::process::exit(2);
     };
-    let pool_size = if use_report {
-        effective_max_matches * 10
-    } else {
-        effective_max_matches
-    };
+
+    if args
+        .max_match_distance
+        .is_some_and(|distance| !distance.is_finite() || distance < 0.0)
+    {
+        eprintln!("Error: --max-match-distance must be finite and nonnegative.");
+        std::process::exit(2);
+    }
 
     // Classic mode = "sniper mode": stop early like original RIES
     // Also stop at exact for --ie/--re exact modes
@@ -240,11 +251,6 @@ fn main() {
         args.stop_below
     };
 
-    let (allowed_effective, excluded_effective) = parse_symbol_sets(
-        args.only_symbols.as_deref(),
-        args.exclude.as_deref(),
-        enable_arg.as_deref(),
-    );
     let (rhs_allowed_symbols, rhs_excluded_symbols) = parse_symbol_sets(
         args.only_symbols_rhs.as_deref(),
         args.exclude_rhs.as_deref(),
@@ -260,6 +266,19 @@ fn main() {
         pool::RankingMode::Complexity
     };
 
+    let (expression_constraints, expression_constraints_active) = expression_constraints_from_args(
+        &profile,
+        ExpressionConstraintArgs {
+            rational_exponents: args.rational_exponents,
+            any_exponents: args.any_exponents,
+            rational_trig_args: args.rational_trig_args,
+            any_trig_args: args.any_trig_args,
+            max_trig_cycles: args.max_trig_cycles,
+        },
+    );
+    let canon_enabled = (args.canon_simplify
+        || canon_reduction_enabled(args.canon_reduction.as_deref()))
+        && !args.no_canon_simplify;
     let mut search_config = search::SearchConfig {
         target,
         max_matches: pool_size,
@@ -290,6 +309,14 @@ fn main() {
             .unwrap_or(DEGENERATE_DERIVATIVE),
         ranking_mode,
         lhs_value_dedup: args.lhs_value_dedup,
+        filters: search::MatchFilters {
+            min_equate_value: args.min_equate_value,
+            max_equate_value: args.max_equate_value,
+            min_match_distance: args.min_match_distance,
+            expression_constraints: expression_constraints_active.then_some(expression_constraints),
+            numeric_anagram: args.numeric_anagram,
+            canonical: canon_enabled,
+        },
     };
 
     // When --match-all-digits is enabled, set tolerance based on target's significant digits
@@ -341,71 +368,47 @@ fn main() {
         }
     }
 
-    // Build symbol filters for fast path
-    let mut excluded_symbols: std::collections::HashSet<u8> =
-        excluded_effective.unwrap_or_default();
-    if let Some(rhs_excluded) = &search_config.rhs_excluded_symbols {
-        excluded_symbols.extend(rhs_excluded.iter().copied());
-    }
+    let use_parallel = !args.deterministic && args.parallel;
+    let use_turbo = !args.deterministic && args.turbo;
 
-    let fast_allowed_storage: Option<std::collections::HashSet<u8>> = match (
-        allowed_effective.as_ref(),
-        search_config.rhs_allowed_symbols.as_ref(),
-    ) {
-        (Some(all_set), Some(rhs_set)) => Some(all_set.intersection(rhs_set).copied().collect()),
-        (Some(all_set), None) => Some(all_set.clone()),
-        (None, Some(rhs_set)) => Some(rhs_set.clone()),
-        (None, None) => None,
-    };
-
-    // Build fast match config
-    let fast_config = FastMatchConfig {
-        excluded_symbols: &excluded_symbols,
-        allowed_symbols: fast_allowed_storage.as_ref(),
-        min_num_type: min_type,
-    };
-
-    // Fast path: check for simple exact matches before expensive generation
-    // This handles cases like pi, e, sqrt(2), phi, integers, etc. instantly
-    let (matches, stats, search_elapsed) = if stop_at_exact || args.classic {
-        // Only use fast path when we're looking for quick results
-        if let Some(fast_match) = ries_rs::find_fast_match_with_context(
+    // A quick result must satisfy the same limits as an ordinary match.
+    let fast_match = if stop_at_exact && search_config.max_matches > 0 {
+        let excluded = std::collections::HashSet::new();
+        let fast_config = FastMatchConfig {
+            excluded_symbols: search_config
+                .rhs_excluded_symbols
+                .as_ref()
+                .unwrap_or(&excluded),
+            allowed_symbols: search_config.rhs_allowed_symbols.as_ref(),
+            min_num_type: min_type,
+        };
+        ries_rs::find_fast_match_with_context(
             target,
             &eval_context,
             &fast_config,
             &gen_config.symbol_table,
-        ) {
-            use search::SearchStats;
-            let fast_stats = SearchStats {
-                matcher: Some(search::MatcherPath::FastMatch),
-                lhs_count: 1,
-                rhs_count: 1,
-                search_time: std::time::Duration::from_micros(1),
-                ..Default::default()
-            };
-            (vec![fast_match], fast_stats, Duration::from_micros(1))
-        } else {
-            // No fast match found, do full search
-            // Deterministic mode disables parallelism for reproducible results
-            let use_parallel = !args.deterministic && args.parallel;
-            let use_turbo = !args.deterministic && args.turbo;
-            let result = run_search(
-                &gen_config,
-                &search_config,
-                use_streaming,
-                use_parallel,
-                args.one_sided,
-                args.adaptive,
-                use_turbo,
-                level_value as u32,
-            );
-            (result.matches, result.stats, result.elapsed)
-        }
+        )
+        .filter(|m| {
+            m.error.abs() <= search_config.max_error
+                && gen_config.allows_evaluated_side(&m.lhs)
+                && gen_config.allows_evaluated_side(&m.rhs)
+                && search_config.filters.allows_match(m)
+        })
     } else {
-        // Not in quick mode, always do full search
-        // Deterministic mode disables parallelism for reproducible results
-        let use_parallel = !args.deterministic && args.parallel;
-        let use_turbo = !args.deterministic && args.turbo;
+        None
+    };
+
+    let (mut matches, stats, elapsed) = if let Some(m) = fast_match {
+        let elapsed = Duration::from_micros(1);
+        let stats = search::SearchStats {
+            matcher: Some(search::MatcherPath::FastMatch),
+            lhs_count: 1,
+            rhs_count: 1,
+            search_time: elapsed,
+            ..Default::default()
+        };
+        (vec![m], stats, elapsed)
+    } else {
         let result = run_search(
             &gen_config,
             &search_config,
@@ -419,16 +422,10 @@ fn main() {
         (result.matches, result.stats, result.elapsed)
     };
 
-    let mut matches = matches;
-
-    // Deterministic mode requires stable output throughout. Turbo's contract is
-    // narrower, but it still guarantees that the canonical best match is rank
-    // one, so normalize its merged/fallback result before presenting it.
     if args.deterministic || args.turbo {
         matches.sort_by(|a, b| pool::compare_matches(a, b, ranking_mode));
     }
 
-    let use_parallel = !args.deterministic && args.parallel;
     let stability_results = if args.stability_check {
         Some(run_stability_check(
             matches.clone(),
@@ -440,7 +437,7 @@ fn main() {
                 use_parallel,
                 one_sided: args.one_sided,
                 adaptive: args.adaptive,
-                turbo: !args.deterministic && args.turbo,
+                turbo: use_turbo,
                 level: level_value as u32,
             },
         ))
@@ -448,47 +445,53 @@ fn main() {
         None
     };
 
-    let (expression_constraints, expression_constraints_active) = expression_constraints_from_args(
-        &profile,
-        ExpressionConstraintArgs {
-            rational_exponents: args.rational_exponents,
-            any_exponents: args.any_exponents,
-            rational_trig_args: args.rational_trig_args,
-            any_trig_args: args.any_trig_args,
-            max_trig_cycles: args.max_trig_cycles,
-        },
-    );
-    let canon_enabled = (args.canon_simplify
-        || canon_reduction_enabled(args.canon_reduction.as_deref()))
-        && !args.no_canon_simplify;
-    filter_matches(
-        &mut matches,
-        PostProcessOptions {
-            min_equate_value: args.min_equate_value,
-            max_equate_value: args.max_equate_value,
-            min_match_distance: args.min_match_distance,
-            expression_constraints: expression_constraints_active
-                .then_some(&expression_constraints),
-            numeric_anagram: args.numeric_anagram,
-            canon_enabled,
-        },
-    );
-
-    let elapsed = search_elapsed;
-
     // Parse the output format once for both text and JSON modes
     let output_format = parse_display_format(&args.format);
 
-    // Capture matches for manifest before Report::generate consumes them
-    let manifest_matches: Vec<search::Match> = if args.emit_manifest.is_some() {
-        matches.clone()
-    } else {
-        Vec::new()
-    };
+    if let Some(path) = &args.emit_manifest {
+        let manifest = build_manifest(
+            &args,
+            &gen_config,
+            &search_config,
+            level_value,
+            effective_max_matches,
+            &stats,
+            &matches,
+        );
+        let json = manifest.to_json().unwrap_or_else(|err| {
+            eprintln!("Error serializing manifest: {err}");
+            std::process::exit(1);
+        });
+        if let Err(err) = std::fs::write(path, json) {
+            eprintln!("Error writing manifest: {err}");
+            std::process::exit(1);
+        }
+        if !args.no_slow_messages {
+            eprintln!("Manifest written to {}", path.display());
+        }
+    }
+
+    let verification = args
+        .precision
+        .filter(|_| cfg!(feature = "highprec"))
+        .map(|bits| {
+            let results = verify_matches_highprec_with_trig_scale(
+                matches
+                    .iter()
+                    .take(effective_max_matches)
+                    .cloned()
+                    .collect(),
+                target,
+                bits,
+                &profile.constants,
+                trig_argument_scale,
+            );
+            (bits, results)
+        });
 
     if args.json {
         let shown_count = matches.len().min(effective_max_matches);
-        let json_output = build_json_output(
+        let mut json_output = build_json_output(
             target,
             level_value,
             max_lhs_complexity,
@@ -510,46 +513,16 @@ fn main() {
             args.solve && !args.no_solve,
         );
 
+        if let Some((bits, results)) = &verification {
+            json_output.high_precision_verification =
+                Some(cli::json_types::JsonVerification::new(*bits, results));
+        }
+
         match serde_json::to_string_pretty(&json_output) {
             Ok(json) => println!("{json}"),
             Err(e) => {
                 eprintln!("Error serializing JSON output: {}", e);
                 std::process::exit(1);
-            }
-        }
-
-        if let Some(manifest_path) = &args.emit_manifest {
-            let manifest = build_manifest(
-                target,
-                level_value,
-                max_lhs_complexity,
-                max_rhs_complexity,
-                args.deterministic,
-                args.parallel,
-                search_config.max_error,
-                effective_max_matches,
-                ranking_mode,
-                search_config.lhs_value_dedup,
-                stats.matcher,
-                &profile.constants,
-                &args.exclude,
-                &args.only_symbols,
-                &manifest_matches,
-            );
-
-            match manifest.to_json() {
-                Ok(json) => {
-                    if let Err(e) = std::fs::write(manifest_path, json) {
-                        eprintln!("Error writing manifest: {}", e);
-                        std::process::exit(1);
-                    } else if !args.no_slow_messages {
-                        eprintln!("Manifest written to {}", manifest_path.display());
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error serializing manifest: {}", e);
-                    std::process::exit(1);
-                }
             }
         }
 
@@ -674,60 +647,12 @@ fn main() {
         );
     }
 
-    // High-precision verification if requested
-    if let Some(precision_bits) = args.precision {
-        println!();
-        println!(
-            "  === High-Precision Verification ({} bits) ===",
-            precision_bits
-        );
-        let hp_results = verify_matches_highprec_with_trig_scale(
-            manifest_matches.clone(),
-            target,
-            precision_bits,
-            &profile.constants,
-            trig_argument_scale,
-        );
+    if let Some((bits, results)) = verification {
+        println!("\n  === High-Precision Verification ({bits} bits) ===");
         print!(
             "{}",
-            format_verification_report(&hp_results, effective_max_matches)
+            format_verification_report(&results, effective_max_matches)
         );
-    }
-
-    // Emit manifest if requested
-    if let Some(manifest_path) = &args.emit_manifest {
-        let manifest = build_manifest(
-            target,
-            level_value,
-            max_lhs_complexity,
-            max_rhs_complexity,
-            args.deterministic,
-            args.parallel,
-            search_config.max_error,
-            effective_max_matches,
-            ranking_mode,
-            search_config.lhs_value_dedup,
-            stats.matcher,
-            &profile.constants,
-            &args.exclude,
-            &args.only_symbols,
-            &manifest_matches,
-        );
-
-        match manifest.to_json() {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(manifest_path, json) {
-                    eprintln!("Error writing manifest: {}", e);
-                    std::process::exit(1);
-                } else if !args.no_slow_messages {
-                    eprintln!("Manifest written to {}", manifest_path.display());
-                }
-            }
-            Err(e) => {
-                eprintln!("Error serializing manifest: {}", e);
-                std::process::exit(1);
-            }
-        }
     }
 }
 

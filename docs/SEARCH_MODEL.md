@@ -78,7 +78,7 @@ Search implementations:
 
 - sequential: `search_with_stats_and_config`
 - parallel: `search_parallel_with_stats_and_config` (parallel generation, serial batch matching/Newton)
-- turbo: `search_turbo_with_stats_and_config` (canonical generation, parallel matching/Newton; alternative contract, see below)
+- turbo: `search_turbo_with_stats_and_config` (canonical generation, parallel Newton refinement within wide windows)
 - streaming: `search_streaming_with_config`
 - one-sided: `search_one_sided_with_stats_and_config`
 
@@ -197,8 +197,9 @@ Ordering is:
 This final lexical tie-break is what makes total ordering explicit and stable.
 
 Search keeps one admissible RHS representative for each bit-identical value.
-It applies the RHS symbol filters before choosing by the configured ranking
-mode. Parity compares the signed score first. Both modes compare complexity
+It applies RHS symbol, value, and expression filters before choosing by the
+configured ranking mode. Numeric-anagram searches keep a representative per
+value and digit multiset. Parity compares the signed score first. Both modes compare complexity
 and then postfix symbol order. Equations with the same RHS value can differ
 on the left, while all use the same chosen RHS expression.
 
@@ -214,6 +215,13 @@ comparator as batch search. The streaming traversal and candidate windows can
 admit a different set of matches, so an automatic fallback does not promise
 the same rank one or ordered top k as a materialized run. The CLI `--max-memory`
 option selects a strategy; it does not enforce an RSS limit.
+
+Value bounds, expression constraints, numeric anagrams, and minimum match
+distance are applied before matches enter the pool or trigger an early stop.
+With canonical simplification enabled, the pool keeps the highest-ranked
+equation for each canonical pair. An explicit maximum match distance bounds
+the reported absolute error, including for exact rows. The CLI caps its pool
+at 1,000,000 entries after applying report-mode sizing.
 
 ### Measured cost of the LHS key
 
@@ -277,6 +285,7 @@ precedes total complexity, so a more complex exact match can rank higher.
 In deterministic mode, `ries-rs`:
 
 - disables parallel search execution
+- orders materialized candidates with explicit complexity and postfix tie-breaks
 - applies stable final sorting with the canonical comparator
 
 This yields stable output ordering for identical:
@@ -291,37 +300,17 @@ Practical caveat:
 
 - floating-point behavior is deterministic within a given build/runtime environment, but results should still be treated as build-config specific unless a manifest is recorded (`--emit-manifest`).
 
-## Turbo Contract (Alternative)
+## Turbo Contract
 
-`--turbo` deliberately opts out of the determinism contract above to parallelize
-the match/Newton phase across all cores. Materialized serial and turbo searches
-use the same LHS policy. Turbo is for throughput and `--deterministic` disables
-it.
+`--turbo` can evaluate Newton refinements in parallel within wide RHS windows.
+Candidate admission uses the same traversal and the same single adaptive pool
+as serial matching. Materialized runs with the same inputs therefore return
+the same ordered equations, including rank one. First-hit options use serial
+matching.
 
-What turbo **guarantees**:
-
-- the single best (rank-1) match is identical to materialized serial search — the global best
-  is rank 1 in whichever band owns its LHS and is never evicted, and a band's
-  adaptive scan radius is always at least as wide as serial's, so turbo cannot
-  miss a match serial found;
-- every returned match is a genuine, fully-refined equation within `max_error`.
-
-What turbo **does not** guarantee:
-
-- the lower-ranked tail. When more matches qualify than the requested count, each
-  parallel band keeps only its own top-k, so the merged result is a valid top-k
-  but may differ from serial's choice among equally-ranked candidates and may
-  vary with thread count.
-
-First-hit stopping options (`--stop-at-exact` and `--stop-below`) are
-order-dependent. When either is active, turbo falls back to the canonical
-serial pipeline rather than applying the stop independently in parallel bands;
-the ordinary parallel-generation path does the same to preserve its
-byte-identical contract.
-
-Turbo also trades memory for speed: it materializes a much larger expression set
-than the streaming fallback (hundreds of MB at level 3), which is what lets the
-match phase run in parallel.
+Turbo can materialize a larger search than the standard batch path. When one
+path falls back to streaming, the two paths can discover different matches.
+Speculative refinements count toward the reported Newton call total.
 
 ## Reproducible CLI Output Modes
 
@@ -335,6 +324,17 @@ Both formats record `matcher`, `lhs_value_dedup` (requested), and
 `streaming` and `lhs_value_dedup_applied` is false even if the heuristic was
 requested. The top-level CLI JSON `streaming` flag reflects the actual path.
 Older manifests may omit these fields.
+
+New CLI manifests record the resolved settings under `config.replay`. The
+`generation` object contains the ordered symbol lists, effective weights,
+per-side limits, and definitions for custom symbols. Symbols are encoded as
+RIES byte values. The `matching` object records the pool size, filters,
+trig scale, and refinement settings. The `output` object records display and
+verification choices.
+
+With the `highprec` feature, `--precision` verifies the top results in text
+and JSON modes. JSON includes the verification results under
+`high_precision_verification`.
 
 Recommended reproducibility workflow:
 
