@@ -1884,6 +1884,7 @@ fn manifest_replay_round_trip_and_rejects_unsafe_arguments() {
     let script = format!("{}/tools/replay_manifest.py", env!("CARGO_MANIFEST_DIR"));
     let replay = || {
         Command::new(python)
+            .env("PYTHONIOENCODING", "cp1252")
             .args([
                 &script,
                 path.to_str().unwrap(),
@@ -1908,7 +1909,7 @@ fn manifest_replay_round_trip_and_rejects_unsafe_arguments() {
                 "--symbol-weights=:2:100",
                 "--S-RHS=12+",
                 "--trig-argument-scale=2",
-                "--user-constant=4:foo:test:1.2",
+                "--user-constant=4:foo:test π:1.2",
             ]);
         }
         run_ries(&args);
@@ -1919,6 +1920,11 @@ fn manifest_replay_round_trip_and_rejects_unsafe_arguments() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("Successfully reproduced"), "{stdout}");
+        if custom {
+            assert!(stdout.contains(r"test \u03c0"), "{stdout}");
+        }
     }
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     manifest["config"]["replay"]["cli_args"]

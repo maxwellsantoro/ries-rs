@@ -110,41 +110,43 @@ def build_command_args(config: Dict[str, Any]) -> List[str]:
 def check_parity(original_results: List[Dict], replayed_results: List[Dict]) -> bool:
     """Compare the primary match properties for reproduction success."""
     if len(original_results) != len(replayed_results):
-        print(f"❌ Match count mismatch! Original: {len(original_results)}, Replayed: {len(replayed_results)}")
+        print(f"Match count mismatch! Original: {len(original_results)}, Replayed: {len(replayed_results)}")
         return False
 
     success = True
     for i, (orig, repl) in enumerate(zip(original_results, replayed_results)):
         # Check symbolic identity
         if orig["lhs_postfix"] != repl["lhs_postfix"] or orig["rhs_postfix"] != repl["rhs_postfix"]:
-            print(f"❌ Index {i} symbolic mismatch.")
+            print(f"Index {i} symbolic mismatch.")
             print(f"   Original: {orig['lhs_postfix']} = {orig['rhs_postfix']}")
             print(f"   Replayed: {repl['lhs_postfix']} = {repl['rhs_postfix']}")
             success = False
 
         for key in ("complexity", "is_exact"):
             if key in orig and orig[key] != repl.get(key):
-                print(f"❌ Index {i} differs in {key}.")
+                print(f"Index {i} differs in {key}.")
                 success = False
         for key in ("x_value", "error"):
             if key in orig and not math.isclose(orig[key], repl[key], rel_tol=0, abs_tol=1e-12):
-                print(f"❌ Index {i} differs in {key}.")
+                print(f"Index {i} differs in {key}.")
                 success = False
 
     return success
 
 
 def main():
+    # Paths and symbol descriptions can contain characters outside the console encoding.
+    sys.stdout.reconfigure(errors="backslashreplace")
     args = parse_args()
 
     if not os.path.isfile(args.manifest):
         print(f"Error: Manifest file '{args.manifest}' not found.", file=sys.stderr)
         sys.exit(1)
 
-    with open(args.manifest, "r") as f:
+    with open(args.manifest, encoding="utf-8") as f:
         try:
             manifest = json.load(f)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
             print(f"Error parsing manifest: {e}", file=sys.stderr)
             sys.exit(1)
 
@@ -177,22 +179,22 @@ def main():
                                              "--emit-manifest", temp_path, "--", cmd_args[0]]
 
         print(f"Executing: {' '.join(full_cmd)}")
-        
         # Run the command and capture output so it doesn't pollute the terminal
         result = subprocess.run(
-            full_cmd, 
-            stdout=subprocess.PIPE, 
+            full_cmd,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            encoding="utf-8",
+            errors="replace",
         )
 
         if result.returncode != 0:
-            print("❌ Execution failed!", file=sys.stderr)
+            print("Execution failed!", file=sys.stderr)
             print(result.stderr, file=sys.stderr)
             sys.exit(1)
 
         # Parse the new manifest
-        with open(temp_path, "r") as f:
+        with open(temp_path, encoding="utf-8") as f:
             new_manifest = json.load(f)
 
         # Detect legacy settings that the compact summary cannot reproduce.
@@ -217,10 +219,10 @@ def main():
         )
 
         if is_parity:
-            print(f"✅ Successfully reproduced {len(new_manifest['results'])} matches!")
+            print(f"Successfully reproduced {len(new_manifest['results'])} matches!")
             sys.exit(0)
         else:
-            print("❌ Reproduction failed. Outputs diverged.")
+            print("Reproduction failed. Outputs diverged.")
             sys.exit(1)
 
     finally:
