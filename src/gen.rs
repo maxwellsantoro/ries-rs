@@ -510,11 +510,11 @@ pub struct StreamingCallbacks<'a> {
     pub on_lhs: &'a mut dyn FnMut(&EvaluatedExpr) -> bool,
 }
 
-/// Quantize a value to reduce floating-point noise
-/// Key for LHS deduplication: (quantized value, quantized derivative)
+/// Pair of quantized values used by callers of [`quantize_value`].
 pub type LhsKey = (i64, i64);
 
-/// Uses ~8 significant digits for deduplication
+/// Round a value into a legacy numerical bucket. Search deduplication uses
+/// exact floating-point keys because a bucket can contain distinct roots.
 #[inline]
 pub fn quantize_value(v: f64) -> i64 {
     if !v.is_finite() || v.abs() > MAX_QUANTIZED_VALUE {
@@ -530,12 +530,16 @@ pub fn quantize_value(v: f64) -> i64 {
     (v * QUANTIZE_SCALE).round() as i64
 }
 
+pub(crate) fn lhs_dedup_key(expr: &EvaluatedExpr) -> (u64, u64) {
+    (expr.value.to_bits(), expr.derivative.to_bits())
+}
+
 fn dedupe_rhs_expressions(rhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
     use std::collections::hash_map::Entry;
 
-    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
+    let mut rhs_map: HashMap<_, EvaluatedExpr> = HashMap::new();
     for expr in rhs_raw {
-        let key = quantize_value(expr.value);
+        let key = expr.value.to_bits();
         match rhs_map.entry(key) {
             Entry::Occupied(mut slot) => {
                 if expr.expr.complexity() < slot.get().expr.complexity() {
@@ -553,9 +557,9 @@ fn dedupe_rhs_expressions(rhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
 fn dedupe_lhs_expressions(lhs_raw: Vec<EvaluatedExpr>) -> Vec<EvaluatedExpr> {
     use std::collections::hash_map::Entry;
 
-    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
+    let mut lhs_map: HashMap<_, EvaluatedExpr> = HashMap::new();
     for expr in lhs_raw {
-        let key = (quantize_value(expr.value), quantize_value(expr.derivative));
+        let key = lhs_dedup_key(&expr);
         match lhs_map.entry(key) {
             Entry::Occupied(mut slot) => {
                 if expr.expr.complexity() < slot.get().expr.complexity() {
@@ -1958,15 +1962,14 @@ mod tests {
     }
 
     #[test]
-    fn test_dedupe_rhs_keeps_simplest_expression_within_quantized_bucket() {
+    fn test_dedupe_rhs_keeps_distinct_values_within_old_bucket() {
         let base = 2.0;
         let rhs = dedupe_rhs_expressions(vec![
             stub_eval_expr("11+", base + 0.49 / QUANTIZE_SCALE, 0.0),
             stub_eval_expr("2", base, 0.0),
         ]);
 
-        assert_eq!(rhs.len(), 1);
-        assert_eq!(rhs[0].expr.to_postfix(), "2");
+        assert_eq!(rhs.len(), 2);
     }
 
     #[test]
@@ -1996,13 +1999,15 @@ mod tests {
     }
 
     #[test]
-    fn test_dedupe_lhs_preserves_adjacent_derivative_buckets() {
+    fn test_dedupe_lhs_keeps_distinct_values_and_derivatives_within_old_bucket() {
+        let delta = 0.49 / QUANTIZE_SCALE;
         let lhs = dedupe_lhs_expressions(vec![
             stub_eval_expr("x", 1.0, 1.0),
-            stub_eval_expr("x1+", 1.0, 1.0 + 0.51 / QUANTIZE_SCALE),
+            stub_eval_expr("x1+", 1.0 + delta, 1.0),
+            stub_eval_expr("xs", 1.0, 1.0 + delta),
         ]);
 
-        assert_eq!(lhs.len(), 2);
+        assert_eq!(lhs.len(), 3);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

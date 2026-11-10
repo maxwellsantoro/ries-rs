@@ -196,14 +196,13 @@ Ordering is:
 
 This final lexical tie-break is what makes total ordering explicit and stable.
 
-This ordering applies to candidates that reach the result pool, not every
-expression the generator could produce. Batch generation keeps a least-complex
-representative per quantized RHS value and per quantized LHS (value, derivative)
-pair. Thus parity ranking can lose an equivalent expression with a better
-parity score. Quantization can also merge distinct values: for example, a
-user constant at `2.0000000049` can be discarded in favor of `2`, and finite
-values above `1e10` share a bucket by sign. These are discovery limitations,
-including for exact matches, rather than guarantees of equivalence.
+This ordering applies to candidates that reach the result pool. Generation
+keeps a least-complex representative for each bit-identical RHS value. Batch
+generation also keeps a least-complex representative for each bit-identical
+LHS (value, derivative) pair at the target. Distinct floating-point values,
+including large finite values, survive deduplication even when they are close.
+Expressions with identical keys can still differ in parity score or, for LHS
+expressions, in how they evaluate away from the target during refinement.
 
 Streaming with `stop_at_exact` or `stop_below` has a separate ordering rule:
 it scans the LHS stream and puts the simplest qualifying match first, even if

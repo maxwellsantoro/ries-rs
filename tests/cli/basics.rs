@@ -506,12 +506,13 @@ fn test_symbol_weights_flag_changes_complexity() {
 
 #[test]
 fn test_classic_prefers_exact_match() {
-    let (stdout, _stderr) = run_ries(&["6.283185307179586", "--classic", "-n", "1", "-x"]);
-    assert!(
-        stdout.contains("x = 2 pi"),
-        "expected first classic match to prefer exact pi-based form\n{}",
-        stdout
-    );
+    let (stdout, _stderr) =
+        run_ries(&["6.283185307179586", "--classic", "-n", "1", "-x", "--json"]);
+    let parsed: Value = serde_json::from_str(&stdout).expect("valid classic JSON");
+    let best = &parsed["results"][0];
+    assert_eq!(best["exact"], true, "{best}");
+    let root = best["x_value"].as_f64().expect("reported root");
+    assert!((root - std::f64::consts::TAU).abs() <= 8.0 * f64::EPSILON * root.abs());
 }
 
 #[test]

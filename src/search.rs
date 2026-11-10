@@ -1053,7 +1053,7 @@ pub fn search_adaptive(
     level: u32,
 ) -> (Vec<Match>, SearchStats) {
     use crate::expr::EvaluatedExpr;
-    use crate::gen::{quantize_value, LhsKey};
+    use crate::gen::lhs_dedup_key;
     use std::collections::HashMap;
 
     if !search_config.target.is_finite() {
@@ -1065,8 +1065,8 @@ pub fn search_adaptive(
     // Use HashMap so dedup keeps the simplest expression, not first-seen.
     // With parallel generation the arrival order is non-deterministic, so
     // first-seen could discard a simpler equivalent expression.
-    let mut lhs_map: HashMap<LhsKey, EvaluatedExpr> = HashMap::new();
-    let mut rhs_map: HashMap<i64, EvaluatedExpr> = HashMap::new();
+    let mut lhs_map: HashMap<_, EvaluatedExpr> = HashMap::new();
+    let mut rhs_map: HashMap<_, EvaluatedExpr> = HashMap::new();
 
     // Target expression count: 2000 × 4^(2 + level)
     // Level 0 ≈ 32 K, level 1 ≈ 128 K, level 2 ≈ 512 K, level 3 ≈ 2 M
@@ -1106,7 +1106,7 @@ pub fn search_adaptive(
         };
 
         for expr in generated.lhs {
-            let key = (quantize_value(expr.value), quantize_value(expr.derivative));
+            let key = lhs_dedup_key(&expr);
             lhs_map
                 .entry(key)
                 .and_modify(|existing| {
@@ -1117,7 +1117,7 @@ pub fn search_adaptive(
                 .or_insert(expr);
         }
         for expr in generated.rhs {
-            let key = quantize_value(expr.value);
+            let key = expr.value.to_bits();
             rhs_map
                 .entry(key)
                 .and_modify(|existing| {
@@ -1319,12 +1319,12 @@ pub fn search_streaming_with_config(
     // applying the rhs_only_config split.  The on_lhs no-op discards any LHS
     // expressions that the generator produces as part of that split.
     let mut rhs_db = TieredExprDatabase::new();
-    let mut rhs_map: HashMap<i64, crate::expr::EvaluatedExpr> = HashMap::new();
+    let mut rhs_map: HashMap<_, EvaluatedExpr> = HashMap::new();
 
     {
         let mut callbacks = StreamingCallbacks {
             on_rhs: &mut |expr| {
-                let key = crate::gen::quantize_value(expr.value);
+                let key = expr.value.to_bits();
                 rhs_map
                     .entry(key)
                     .and_modify(|existing| {
