@@ -21,5 +21,9 @@ cp "$ROOT_DIR/web/index.html" "$SITE_DIR/index.html"
 cp "$ROOT_DIR/web/search-worker.js" "$SITE_DIR/search-worker.js"
 cp -R "$ROOT_DIR/web/vendor" "$SITE_DIR/vendor"
 cp -R "$ROOT_DIR/pkg/." "$SITE_DIR/pkg/"
+if [ -f "$ROOT_DIR/pkg-threads/ries_rs.js" ]; then
+  mkdir -p "$SITE_DIR/pkg-threads"
+  cp -R "$ROOT_DIR/pkg-threads/." "$SITE_DIR/pkg-threads/"
+fi
 
 echo "Prepared static site bundle in $SITE_DIR"

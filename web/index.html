@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
+  <link rel="icon" href="data:,">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RIES-RS • Find Equations for Any Number</title>
@@ -567,15 +568,15 @@
     };
 
     const POSTFIX_SYMPY_ATOMS = {
-      '1': '1',
-      '2': '2',
-      '3': '3',
-      '4': '4',
-      '5': '5',
-      '6': '6',
-      '7': '7',
-      '8': '8',
-      '9': '9',
+      '1': 'Integer(1)',
+      '2': 'Integer(2)',
+      '3': 'Integer(3)',
+      '4': 'Integer(4)',
+      '5': 'Integer(5)',
+      '6': 'Integer(6)',
+      '7': 'Integer(7)',
+      '8': 'Integer(8)',
+      '9': 'Integer(9)',
       p: 'pi',
       e: 'E',
       f: 'GoldenRatio',
@@ -656,7 +657,7 @@
           }
           case 'r': {
             const arg = popArg();
-            stack.push(`1/(${arg})`);
+            stack.push(`Integer(1)/(${arg})`);
             break;
           }
           case 'q': {
@@ -726,7 +727,7 @@
                 stack.push(`(${a})**(${b})`);
                 break;
               case 'v':
-                stack.push(`(${b})**(1/(${a}))`);
+                stack.push(`real_root(${b}, ${a})`);
                 break;
               case 'L':
                 stack.push(`log(${b}, ${a})`);
@@ -774,7 +775,7 @@
     // WASM Loading (Task 8)
     // ============================================================
 
-    function getPkgCandidates() {
+    function getPkgCandidates(threads) {
       const currentUrl = new URL(window.location.href);
       const pathname = currentUrl.pathname;
       const servedFromWebDir =
@@ -782,15 +783,16 @@
         pathname.endsWith('/web') ||
         pathname.endsWith('/web/index.html');
 
+      const packageDir = threads ? 'pkg-threads' : 'pkg';
       const candidates = [
-        new URL(servedFromWebDir ? '../pkg/ries_rs.js' : './pkg/ries_rs.js', currentUrl).href,
+        new URL((servedFromWebDir ? '../' : './') + packageDir + '/ries_rs.js', currentUrl).href,
       ];
 
       if (!servedFromWebDir) {
-        candidates.push(new URL('../pkg/ries_rs.js', currentUrl).href);
+        candidates.push(new URL('../' + packageDir + '/ries_rs.js', currentUrl).href);
       }
 
-      candidates.push(new URL('/pkg/ries_rs.js', currentUrl).href);
+      candidates.push(new URL('/' + packageDir + '/ries_rs.js', currentUrl).href);
       return [...new Set(candidates)];
     }
 
@@ -910,6 +912,7 @@
 
         worker.postMessage({
           type: 'init',
+          threads: new URL(window.location.href).searchParams.get('threads') === '1' && window.crossOriginIsolated,
           concurrency: navigator.hardwareConcurrency || 4,
         });
       }).catch(function(err) {
@@ -920,12 +923,16 @@
       return workerInitPromise;
     }
 
-    async function loadDirectWasmModule() {
+    async function loadDirectWasmModule(threads) {
       let lastError = null;
-      for (const candidate of getPkgCandidates()) {
+      const candidates = threads
+        ? [...getPkgCandidates(true), ...getPkgCandidates(false)]
+        : getPkgCandidates(false);
+      for (const candidate of candidates) {
         try {
-          wasmModule = await import(candidate);
-          await wasmModule.default();
+          const module = await import(candidate);
+          await module.default();
+          wasmModule = module;
           return wasmModule;
         } catch (err) {
           lastError = err;
@@ -975,7 +982,7 @@
 
       if (wasmRuntime !== 'worker') {
         try {
-          await loadDirectWasmModule();
+          await loadDirectWasmModule(new URL(window.location.href).searchParams.get('threads') === '1' && window.crossOriginIsolated);
           wasmRuntime = 'direct';
           isThreaded = typeof wasmModule.initThreadPool === 'function';
           if (isThreaded) {
@@ -984,7 +991,8 @@
               await wasmModule.initThreadPool(concurrency);
               workerCount = concurrency;
             } catch (err) {
-              console.warn('Failed to init thread pool:', err);
+              console.warn('Failed to init thread pool; using single-threaded WASM:', err);
+              await loadDirectWasmModule(false);
               isThreaded = false;
             }
           }
@@ -1527,6 +1535,9 @@
 
     function updateURL() {
       const params = new URLSearchParams();
+      if (new URLSearchParams(window.location.search).get('threads') === '1') {
+        params.set('threads', '1');
+      }
 
       const target = document.getElementById('target').value.trim();
       if (target) {

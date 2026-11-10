@@ -1,4 +1,4 @@
-const PKG_CANDIDATES = (() => {
+function pkgCandidates(threads) {
   const currentUrl = new URL(import.meta.url);
   const pathname = currentUrl.pathname;
   const servedFromWebDir =
@@ -6,30 +6,33 @@ const PKG_CANDIDATES = (() => {
     pathname.endsWith('/web') ||
     pathname.endsWith('/web/index.html');
 
+  const packageDir = threads ? 'pkg-threads' : 'pkg';
   const candidates = [
-    new URL(servedFromWebDir ? '../pkg/ries_rs.js' : './pkg/ries_rs.js', currentUrl).href,
+    new URL((servedFromWebDir ? '../' : './') + packageDir + '/ries_rs.js', currentUrl).href,
   ];
 
   if (!servedFromWebDir) {
-    candidates.push(new URL('../pkg/ries_rs.js', currentUrl).href);
+    candidates.push(new URL('../' + packageDir + '/ries_rs.js', currentUrl).href);
   }
 
-  candidates.push(new URL('/pkg/ries_rs.js', currentUrl).href);
+  candidates.push(new URL('/' + packageDir + '/ries_rs.js', currentUrl).href);
   return [...new Set(candidates)];
-})();
+}
 
 let wasmModule = null;
 let workerReady = false;
 let workerCount = 0;
 let threaded = false;
 
-async function loadWasmModule() {
+async function loadWasmModule(threads) {
   let lastError = null;
 
-  for (const candidate of PKG_CANDIDATES) {
+  const candidates = threads ? [...pkgCandidates(true), ...pkgCandidates(false)] : pkgCandidates(false);
+  for (const candidate of candidates) {
     try {
-      wasmModule = await import(candidate);
-      await wasmModule.default();
+      const module = await import(candidate);
+      await module.default();
+      wasmModule = module;
       return wasmModule;
     } catch (err) {
       lastError = err;
@@ -77,8 +80,8 @@ function serializeMatches(matches) {
   return Array.from(matches || []).map(serializeMatch);
 }
 
-async function initialize(concurrency) {
-  await loadWasmModule();
+async function initialize(concurrency, threads) {
+  await loadWasmModule(threads);
 
   threaded = typeof wasmModule.initThreadPool === 'function';
   if (threaded) {
@@ -88,7 +91,8 @@ async function initialize(concurrency) {
     } catch (err) {
       threaded = false;
       workerCount = 0;
-      console.warn('Failed to initialize worker thread pool:', err);
+      console.warn('Failed to initialize worker thread pool; using single-threaded WASM:', err);
+      await loadWasmModule(false);
     }
   }
 
@@ -127,7 +131,7 @@ self.addEventListener('message', async function(event) {
 
   if (message.type === 'init') {
     try {
-      await initialize(message.concurrency);
+      await initialize(message.concurrency, message.threads);
     } catch (err) {
       self.postMessage({
         type: 'error',

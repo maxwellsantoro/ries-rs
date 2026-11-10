@@ -166,6 +166,7 @@ fn replay_settings(args: &Args, gen: &GenConfig, search: &SearchConfig, parallel
         .collect();
 
     json!({
+        "cli_args": replay_cli_args(args, search),
         "generation": {
             "max_length": gen.max_length,
             "min_num_type": gen.min_num_type as u8,
@@ -216,4 +217,111 @@ fn replay_settings(args: &Args, gen: &GenConfig, search: &SearchConfig, parallel
             "highprec_available": cfg!(feature = "highprec"),
         },
     })
+}
+
+// Record an allowlisted, self-contained invocation. Profile files cannot safely be
+// replayed from an untrusted manifest, and may change after the original run.
+fn replay_cli_args(args: &Args, search: &SearchConfig) -> Option<Vec<String>> {
+    if args.target.is_none() || args.profile.is_some() || !args.include.is_empty() {
+        return None;
+    }
+    let mut out = vec![search.target.to_string()];
+    macro_rules! value {
+        ($name:literal, $value:expr) => {
+            out.push(format!("--{}={}", $name, $value));
+        };
+    }
+    macro_rules! optional {
+        ($name:literal, $value:expr) => {
+            if let Some(value) = &$value {
+                value!($name, value);
+            }
+        };
+    }
+    macro_rules! flag {
+        ($name:literal, $value:expr) => {
+            if $value {
+                out.push(format!("--{}", $name));
+            }
+        };
+    }
+    value!("level", args.level);
+    value!("max-matches", args.max_matches);
+    value!("report", args.report);
+    value!("format", args.format);
+    value!("top-k", args.top_k);
+    value!("newton-iterations", args.newton_iterations);
+    // Preserve the tolerance derived from the original literal's significant digits.
+    if args.match_all_digits && args.max_match_distance.is_none() {
+        value!("max-match-distance", search.max_error);
+    } else {
+        optional!("max-match-distance", args.max_match_distance);
+    }
+    optional!("exclude", args.exclude);
+    optional!("enable", args.enable);
+    optional!("only-symbols", args.only_symbols);
+    optional!("op-limits", args.op_limits);
+    optional!("S-RHS", args.only_symbols_rhs);
+    optional!("N-RHS", args.exclude_rhs);
+    optional!("E-RHS", args.enable_rhs);
+    optional!("O-RHS", args.op_limits_rhs);
+    optional!("symbol-weights", args.symbol_weights);
+    optional!("symbol-names", args.symbol_names);
+    optional!("preset", args.preset);
+    optional!("stop-below", args.stop_below);
+    optional!("min-match-distance", args.min_match_distance);
+    optional!("precision", args.precision);
+    optional!("zero-threshold", args.zero_threshold);
+    optional!("canon-reduction", args.canon_reduction);
+    optional!("derivative-margin", args.derivative_margin);
+    optional!("max-equate-value", args.max_equate_value);
+    optional!("min-equate-value", args.min_equate_value);
+    optional!("max-memory", args.max_memory);
+    optional!("min-memory", args.min_memory);
+    optional!("memory-abort-threshold", args.memory_abort_threshold);
+    optional!("max-trig-cycles", args.max_trig_cycles);
+    optional!("significance-loss-margin", args.significance_loss_margin);
+    optional!("trig-argument-scale", args.trig_argument_scale);
+    for spec in &args.user_constant {
+        value!("user-constant", spec);
+    }
+    for spec in &args.define {
+        value!("define", spec);
+    }
+    flag!("absolute", args.absolute);
+    flag!("solve", args.solve);
+    flag!("no-solve-for-x", args.no_solve);
+    flag!("algebraic", args.algebraic);
+    flag!("constructible", args.constructible);
+    flag!("rational", args.rational);
+    flag!("integer", args.integer);
+    flag!("ie", args.integer_exact);
+    flag!("re", args.rational_exact);
+    flag!("liouvillian-subexpressions", args.liouvillian);
+    flag!("parallel", args.parallel);
+    flag!("turbo", args.turbo);
+    flag!("deterministic", args.deterministic);
+    flag!("streaming", args.streaming);
+    flag!("lhs-value-dedup", args.lhs_value_dedup);
+    flag!("adaptive", args.adaptive);
+    flag!("classic", args.classic);
+    flag!("parity-ranking", args.parity_ranking);
+    flag!("complexity-ranking", args.complexity_ranking);
+    flag!("no-stable", args.no_stable);
+    flag!("stability-check", args.stability_check);
+    flag!("stability-thorough", args.stability_thorough);
+    flag!("stop-at-exact", args.stop_at_exact);
+    flag!("one-sided", args.one_sided);
+    flag!("no-refinement", args.no_refinement);
+    flag!("any-exponents", args.any_exponents);
+    flag!("any-subexpressions", args.any_subexpressions);
+    flag!("any-trig-args", args.any_trig_args);
+    flag!("canon-simplify", args.canon_simplify);
+    flag!("explicit-multiply", args.explicit_multiply);
+    flag!("match-all-digits", args.match_all_digits);
+    flag!("no-canon-simplify", args.no_canon_simplify);
+    flag!("numeric-anagram", args.numeric_anagram);
+    flag!("rational-exponents", args.rational_exponents);
+    flag!("rational-trig-args", args.rational_trig_args);
+    Some(out)
 }

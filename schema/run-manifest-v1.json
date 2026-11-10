@@ -114,6 +114,17 @@
                     "enum": ["serial", "parallel", "turbo", "adaptive", "streaming", "one_sided", "fast_match"],
                     "description": "The actual search path, after any fallback"
                 },
+                "replay": {
+                    "type": "object",
+                    "description": "Resolved settings and self-contained CLI replay arguments, when available",
+                    "properties": {
+                        "cli_args": {
+                            "type": ["array", "null"],
+                            "items": {"type": "string"},
+                            "description": "Restricted replay arguments; null when external profile files or legacy syntax prevent safe replay"
+                        }
+                    }
+                },
                 "user_constants": {
                     "type": "array",
                     "items": {

@@ -3,20 +3,37 @@
   "version": "2.1.0",
   "description": "Find algebraic equations given their solution - WASM build",
   "main": "pkg-node/ries_rs.js",
-  "module": "pkg-bundler/ries_rs.js",
+  "module": "pkg/ries_rs.js",
   "types": "pkg/ries_rs.d.ts",
   "exports": {
     ".": {
       "types": "./pkg/ries_rs.d.ts",
-      "import": "./pkg-bundler/ries_rs.js",
-      "require": "./pkg-node/ries_rs.js",
+      "browser": "./pkg/ries_rs.js",
+      "node": {
+        "import": "./web-package/node.mjs",
+        "require": "./pkg-node/ries_rs.js"
+      },
       "default": "./pkg/ries_rs.js"
     }
   },
   "files": [
-    "pkg",
-    "pkg-node",
-    "pkg-bundler"
+    "pkg/package.json",
+    "pkg/ries_rs.js",
+    "pkg/ries_rs.d.ts",
+    "pkg/ries_rs_bg.wasm",
+    "pkg/ries_rs_bg.wasm.d.ts",
+    "pkg-node/package.json",
+    "pkg-node/ries_rs.js",
+    "pkg-node/ries_rs.d.ts",
+    "pkg-node/ries_rs_bg.wasm",
+    "pkg-node/ries_rs_bg.wasm.d.ts",
+    "pkg-bundler/package.json",
+    "pkg-bundler/ries_rs.js",
+    "pkg-bundler/ries_rs.d.ts",
+    "pkg-bundler/ries_rs_bg.wasm",
+    "pkg-bundler/ries_rs_bg.wasm.d.ts",
+    "web-package",
+    "pkg-bundler/ries_rs_bg.js"
   ],
   "scripts": {
     "build": "RUSTFLAGS='-C target-feature=-reference-types' rustup run nightly wasm-pack build --target web --out-dir pkg -- --features wasm -Z build-std=panic_abort,std",
@@ -24,11 +41,12 @@
     "build:bundler": "RUSTFLAGS='-C target-feature=-reference-types' rustup run nightly wasm-pack build --target bundler --out-dir pkg-bundler -- --features wasm -Z build-std=panic_abort,std",
     "build:web:site": "npm run build && bash scripts/build_web_site.sh",
     "build:all": "npm run build && npm run build:node && npm run build:bundler",
-    "build:threads": "RUSTFLAGS='-C target-feature=+atomics,+bulk-memory' rustup run nightly wasm-pack build --target web --out-dir pkg-threads -- --features wasm-threads -Z build-std=panic_abort,std",
+    "build:threads": "bash scripts/build_web_threads.sh",
     "prepack": "npm run build:all",
     "test": "wasm-pack test --node -- --features wasm",
     "test:web:smoke": "playwright test -c playwright.config.ts tests/web-smoke.spec.ts --reporter=line --workers=1",
-    "test:web:smoke:build": "npm run build:web:site && npm run test:web:smoke"
+    "test:web:smoke:build": "npm run build:web:site && npm run test:web:smoke",
+    "test:wasm:package": "node tests/wasm-package.mjs"
   },
   "keywords": [
     "math",

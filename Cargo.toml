@@ -21,10 +21,12 @@ exclude = [
     "pkg/**",
     "pkg-*/*",
     "web/**",
+    "web-package/**",
     "package.json",
     "package-lock.json",
     "playwright.config.ts",
     "tests/web-smoke.spec.ts",
+    "tests/wasm-package.mjs",
 
     # Separate Python wheel project
     "ries-py/**",

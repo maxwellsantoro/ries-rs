@@ -90,9 +90,16 @@ For parallel search in browsers:
 
 ```bash
 npm run build:threads
+npm run build:web:site
 ```
 
-Requires nightly Rust and server headers for `SharedArrayBuffer`:
+Deploy `dist/web-site/` and open the page with `?threads=1`. The site
+builder copies the threaded package when present. Without cross-origin
+isolation the UI uses the regular package. Rebuild the threaded package after
+code changes.
+
+The build requires nightly Rust with `rust-src` and `wasm-pack`. Serve it
+with these headers to enable `SharedArrayBuffer`.
 
 ```
 Cross-Origin-Opener-Policy: same-origin

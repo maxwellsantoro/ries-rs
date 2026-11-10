@@ -241,6 +241,7 @@ pub struct Args {
     /// Define a custom operation/function
     /// Format: "weight:name:description:formula"
     /// Formula uses postfix notation with | for dup and @ for swap
+    /// The function argument is already on the stack; bodies cannot access the global x.
     /// Example: --define "4:sinh:hyperbolic sine:E|r-2/"
     #[arg(long)]
     pub define: Vec<String>,

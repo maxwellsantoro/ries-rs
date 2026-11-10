@@ -381,7 +381,7 @@ fn main() {
     let use_turbo = !args.deterministic && args.turbo;
 
     // A quick result must satisfy the same limits as an ordinary match.
-    let fast_match = if stop_at_exact && search_config.max_matches > 0 {
+    let fast_match = if stop_at_exact && !use_streaming && search_config.max_matches > 0 {
         let excluded = std::collections::HashSet::new();
         let fast_config = FastMatchConfig {
             excluded_symbols: search_config
@@ -433,7 +433,8 @@ fn main() {
         (result.matches, result.stats, result.elapsed)
     };
 
-    if args.deterministic || args.turbo {
+    // Streaming already orders its results and may put a stop match first.
+    if (args.deterministic || args.turbo) && stats.matcher != Some(search::MatcherPath::Streaming) {
         matches.sort_by(|a, b| pool::compare_matches(a, b, ranking_mode));
     }
 

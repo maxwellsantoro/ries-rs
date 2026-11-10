@@ -102,7 +102,6 @@ pub fn verify_matches_highprec_with_trig_scale(
             .collect();
     }
     let target_hp = HighPrec::from_f64_with_prec(target, precision_bits);
-    let tolerance_hp = HighPrec::from_f64_with_prec(EXACT_MATCH_TOLERANCE, precision_bits);
     let hp_constants: Vec<_> = user_constants
         .iter()
         .map(|constant| HighPrec::from_f64_with_prec(constant.value, precision_bits))
@@ -113,69 +112,102 @@ pub fn verify_matches_highprec_with_trig_scale(
     matches
         .into_iter()
         .map(|m| {
-            // Evaluate LHS(x) at high precision
-            let lhs_val = evaluate_highprec(
-                &m.lhs.expr,
-                m.x_value,
-                precision_bits,
-                &hp_constants,
-                eval_context.trig_argument_scale,
-            );
-
-            // Evaluate RHS at high precision
-            let rhs_val = evaluate_highprec(
-                &m.rhs.expr,
-                m.x_value,
-                precision_bits,
-                &hp_constants,
-                eval_context.trig_argument_scale,
-            );
-
-            match (lhs_val, rhs_val) {
-                (Some(lhs), Some(rhs)) => {
-                    // Check if LHS ≈ RHS at high precision
-                    let residual = lhs - rhs;
-
-                    if residual.clone().abs() < tolerance_hp {
-                        // Convert the residual from equation-value units to x units.
-                        // When the derivative is degenerate, use the verified sample.
-                        let mut root = HighPrec::from_f64_with_prec(m.x_value, precision_bits);
-                        if let Ok(sample) = crate::eval::evaluate_with_context(
-                            &m.lhs.expr,
-                            m.x_value,
-                            &eval_context,
-                        ) {
-                            let slope = sample.derivative;
-                            if slope.is_finite() && slope.abs() >= crate::DEGENERATE_DERIVATIVE {
-                                root = root
-                                    - residual
-                                        / HighPrec::from_f64_with_prec(slope, precision_bits);
-                            }
-                        }
-                        let hp_error = (root - target_hp.clone()).abs().to_f64();
-                        let error_ratio = if m.error.abs() > 1e-20 {
-                            Some(hp_error / m.error.abs())
-                        } else {
-                            None
-                        };
-
-                        VerificationResult {
-                            original: m,
-                            highprec_error: Some(hp_error),
-                            is_verified: true,
-                            error_ratio,
-                        }
-                    } else {
-                        // Equation doesn't hold at high precision - impostor
-                        VerificationResult {
-                            original: m,
-                            highprec_error: Some(f64::INFINITY),
-                            is_verified: false,
-                            error_ratio: None,
-                        }
-                    }
+            // Refine from the f64 root without allowing Newton iteration to jump
+            // to a different solution. Evaluate values at the full-precision root;
+            // f64 derivatives suffice for convergence near the supplied root.
+            let initial = HighPrec::from_f64_with_prec(m.x_value, precision_bits);
+            let mut root = initial.clone();
+            let max_displacement = 64.0 * f64::EPSILON * (1.0 + m.x_value.abs());
+            let mut verified = false;
+            let mut available = true;
+            for _ in 0..8 {
+                let lhs = evaluate_highprec(
+                    &m.lhs.expr,
+                    &root,
+                    precision_bits,
+                    &hp_constants,
+                    trig_argument_scale,
+                );
+                let rhs = evaluate_highprec(
+                    &m.rhs.expr,
+                    &root,
+                    precision_bits,
+                    &hp_constants,
+                    trig_argument_scale,
+                );
+                let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
+                    available = false;
+                    break;
+                };
+                let lhs_abs = lhs.clone().abs();
+                let rhs_abs = rhs.clone().abs();
+                let scale = if lhs_abs > rhs_abs { lhs_abs } else { rhs_abs };
+                let residual = lhs - rhs;
+                if !scale.is_finite() || !residual.is_finite() {
+                    break;
                 }
-                _ => VerificationResult::unavailable(m),
+                let zero = HighPrec::zero_with_prec(precision_bits);
+                if residual == zero {
+                    verified = true;
+                    break;
+                }
+                let sample_x = root.to_f64();
+                let slope = match (
+                    crate::eval::evaluate_with_context(&m.lhs.expr, sample_x, &eval_context),
+                    crate::eval::evaluate_with_context(&m.rhs.expr, sample_x, &eval_context),
+                ) {
+                    (Ok(lhs), Ok(rhs)) => lhs.derivative - rhs.derivative,
+                    _ => {
+                        available = false;
+                        break;
+                    }
+                };
+                if !slope.is_finite() || slope.abs() < crate::DEGENERATE_DERIVATIVE {
+                    break;
+                }
+                let correction =
+                    residual.clone() / HighPrec::from_f64_with_prec(slope, precision_bits);
+                let tolerance = HighPrec::from_f64_with_prec(EXACT_MATCH_TOLERANCE, precision_bits);
+                let x_scale = HighPrec::from_f64_with_prec(1.0 + sample_x.abs(), precision_bits);
+                // Only accept a root already re-evaluated after refinement.
+                if root != initial
+                    && residual.abs() <= tolerance.clone() * scale
+                    && correction.clone().abs() <= tolerance * x_scale
+                {
+                    verified = true;
+                    break;
+                }
+                let next = root.clone() - correction;
+                if (next.clone() - initial.clone()).abs()
+                    > HighPrec::from_f64_with_prec(max_displacement, precision_bits)
+                    || next == root
+                {
+                    break;
+                }
+                root = next;
+            }
+            if !available {
+                VerificationResult::unavailable(m)
+            } else if verified {
+                let hp_error = (root - target_hp.clone()).abs().to_f64();
+                let error_ratio = if m.error.abs() > 1e-20 {
+                    Some(hp_error / m.error.abs())
+                } else {
+                    None
+                };
+                VerificationResult {
+                    original: m,
+                    highprec_error: Some(hp_error),
+                    is_verified: true,
+                    error_ratio,
+                }
+            } else {
+                VerificationResult {
+                    original: m,
+                    highprec_error: Some(f64::INFINITY),
+                    is_verified: false,
+                    error_ratio: None,
+                }
             }
         })
         .collect()
@@ -217,7 +249,7 @@ pub fn verify_matches_highprec_with_trig_scale(
 #[cfg(feature = "highprec")]
 fn evaluate_highprec(
     expr: &crate::expr::Expression,
-    x: f64,
+    x: &HighPrec,
     precision_bits: u32,
     user_constants: &[HighPrec],
     trig_argument_scale: f64,
@@ -227,7 +259,7 @@ fn evaluate_highprec(
     let one = HighPrec::one_with_prec(precision_bits);
     let custom_trig_scale = (trig_argument_scale != crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE)
         .then(|| HighPrec::from_f64_with_prec(trig_argument_scale, precision_bits));
-    let x_hp = HighPrec::from_f64_with_prec(x, precision_bits);
+    let x_hp = x.clone();
 
     let mut stack: Vec<HighPrec> = Vec::with_capacity(32);
 
@@ -539,13 +571,49 @@ mod tests {
 
     #[cfg(feature = "highprec")]
     #[test]
+    fn refinement_is_independent_of_reciprocal_scaling() {
+        fn candidate(lhs: &str, rhs: &str, root: f64) -> crate::search::Match {
+            let make = |s| {
+                crate::expr::EvaluatedExpr::new(
+                    crate::expr::Expression::parse(s).unwrap(),
+                    0.0,
+                    0.0,
+                    crate::symbol::NumType::Transcendental,
+                )
+            };
+            crate::search::Match {
+                lhs: make(lhs),
+                rhs: make(rhs),
+                x_value: root,
+                error: 0.0,
+                complexity: 1,
+                exact: false,
+            }
+        }
+        let root = 100.12337445797377_f64;
+        // sin(pi*x) = sqrt(1/7), and the equivalent reciprocal equation.
+        let root = root + ((1.0_f64 / 7.0).sqrt().asin() / std::f64::consts::PI + 100.0 - root);
+        let results = verify_matches_highprec(
+            vec![candidate("xS", "7rq", root), candidate("xSr", "7q", root)],
+            root,
+            128,
+            &[],
+        );
+        assert!(results.iter().all(|r| r.is_verified), "{results:?}");
+        assert!(
+            (results[0].highprec_error.unwrap() - results[1].highprec_error.unwrap()).abs() < 1e-25
+        );
+    }
+
+    #[cfg(feature = "highprec")]
+    #[test]
     fn test_evaluate_highprec_reads_user_constant_slots() {
         let expr = crate::expr::Expression::from_symbols(&[crate::symbol::Symbol::UserConstant0]);
         let constants = vec![HighPrec::from_f64_with_prec(1.234567890123456, 256)];
 
         let evaluated = evaluate_highprec(
             &expr,
-            0.0,
+            &HighPrec::from_f64_with_prec(0.0, 256),
             256,
             &constants,
             crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE,
@@ -562,7 +630,7 @@ mod tests {
 
         let evaluated = evaluate_highprec(
             &expr,
-            0.0,
+            &HighPrec::from_f64_with_prec(0.0, 256),
             256,
             &constants,
             crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE,

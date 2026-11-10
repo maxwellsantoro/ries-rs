@@ -1749,3 +1749,176 @@ fn precision_preserves_default_trig_and_distinguishes_unavailable_operators() {
     assert!(text.contains("High-precision evaluation unavailable"));
     assert!(!text.contains("impostors"));
 }
+
+#[test]
+fn streaming_stop_exact_returns_simplest_exact_match() {
+    let path = unique_tmp_path("streaming-exact");
+    run_ries(&[
+        "0.5",
+        "--streaming",
+        "--stop-at-exact",
+        "--deterministic",
+        "--report=false",
+        "--max-matches=1",
+        "--level=0",
+        "--emit-manifest",
+        path.to_str().unwrap(),
+    ]);
+    let manifest: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(manifest["config"]["matcher"], "streaming");
+    assert_eq!(manifest["results"][0]["rhs_postfix"], "2r");
+    assert_eq!(manifest["results"][0]["complexity"], 35);
+}
+
+#[test]
+fn deterministic_streaming_keeps_stop_match_first() {
+    let args = [
+        "0.51",
+        "--streaming",
+        "--stop-below=0.003",
+        "--report=false",
+        "--max-matches=5",
+        "--level=0",
+    ];
+    let streaming = json_search(&args);
+    let mut deterministic = args.to_vec();
+    deterministic.push("--deterministic");
+    let deterministic = json_search(&deterministic);
+    assert_eq!(deterministic["results"], streaming["results"]);
+    assert_eq!(streaming["results"][0]["lhs_postfix"], "xs");
+}
+
+fn replay_python() -> Option<&'static str> {
+    // The Rust-only test suite also runs on hosts without Python installed.
+    let python = ["python3", "python"].into_iter().find(|&command| {
+        Command::new(command)
+            .args(["-c", "import sys; sys.exit(sys.version_info.major != 3)"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    });
+    if python.is_none() {
+        eprintln!("Skipping manifest replay check because Python 3 is unavailable");
+    }
+    python
+}
+
+#[test]
+fn manifest_replay_round_trip_and_rejects_unsafe_arguments() {
+    let Some(python) = replay_python() else {
+        return;
+    };
+    let path = unique_tmp_path("replay");
+    let script = format!("{}/tools/replay_manifest.py", env!("CARGO_MANIFEST_DIR"));
+    let replay = || {
+        Command::new(python)
+            .args([
+                &script,
+                path.to_str().unwrap(),
+                "--bin",
+                env!("CARGO_BIN_EXE_ries-rs"),
+            ])
+            .output()
+            .unwrap()
+    };
+    for custom in [false, true] {
+        let mut args = vec![
+            "1.2",
+            "--level=0.5",
+            "--deterministic",
+            "--report=false",
+            "--max-matches=1",
+            "--emit-manifest",
+            path.to_str().unwrap(),
+        ];
+        if custom {
+            args.extend([
+                "--symbol-weights=:2:100",
+                "--S-RHS=12+",
+                "--trig-argument-scale=2",
+                "--user-constant=4:foo:test:1.2",
+            ]);
+        }
+        run_ries(&args);
+        let output = replay();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    manifest["config"]["replay"]["cli_args"]
+        .as_array_mut()
+        .unwrap()
+        .push("--emit-manifest=/tmp/unsafe.json".into());
+    std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let output = replay();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsafe replay option"));
+    manifest["config"]["replay"]["cli_args"] = Value::Null;
+    std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let output = replay();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no self-contained"));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn user_function_rejects_search_variable() {
+    let output = run_ries_raw(&["2", "--define", "1:f:test:x*"]);
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("function argument") && stderr.contains("search variable"),
+        "{stderr}"
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("f("));
+}
+
+#[test]
+fn manifest_replay_supports_basic_legacy_settings_and_negative_targets() {
+    let Some(python) = replay_python() else {
+        return;
+    };
+    let path = unique_tmp_path("legacy-replay");
+    let script = format!("{}/tools/replay_manifest.py", env!("CARGO_MANIFEST_DIR"));
+    run_ries(&[
+        "--deterministic",
+        "--level=0",
+        "--report=false",
+        "--max-matches=1",
+        "--emit-manifest",
+        path.to_str().unwrap(),
+        "--",
+        "-0.5",
+    ]);
+    let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for legacy in [false, true] {
+        let mut manifest = original.clone();
+        if legacy {
+            manifest["config"]["replay"]
+                .as_object_mut()
+                .unwrap()
+                .remove("cli_args");
+        }
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let output = Command::new(python)
+            .args([
+                &script,
+                path.to_str().unwrap(),
+                "--bin",
+                env!("CARGO_BIN_EXE_ries-rs"),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    std::fs::remove_file(path).unwrap();
+}
