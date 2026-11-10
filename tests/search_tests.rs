@@ -475,6 +475,105 @@ fn test_user_constant_in_search() {
 }
 
 #[test]
+fn test_nearby_user_constant_is_lost_to_rhs_quantization() {
+    let target = 2.000_000_004_9;
+    let mut config = fast_config();
+    config.constants = vec![Symbol::Two, Symbol::UserConstant0];
+    config.unary_ops.clear();
+    config.binary_ops.clear();
+    config.max_length = 1;
+    config.user_constants = vec![UserConstant {
+        weight: 16,
+        name: "u".into(),
+        description: "nearby exact target".into(),
+        value: target,
+        num_type: NumType::Transcendental,
+    }];
+    let generated = generate_all(&config, target);
+    assert_eq!(generated.rhs.len(), 1);
+    assert_eq!(generated.rhs[0].expr.to_postfix(), "2");
+    let search_config = SearchConfig {
+        target,
+        user_constants: config.user_constants.clone(),
+        ..Default::default()
+    };
+    let (matches, _) = search_with_stats_and_config(&config, &search_config);
+    assert!(!matches.is_empty());
+    assert!(matches.iter().all(|m| !m.exact));
+
+    // Without the colliding literal, the same search can find the exact root.
+    config.constants = vec![Symbol::UserConstant0];
+    let (matches, _) = search_with_stats_and_config(&config, &search_config);
+    assert!(matches.iter().any(|m| m.exact));
+}
+
+#[test]
+fn test_streaming_parity_stopping_prefers_simplest_acceptable_match() {
+    use ries_rs::pool::{compare_matches, RankingMode};
+
+    let mut gen = fast_config();
+    gen.constants = vec![Symbol::One, Symbol::Two, Symbol::Three];
+    gen.unary_ops.clear();
+    gen.binary_ops = vec![Symbol::Add];
+    gen.max_length = 3;
+    for (stop_at_exact, stop_below) in [(true, None), (false, Some(1e-8))] {
+        let cfg = SearchConfig {
+            target: 2.0,
+            max_matches: 10,
+            ranking_mode: RankingMode::Parity,
+            stop_at_exact,
+            stop_below,
+            ..Default::default()
+        };
+        let (batch, _) = search_with_stats_and_config(&gen, &cfg);
+        let (streaming, _) = search_streaming_with_config(&gen, &cfg);
+        assert!(!batch.is_empty() && !streaming.is_empty());
+        assert_eq!(streaming[0].lhs.expr.to_postfix(), "x");
+        assert_eq!(streaming[0].rhs.expr.to_postfix(), "2");
+        // Streaming's stop priority may precede a better parity-ranked result.
+        assert!(streaming.iter().skip(1).any(|m| compare_matches(
+            m,
+            &streaming[0],
+            RankingMode::Parity
+        )
+        .is_lt()));
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_turbo_parity_rank_one_with_small_capacities() {
+    use ries_rs::pool::RankingMode;
+    use ries_rs::search::search_turbo_with_stats_and_config;
+
+    let gen_config = fast_config();
+    for target in [2.0, 2.5, std::f64::consts::SQRT_2] {
+        for capacity in [1, 2, 5] {
+            let config = SearchConfig {
+                target,
+                max_matches: capacity,
+                ranking_mode: RankingMode::Parity,
+                ..Default::default()
+            };
+            let (serial, _) = search_with_stats_and_config(&gen_config, &config);
+            let (turbo, _) = search_turbo_with_stats_and_config(&gen_config, &config);
+            assert!(!serial.is_empty() && !turbo.is_empty());
+            assert_eq!(
+                (
+                    serial[0].lhs.expr.to_postfix(),
+                    serial[0].rhs.expr.to_postfix()
+                ),
+                (
+                    turbo[0].lhs.expr.to_postfix(),
+                    turbo[0].rhs.expr.to_postfix()
+                ),
+                "target {target}, capacity {capacity}"
+            );
+        }
+    }
+}
+
+#[test]
 // Short gamma-like user-constant fixture, not std::f64::consts::EULER_GAMMA.
 #[allow(clippy::approx_constant)]
 fn test_batch_and_streaming_agree_on_user_constant_top_match() {

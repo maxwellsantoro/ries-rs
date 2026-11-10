@@ -1970,6 +1970,32 @@ mod tests {
     }
 
     #[test]
+    fn test_rhs_deduplication_can_discard_parity_preferred_equivalent() {
+        use crate::pool::legacy_parity_score_expr;
+
+        // A tiny reference universe: both expressions evaluate to 3. Rank the
+        // raw candidates independently before applying the production deduper.
+        let raw = vec![
+            stub_eval_expr("3", 3.0, 0.0),
+            stub_eval_expr("12+", 3.0, 0.0),
+        ];
+        let parity_best = raw
+            .iter()
+            .min_by_key(|e| legacy_parity_score_expr(&e.expr))
+            .unwrap();
+        assert_eq!(parity_best.expr.to_postfix(), "12+");
+        let retained = dedupe_rhs_expressions(raw);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].expr.to_postfix(), "3");
+    }
+
+    #[test]
+    fn test_large_finite_values_share_quantization_bucket() {
+        assert_eq!(quantize_value(1e11), quantize_value(2e11));
+        assert_eq!(quantize_value(-1e11), quantize_value(-2e11));
+    }
+
+    #[test]
     fn test_dedupe_lhs_preserves_adjacent_derivative_buckets() {
         let lhs = dedupe_lhs_expressions(vec![
             stub_eval_expr("x", 1.0, 1.0),

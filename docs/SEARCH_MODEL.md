@@ -196,6 +196,21 @@ Ordering is:
 
 This final lexical tie-break is what makes total ordering explicit and stable.
 
+This ordering applies to candidates that reach the result pool, not every
+expression the generator could produce. Batch generation keeps a least-complex
+representative per quantized RHS value and per quantized LHS (value, derivative)
+pair. Thus parity ranking can lose an equivalent expression with a better
+parity score. Quantization can also merge distinct values: for example, a
+user constant at `2.0000000049` can be discarded in favor of `2`, and finite
+values above `1e10` share a bucket by sign. These are discovery limitations,
+including for exact matches, rather than guarantees of equivalence.
+
+Streaming with `stop_at_exact` or `stop_below` has a separate ordering rule:
+it scans the LHS stream and puts the simplest qualifying match first, even if
+another returned match ranks ahead of it under the configured comparator.
+The batch matcher instead stops when it encounters a qualifying match in its
+own traversal, so the two stopping modes do not promise identical results.
+
 Under complexity ranking, once the bounded result pool is full of exact
 matches, `TopKPool::exact_complexity_ceiling` returns the complexity of its
 worst-ranked entry, which has the highest retained complexity. A new exact

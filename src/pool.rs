@@ -653,6 +653,13 @@ mod tests {
     }
 
     #[test]
+    fn test_exact_complexity_ceiling_absent_in_parity_mode() {
+        let mut pool = TopKPool::new_with_diagnostics(1, 1.0, false, RankingMode::Parity);
+        assert!(pool.try_insert(make_match("x", "1", 0.0, 30)));
+        assert_eq!(pool.exact_complexity_ceiling(), None);
+    }
+
+    #[test]
     fn test_pool_entry_distinct_with_same_rank_key() {
         // Two matches with identical rank_key but different expressions
         // should both be insertable (they're distinct equations)
