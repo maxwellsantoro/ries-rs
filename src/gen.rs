@@ -801,7 +801,7 @@ pub fn generate_all_with_limit_and_context(
 /// when it wants to materialize the same LHS universe for parallel matching.
 /// Deduplicating LHS by target-local `(value, derivative)` can discard a useful
 /// non-degenerate expression in favor of a lower-complexity degenerate
-/// representative, changing the best match for flat exact roots.
+/// representative, changing the best match.
 #[cfg(feature = "parallel")]
 pub fn generate_all_preserving_lhs_with_limit_and_context(
     config: &GenConfig,

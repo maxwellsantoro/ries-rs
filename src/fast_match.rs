@@ -285,7 +285,14 @@ fn make_match(
     let rhs_eval = evaluate_with_context(&rhs_expr, target, context).ok()?;
 
     let x_value = rhs_eval.value;
-    if !crate::search::match_is_exact(lhs_eval.value, rhs_eval.value, x_value, target) {
+    if crate::search::match_exactness(
+        lhs_eval.value,
+        rhs_eval.value,
+        lhs_eval.derivative,
+        x_value,
+        target,
+    ) != Some(true)
+    {
         return None;
     }
 

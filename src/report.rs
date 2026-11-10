@@ -5,7 +5,7 @@
 use crate::eval::EvalContext;
 use crate::expr::{Expression, OutputFormat};
 use crate::metrics::{MatchMetrics, OperatorFrequency};
-use crate::pool::{LhsKey, SignatureKey};
+use crate::pool::{compare_matches, LhsKey, RankingMode, SignatureKey};
 use crate::search::Match;
 use crate::symbol::Symbol;
 use crate::symbol_table::SymbolTable;
@@ -106,9 +106,9 @@ fn postfix_verbose_token(sym: Symbol) -> String {
 /// Report categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
-    /// Exact matches (error < 1e-14)
+    /// Exact matches at the typed target
     Exact,
-    /// Best approximations (lowest error)
+    /// Best approximations (lowest error bucket)
     Best,
     /// Elegant/efficient (lowest complexity)
     Elegant,
@@ -391,13 +391,7 @@ fn category_compare(
                         .cmp(&(b.m.lhs.expr.len() + b.m.rhs.expr.len()))
                 })
         }
-        Category::Best => {
-            // Sort by error (lower first)
-            a.metrics
-                .error
-                .partial_cmp(&b.metrics.error)
-                .unwrap_or(Ordering::Equal)
-        }
+        Category::Best => compare_matches(&a.m, &b.m, RankingMode::Complexity),
         Category::Elegant => {
             // Sort by elegant score (lower first)
             a.metrics

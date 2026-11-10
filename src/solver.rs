@@ -770,7 +770,7 @@ fn finite_constant(expr: &Expression, context: &EvalContext<'_>) -> Option<f64> 
 fn unit_interval_argument(expr: &Expression, context: &EvalContext<'_>) -> Option<Expression> {
     let y = finite_constant(expr, context)?;
     const TOL: f64 = 1e-8;
-    if y > 1.0 + TOL || y < -1.0 - TOL {
+    if !(-1.0 - TOL..=1.0 + TOL).contains(&y) {
         return None;
     }
     if y > 1.0 {

@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn enable_all_clears_symbol_restrictions() {
+    let args = ["2.5", "-l", "0", "--deterministic", "--report=false"];
+    let expected = parse_match_lines(&run_ries(&args).0);
+    assert!(!expected.is_empty());
+    let mut restricted = args.to_vec();
+    restricted.extend(["-S", "x12+", "-N", "lA"]);
+    assert_ne!(parse_match_lines(&run_ries(&restricted).0), expected);
+    restricted.push("-E");
+    assert_eq!(parse_match_lines(&run_ries(&restricted).0), expected);
+    restricted.push("all");
+    assert_eq!(parse_match_lines(&run_ries(&restricted).0), expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn closed_stdout_terminates_with_sigpipe() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::Stdio;
+
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let output = Command::new(env!("CARGO_BIN_EXE_ries-rs"))
+        .arg("2.5")
+        .stdout(Stdio::from(writer))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), Some(libc::SIGPIPE), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[test]
 fn test_s_flag_shows_equation_form_not_misleading_x_equals() {
     // The -s flag should avoid misleading direct assignment for complex LHS forms.
     // It may either keep equation form, or show a valid transformed x = ... expression.

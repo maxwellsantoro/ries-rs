@@ -1618,7 +1618,7 @@ fn test_should_skip_degenerate_lhs_skips_when_probe_fails() {
 }
 
 #[test]
-fn test_large_targets_keep_cospi_identity_and_still_drop_constants() {
+fn test_large_targets_distinguish_stationary_cospi_from_constants() {
     use crate::eval::{evaluate_fast_with_context, EvalContext};
     use crate::expr::{EvaluatedExpr, Expression};
     use crate::symbol::{NumType, Symbol};
@@ -1663,7 +1663,8 @@ fn test_large_targets_keep_cospi_identity_and_still_drop_constants() {
         "x^2 is flat at 0 but not constant"
     );
 
-    // The identity has to survive the actual search filter, not only the helper.
+    // The probe recognizes that cosine varies, but its slope at the target
+    // gives no location estimate. Search must discard the stationary match.
     let mut config = fast_test_config();
     config.constants = vec![Symbol::One];
     config.unary_ops = vec![Symbol::CosPi];
@@ -1674,15 +1675,9 @@ fn test_large_targets_keep_cospi_identity_and_still_drop_constants() {
     for target in targets {
         let matches = super::search(target, &config, 10);
         assert!(
-            matches
-                .iter()
-                .any(|m| { m.lhs.expr.to_postfix() == "xC" && m.rhs.expr.to_postfix() == "1" }),
-            "missing cospi(x) = 1 for {target}: {}",
-            matches
-                .iter()
-                .map(|m| format!("{} = {}", m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()))
-                .collect::<Vec<_>>()
-                .join(", ")
+            !has_equation(&matches, "xC", "1"),
+            "reported stationary cospi(x) = 1 for {target}: {}",
+            equation_list(&matches)
         );
     }
 }
@@ -1767,8 +1762,8 @@ fn test_large_integer_flat_near_misses_are_not_exact() {
             equation_list(&matches)
         );
         assert!(
-            is_exact_equation(&matches, "xC", "1"),
-            "{label} dropped the real identity cospi(x) = 1: {}",
+            !has_equation(&matches, "xC", "1"),
+            "{label} reported stationary cospi(x) = 1: {}",
             equation_list(&matches)
         );
     }
@@ -1831,63 +1826,44 @@ fn test_newton_does_not_call_a_sub_ulp_step_exact() {
 }
 
 #[test]
-fn test_residual_is_exact_rejects_the_old_flat_window() {
-    use crate::eval::evaluate;
-    use crate::expr::Expression;
-    use crate::symbol::Symbol;
-
-    // atan2(pi, 2) ≈ 1.0039. That sits inside the old ±0.01 flat window and
-    // outside a few ulps of 1. Restoring the window makes this assertion fail.
-    let atan = evaluate(&Expression::parse("p2A").unwrap(), 1.0).unwrap();
-    assert!(
-        (atan.value - 1.0).abs() < 0.01 && (atan.value - 1.0).abs() > 1e-4,
-        "atan2(pi, 2) = {}",
-        atan.value
+fn test_near_target_match_requires_sufficient_slope() {
+    let target = 2.0_f64;
+    let rhs = 1.0_f64;
+    let min_slope = (rhs.next_up() - rhs) / (8.0 * (target.next_up() - target));
+    assert_eq!(
+        super::match_exactness(rhs, rhs, min_slope, target, target),
+        Some(true)
     );
-    assert!(super::residual_is_exact(1.0, 1.0));
-    assert!(super::residual_is_exact(1.0, 1.0 + 4.0 * f64::EPSILON));
-    assert!(
-        !super::residual_is_exact(1.0, atan.value),
-        "ulp window accepted a residual of {}",
-        (atan.value - 1.0).abs()
+    assert_eq!(
+        super::match_exactness(rhs, rhs, -min_slope, target, target),
+        Some(true)
     );
-    // cospi(sqrt(2^63)) ≈ 0.997, the near-miss that used to be stamped exact.
-    assert!(!super::residual_is_exact(0.997170624192306, 1.0));
+    assert_eq!(
+        super::match_exactness(rhs, rhs, min_slope.next_down(), target, target),
+        None
+    );
+    assert_eq!(super::match_exactness(rhs, rhs, 0.0, target, target), None);
 
-    // Even integer: cospi(x) is exactly 1, derivative 0, and target+e is a
-    // real perturbation so the LHS is kept. The flat matcher is what decides
-    // whether atan2(pi, 2) is an exact partner.
-    let mut config = fast_test_config();
-    config.max_lhs_complexity = 40;
-    config.max_rhs_complexity = 40;
-    config.constants = vec![Symbol::One, Symbol::Two, Symbol::Pi];
-    config.unary_ops = vec![Symbol::CosPi];
-    config.binary_ops = vec![Symbol::Atan2];
-    for (label, matches) in [
-        ("batch", super::search(64.0, &config, 8)),
-        (
-            "streaming",
-            super::search_streaming(64.0, &config, 8, false, None).0,
+    // The product of the derivative and the spacing in x would underflow.
+    // A tiny but nonzero slope still resolves an RHS on the same scale.
+    let min_subnormal = f64::from_bits(1);
+    assert_eq!(
+        super::match_exactness(
+            min_subnormal,
+            min_subnormal,
+            0.125,
+            min_subnormal,
+            min_subnormal
         ),
-    ] {
-        let list = equation_list(&matches);
-        assert!(
-            is_exact_equation(&matches, "xC", "1"),
-            "{label} lost cospi(x) = 1: {list}"
-        );
-        assert!(
-            !is_exact_equation(&matches, "xC", "p2A"),
-            "{label} stamped cospi(x) = atan2(pi, 2) exact inside ±0.01: {list}"
-        );
-    }
+        Some(true)
+    );
 }
 
 #[test]
 fn test_squared_trig_false_exacts_stay_out() {
     use crate::symbol::Symbol;
-    // cospi(x^2) at 2^52 is really 1 with derivative 0, so LHS dedup keeps the
-    // simpler cospi(x). sinpi(x^2) is 0. Neither may show up as = 1 or = 2
-    // the way main's Newton step used to.
+    // At 2^52, cospi(x) and cospi(x^2) are both stationary and sinpi(x^2)
+    // is zero. None of them should produce the near misses below.
     let mut config = fast_test_config();
     config.max_lhs_complexity = 50;
     config.max_rhs_complexity = 20;
@@ -1901,8 +1877,8 @@ fn test_squared_trig_false_exacts_stay_out() {
     ] {
         let list = equation_list(&matches);
         assert!(
-            is_exact_equation(&matches, "xC", "1"),
-            "cospi(x) = 1 missing: {list}"
+            !has_equation(&matches, "xC", "1"),
+            "stationary cospi(x) = 1 reported: {list}"
         );
         assert!(!is_exact_equation(&matches, "xsC", "2"), "{list}");
         assert!(!is_exact_equation(&matches, "xsS", "1"), "{list}");
@@ -1932,8 +1908,8 @@ fn test_false_exact_identities_stay_out_of_large_integer_results() {
         equation_list(&at_two_52)
     );
     assert!(
-        is_exact_equation(&at_two_52, "xC", "1"),
-        "cospi(x) = 1 missing at 2^52: {}",
+        !has_equation(&at_two_52, "xC", "1"),
+        "stationary cospi(x) = 1 reported at 2^52: {}",
         equation_list(&at_two_52)
     );
     assert!(
@@ -1942,20 +1918,12 @@ fn test_false_exact_identities_stay_out_of_large_integer_results() {
         equation_list(&at_two_52)
     );
 
-    // 2^53 - 1 is the last odd integer. cospi is -1 there, not +1; the bug
-    // was the LHS being dropped because target+e is the next integer.
+    // Cosine is stationary at the last representable odd integer as well.
     let two_53_minus = 2.0_f64.powi(53) - 1.0;
     let at_odd = super::search(two_53_minus, &config, 8);
     assert!(
-        at_odd.iter().any(|m| {
-            m.exact && m.lhs.expr.to_postfix() == "xC" && (m.rhs.value + 1.0).abs() == 0.0
-        }),
-        "cospi(x) = -1 missing at 2^53-1: {}",
-        equation_list(&at_odd)
-    );
-    assert!(
-        !is_exact_equation(&at_odd, "xC", "1"),
-        "cospi(x) = 1 is false at odd 2^53-1: {}",
+        at_odd.iter().all(|m| m.lhs.expr.to_postfix() != "xC"),
+        "stationary cospi(x) reported at 2^53-1: {}",
         equation_list(&at_odd)
     );
 
@@ -2406,8 +2374,8 @@ fn test_small_target_underflow_is_skipped() {
             }
             if target.abs() == 1.1e-8 {
                 assert!(
-                    is_exact_equation(&matches, "xxr*", "1"),
-                    "{label} dropped x*(1/x) = 1 at {target}: {list}"
+                    !has_equation(&matches, "xxr*", "1"),
+                    "{label} reported x*(1/x) = 1 at {target}: {list}"
                 );
             }
         }
@@ -2422,7 +2390,10 @@ fn test_exact_requires_solved_x_near_the_target() {
     // ~1e-15, far past 8 ulps of the target. The 1e6 cube root (~7 ulps) is
     // covered by test_exact_uses_sides_at_the_typed_target.
     let small = 1e-15;
-    assert!(!super::match_is_exact(1.0, 1.0, 0.0, small));
+    assert_eq!(
+        super::match_exactness(1.0, 1.0, 1.0, 0.0, small),
+        Some(false)
+    );
     assert!(super::solved_x_within_ulps(
         1.0e6 + 8.149_072_527_885_437e-10,
         1.0e6
@@ -2471,9 +2442,8 @@ fn test_exact_requires_solved_x_near_the_target() {
         }
     }
 
-    // x*(1/x) = 1 at 1e-15 is a real identity. A config that actually
-    // generates it must keep the row exact (the 1.1e-8 search covers the
-    // same identity; this is the smaller target).
+    // The identity x*(1/x) = 1 provides no information about x, even when
+    // rounding in the differentiated expression leaves a nonzero slope.
     let identity = restricted_config(
         vec![Symbol::One],
         vec![Symbol::Recip],
@@ -2484,8 +2454,8 @@ fn test_exact_requires_solved_x_near_the_target() {
     for target in [small, -small] {
         for (label, matches) in batch_and_streaming(target, &identity, 8) {
             assert!(
-                is_exact_equation(&matches, "xxr*", "1"),
-                "{label} dropped x*(1/x) = 1 at {target}: {}",
+                !has_equation(&matches, "xxr*", "1"),
+                "{label} reported x*(1/x) = 1 at {target}: {}",
                 equation_list(&matches)
             );
         }
@@ -2493,7 +2463,10 @@ fn test_exact_requires_solved_x_near_the_target() {
 
     // Level-2 rows whose sides barely move and whose solved x is ~1e-11 off.
     let tiny = 1.774_999_999_999_999_7e-11;
-    assert!(!super::match_is_exact(1.0, 1.0, 4.2e-12, tiny));
+    assert_eq!(
+        super::match_exactness(1.0, 1.0, 1.0, 4.2e-12, tiny),
+        Some(false)
+    );
     assert!(!super::solved_x_within_ulps(0.0, tiny));
     let flat_near_root = restricted_config(
         vec![Symbol::One, Symbol::Pi, Symbol::E, Symbol::Plastic],
@@ -2514,14 +2487,14 @@ fn test_exact_requires_solved_x_near_the_target() {
         );
     }
 
-    // cospi(x) = 1 just off 2: the sides agree and Newton walks back to 2.
-    // The slope is too large for the flush skip, so the row stays, not exact.
+    // With a nonzero slope and a resolvable correction, Newton can still
+    // find an approximation to a stationary root from farther away.
     let just_off = 2.00000001;
     let cospi = restricted_config(vec![Symbol::One], vec![Symbol::CosPi], vec![], 40, 3);
     for (label, matches) in batch_and_streaming(2.0, &cospi, 4) {
         assert!(
-            is_exact_equation(&matches, "xC", "1"),
-            "{label} dropped cospi(x) = 1 at 2: {}",
+            !has_equation(&matches, "xC", "1"),
+            "{label} reported stationary cospi(x) = 1 at 2: {}",
             equation_list(&matches)
         );
     }

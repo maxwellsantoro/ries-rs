@@ -1,8 +1,8 @@
 //! Metrics and scoring for match categorization
 //!
 //! Computes scores across multiple dimensions to categorize matches:
-//! - Exact: error below machine epsilon
-//! - Best: lowest error approximations
+//! - Exact: matches at the typed target
+//! - Best: lowest error buckets among approximations
 //! - Elegant: simplest/cleanest expressions
 //! - Interesting: novel/unexpected combinations
 //! - Stable: robust matches (good Newton conditioning)
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 pub struct MatchMetrics {
     /// Absolute error from target
     pub error: f64,
-    /// Whether this is an exact match (error < 1e-14)
+    /// Whether the search classified the match as exact
     pub is_exact: bool,
     /// Total complexity score
     pub complexity: u32,

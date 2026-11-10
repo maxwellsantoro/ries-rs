@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn default_report_surfaces_simple_forms_of_rounded_constants() {
+    for (target, expected) in [
+        ("1.41421356", &["x = sqrt(2)", "x^2 = 2"][..]),
+        ("3.14159265", &["x = pi"][..]),
+    ] {
+        let (stdout, _) = run_ries(&[target]);
+        assert!(!stdout.contains("('exact' match)"), "{target}\n{stdout}");
+        let elegant = stdout.split_once("-- Elegant/efficient").unwrap().1;
+        let equations: Vec<_> = elegant
+            .lines()
+            .skip(2)
+            .take(expected.len())
+            .map(|row| {
+                let (lhs, rhs) = row.split_once('=').unwrap();
+                let rhs = rhs.split_once("for x").unwrap().0.trim();
+                format!("{} = {rhs}", lhs.trim())
+            })
+            .collect();
+        assert_eq!(equations, expected, "{stdout}");
+    }
+}
+
+#[test]
 fn test_parity_ranking_flag_is_accepted() {
     let (stdout, _stderr) = run_ries(&[
         "2.5",
