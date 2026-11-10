@@ -17,7 +17,8 @@ use crate::precision::{HighPrec, RiesFloat};
 pub struct VerificationResult {
     /// Original match (f64 precision)
     pub original: Match,
-    /// Estimated absolute root error at high precision (None if f64 mode).
+    /// Estimated absolute root error. Infinity means a failed verification.
+    /// `None` means no high-precision evaluation was available.
     pub highprec_error: Option<f64>,
     /// Whether the match is verified at high precision
     pub is_verified: bool,
@@ -26,7 +27,34 @@ pub struct VerificationResult {
     pub error_ratio: Option<f64>,
 }
 
+/// Outcome of the high-precision evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationStatus {
+    Verified,
+    Failed,
+    Unavailable,
+}
+
 impl VerificationResult {
+    /// Distinguish a rejected equation from one we could not evaluate.
+    pub fn status(&self) -> VerificationStatus {
+        match self.highprec_error {
+            None => VerificationStatus::Unavailable,
+            Some(_) if self.is_verified => VerificationStatus::Verified,
+            Some(_) => VerificationStatus::Failed,
+        }
+    }
+
+    #[cfg(feature = "highprec")]
+    fn unavailable(original: Match) -> Self {
+        Self {
+            original,
+            highprec_error: None,
+            is_verified: false,
+            error_ratio: None,
+        }
+    }
+
     /// Create a verification result for f64 mode (no high precision)
     pub fn f64_result(m: Match) -> Self {
         Self {
@@ -67,6 +95,12 @@ pub fn verify_matches_highprec_with_trig_scale(
     user_constants: &[crate::profile::UserConstant],
     trig_argument_scale: f64,
 ) -> Vec<VerificationResult> {
+    if !(rug::float::prec_min()..=rug::float::prec_max()).contains(&precision_bits) {
+        return matches
+            .into_iter()
+            .map(VerificationResult::unavailable)
+            .collect();
+    }
     let target_hp = HighPrec::from_f64_with_prec(target, precision_bits);
     let tolerance_hp = HighPrec::from_f64_with_prec(EXACT_MATCH_TOLERANCE, precision_bits);
     let hp_constants: Vec<_> = user_constants
@@ -85,7 +119,7 @@ pub fn verify_matches_highprec_with_trig_scale(
                 m.x_value,
                 precision_bits,
                 &hp_constants,
-                trig_argument_scale,
+                eval_context.trig_argument_scale,
             );
 
             // Evaluate RHS at high precision
@@ -94,7 +128,7 @@ pub fn verify_matches_highprec_with_trig_scale(
                 m.x_value,
                 precision_bits,
                 &hp_constants,
-                trig_argument_scale,
+                eval_context.trig_argument_scale,
             );
 
             match (lhs_val, rhs_val) {
@@ -141,15 +175,7 @@ pub fn verify_matches_highprec_with_trig_scale(
                         }
                     }
                 }
-                _ => {
-                    // Evaluation failed at high precision
-                    VerificationResult {
-                        original: m,
-                        highprec_error: Some(f64::INFINITY),
-                        is_verified: false,
-                        error_ratio: None,
-                    }
-                }
+                _ => VerificationResult::unavailable(m),
             }
         })
         .collect()
@@ -199,7 +225,8 @@ fn evaluate_highprec(
     // Use precision-aware constructors for full accuracy beyond f64 limits
     let zero = HighPrec::zero_with_prec(precision_bits);
     let one = HighPrec::one_with_prec(precision_bits);
-    let trig_scale = HighPrec::from_f64_with_prec(trig_argument_scale, precision_bits);
+    let custom_trig_scale = (trig_argument_scale != crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE)
+        .then(|| HighPrec::from_f64_with_prec(trig_argument_scale, precision_bits));
     let x_hp = HighPrec::from_f64_with_prec(x, precision_bits);
 
     let mut stack: Vec<HighPrec> = Vec::with_capacity(32);
@@ -207,10 +234,7 @@ fn evaluate_highprec(
     let mut index = 0;
     while index < expr.len() {
         if let Some((len, value)) = expr.decimal_literal_at(index) {
-            stack.push(HighPrec::from_str_with_prec(
-                &crate::expr::format_exact_f64_integer(value),
-                precision_bits,
-            ));
+            stack.push(HighPrec::from_f64_with_prec(value, precision_bits));
             index += len;
             continue;
         }
@@ -306,15 +330,27 @@ fn evaluate_highprec(
             // Trig functions
             Symbol::SinPi => {
                 let a = stack.pop()?;
-                stack.push((trig_scale.clone() * a).sin());
+                stack.push(if let Some(scale) = &custom_trig_scale {
+                    (scale.clone() * a).sin()
+                } else {
+                    a.sin_pi()
+                });
             }
             Symbol::CosPi => {
                 let a = stack.pop()?;
-                stack.push((trig_scale.clone() * a).cos());
+                stack.push(if let Some(scale) = &custom_trig_scale {
+                    (scale.clone() * a).cos()
+                } else {
+                    a.cos_pi()
+                });
             }
             Symbol::TanPi => {
                 let a = stack.pop()?;
-                stack.push((trig_scale.clone() * a).tan());
+                stack.push(if let Some(scale) = &custom_trig_scale {
+                    (scale.clone() * a).tan()
+                } else {
+                    a.tan_pi()
+                });
             }
 
             // User constants
@@ -356,18 +392,27 @@ fn evaluate_highprec(
 
 /// Format verification results for display
 pub fn format_verification_report(results: &[VerificationResult], max_display: usize) -> String {
+    format_verification_report_with(results, max_display, |expr| expr.to_infix())
+}
+
+/// Format verification using the same expression rendering as the search report.
+pub fn format_verification_report_with(
+    results: &[VerificationResult],
+    max_display: usize,
+    render: impl Fn(&crate::expr::Expression) -> String,
+) -> String {
     let mut output = String::new();
 
     // Separate verified and unverified
     let verified: Vec<_> = results
         .iter()
-        .filter(|r| r.is_verified)
+        .filter(|r| r.status() == VerificationStatus::Verified)
         .take(max_display)
         .collect();
 
     let unverified: Vec<_> = results
         .iter()
-        .filter(|r| !r.is_verified)
+        .filter(|r| r.status() == VerificationStatus::Failed)
         .take(max_display)
         .collect();
 
@@ -388,8 +433,8 @@ pub fn format_verification_report(results: &[VerificationResult], max_display: u
             };
             output.push_str(&format!(
                 "  {:<24} = {:<24}  {{{}}}{}{}\n",
-                r.original.lhs.expr.to_infix(),
-                r.original.rhs.expr.to_infix(),
+                render(&r.original.lhs.expr),
+                render(&r.original.rhs.expr),
                 r.original.complexity,
                 hp_str,
                 ratio_str
@@ -402,9 +447,26 @@ pub fn format_verification_report(results: &[VerificationResult], max_display: u
         for r in &unverified {
             output.push_str(&format!(
                 "  {:<24} = {:<24}  {{{}}}\n",
-                r.original.lhs.expr.to_infix(),
-                r.original.rhs.expr.to_infix(),
+                render(&r.original.lhs.expr),
+                render(&r.original.rhs.expr),
                 r.original.complexity
+            ));
+        }
+    }
+
+    let mut unavailable = results
+        .iter()
+        .filter(|r| r.status() == VerificationStatus::Unavailable)
+        .take(max_display)
+        .peekable();
+    if unavailable.peek().is_some() {
+        output.push_str("\n  -- High-precision evaluation unavailable --\n\n");
+        for r in unavailable {
+            output.push_str(&format!(
+                "  {:<24} = {:<24}  {{{}}}\n",
+                render(&r.original.lhs.expr),
+                render(&r.original.rhs.expr),
+                r.original.complexity,
             ));
         }
     }

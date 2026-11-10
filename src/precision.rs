@@ -266,6 +266,24 @@ impl HighPrec {
         }
     }
 
+    pub(crate) fn sin_pi(self) -> Self {
+        Self {
+            inner: self.inner.sin_pi(),
+        }
+    }
+
+    pub(crate) fn cos_pi(self) -> Self {
+        Self {
+            inner: self.inner.cos_pi(),
+        }
+    }
+
+    pub(crate) fn tan_pi(self) -> Self {
+        Self {
+            inner: self.inner.tan_pi(),
+        }
+    }
+
     /// Get the current precision in bits
     pub fn precision(&self) -> u32 {
         self.inner.prec()

@@ -394,12 +394,7 @@ impl ExprDatabase {
         }
 
         // Collect pool stats
-        stats.pool_insertions = pool.stats.insertions;
-        stats.pool_rejections_error = pool.stats.rejections_error;
-        stats.pool_rejections_dedupe = pool.stats.rejections_dedupe;
-        stats.pool_evictions = pool.stats.evictions;
-        stats.pool_final_size = pool.len();
-        stats.pool_best_error = pool.best_error;
+        stats.record_pool(&pool);
         stats.search_time = search_start.elapsed();
         stats.early_exit = early_exit;
 

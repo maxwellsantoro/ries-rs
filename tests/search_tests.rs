@@ -1389,3 +1389,15 @@ fn test_target_zero_finds_x_equals_ln_one() {
         "streaming search for 0 should find exact x = ln(1)"
     );
 }
+
+#[test]
+fn significant_digit_tolerance_tracks_decimal_place_values() {
+    use ries_rs::search::significant_digits_tolerance as tolerance;
+
+    assert_eq!(tolerance(0.333, Some("0.3330")), 5e-5);
+    assert_eq!(tolerance(0.333, Some("3.330E-1")), 5e-5);
+    assert_eq!(tolerance(20.0, None), 0.5);
+    assert_eq!(tolerance(1e-20, None), 5e-21);
+    assert_eq!(tolerance(1e-310, Some("1.00e-310")), 5e-313);
+    assert_eq!(tolerance(f64::from_bits(1), Some("5e-324")), 0.0);
+}

@@ -3,20 +3,8 @@
 //! This module provides functions for formatting expressions, matches,
 //! and other output for display to the user.
 
+pub use ries_rs::ReportDisplayFormat as DisplayFormat;
 use ries_rs::{expr, search, symbol, EvalContext, SymbolTable};
-
-/// Display format for expression output.
-#[derive(Debug, Clone, Copy)]
-pub enum DisplayFormat {
-    /// Infix notation with specified format
-    Infix(expr::OutputFormat),
-    /// Compact postfix notation
-    PostfixCompact,
-    /// Verbose postfix notation with named tokens
-    PostfixVerbose,
-    /// Condensed format (alias for PostfixCompact)
-    Condensed,
-}
 
 /// Format a numeric value for display.
 ///
@@ -44,106 +32,6 @@ pub fn parse_display_format(s: &str) -> DisplayFormat {
     }
 }
 
-/// Convert a symbol to its verbose postfix token name.
-fn postfix_verbose_token(sym: symbol::Symbol) -> String {
-    use symbol::Symbol;
-    match sym {
-        Symbol::Neg => "neg".to_string(),
-        Symbol::Recip => "recip".to_string(),
-        Symbol::Sqrt => "sqrt".to_string(),
-        Symbol::Square => "dup*".to_string(),
-        Symbol::Pow => "**".to_string(),
-        Symbol::Root => "root".to_string(),
-        Symbol::Log => "logn".to_string(),
-        Symbol::Exp => "exp".to_string(),
-        _ => sym.display_name(),
-    }
-}
-
-/// Apply explicit '*' multiplication operators to infix output.
-///
-/// Converts implicit multiplication (e.g., "2 x") to explicit form (e.g., "2*x").
-pub fn apply_explicit_multiply(infix: &str) -> String {
-    let chars: Vec<char> = infix.chars().collect();
-    let mut out = String::with_capacity(infix.len() + 8);
-    for i in 0..chars.len() {
-        let ch = chars[i];
-        if ch != ' ' {
-            out.push(ch);
-            continue;
-        }
-
-        let prev = i.checked_sub(1).and_then(|idx| chars.get(idx).copied());
-        let next = chars.get(i + 1).copied();
-        let implicit_mul = prev.is_some_and(|c| c.is_ascii_digit() || c == ')')
-            && next.is_some_and(|c| c.is_ascii_alphabetic() || c == '(');
-        if implicit_mul {
-            out.push('*');
-        } else {
-            out.push(' ');
-        }
-    }
-    out
-}
-
-/// Format an expression for display using the specified format.
-///
-/// If a SymbolTable is provided, uses it for symbol names (table-driven formatting).
-/// Otherwise, falls back to default symbol names.
-pub fn format_expression_for_display(
-    expression: &expr::Expression,
-    format: DisplayFormat,
-    explicit_multiply: bool,
-    table: Option<&SymbolTable>,
-) -> String {
-    match format {
-        DisplayFormat::Infix(inner) => {
-            let infix = match inner {
-                // Default and Pretty use table-driven names (respects --symbol-names)
-                expr::OutputFormat::Default => {
-                    if let Some(t) = table {
-                        expression.to_infix_with_table(t)
-                    } else {
-                        expression.to_infix()
-                    }
-                }
-                expr::OutputFormat::Pretty => {
-                    let base = if let Some(t) = table {
-                        expression.to_infix_with_table(t)
-                    } else {
-                        expression.to_infix()
-                    };
-                    apply_pretty_unicode(&base)
-                }
-                // Mathematica/SymPy use their own standard symbol names
-                expr::OutputFormat::Mathematica => expression.to_infix_mathematica(),
-                expr::OutputFormat::SymPy => expression.to_infix_sympy(),
-            };
-            if explicit_multiply {
-                apply_explicit_multiply(&infix)
-            } else {
-                infix
-            }
-        }
-        DisplayFormat::PostfixCompact | DisplayFormat::Condensed => expression.to_postfix(),
-        DisplayFormat::PostfixVerbose => expression
-            .symbols()
-            .iter()
-            .map(|sym| postfix_verbose_token(*sym))
-            .collect::<Vec<_>>()
-            .join(" "),
-    }
-}
-
-/// Apply Unicode substitutions for Pretty output format.
-fn apply_pretty_unicode(s: &str) -> String {
-    let mut result = s.to_string();
-    result = result.replace("pi", "π");
-    result = result.replace("sqrt(", "√(");
-    result = result.replace("^2", "²");
-    result
-}
-
 /// Print a match in relative format (showing error from target).
 pub fn print_match_relative(
     m: &search::Match,
@@ -152,6 +40,7 @@ pub fn print_match_relative(
     explicit_multiply: bool,
     solved_rhs: Option<&expr::Expression>,
     table: Option<&SymbolTable>,
+    trig_scale: f64,
 ) {
     let lhs_expr = if solved_rhs.is_some() {
         let mut x_expr = expr::Expression::new();
@@ -162,8 +51,8 @@ pub fn print_match_relative(
     };
     let rhs_expr = solved_rhs.unwrap_or(&m.rhs.expr);
 
-    let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply, table);
-    let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply, table);
+    let lhs_str = format.format_expression(&lhs_expr, explicit_multiply, table, trig_scale);
+    let rhs_str = format.format_expression(rhs_expr, explicit_multiply, table, trig_scale);
 
     let error_str = if m.exact {
         "('exact' match)".to_string()
@@ -186,6 +75,7 @@ pub fn print_match_absolute(
     explicit_multiply: bool,
     solved_rhs: Option<&expr::Expression>,
     table: Option<&SymbolTable>,
+    trig_scale: f64,
 ) {
     let lhs_expr = if solved_rhs.is_some() {
         let mut x_expr = expr::Expression::new();
@@ -196,8 +86,8 @@ pub fn print_match_absolute(
     };
     let rhs_expr = solved_rhs.unwrap_or(&m.rhs.expr);
 
-    let lhs_str = format_expression_for_display(&lhs_expr, format, explicit_multiply, table);
-    let rhs_str = format_expression_for_display(rhs_expr, format, explicit_multiply, table);
+    let lhs_str = format.format_expression(&lhs_expr, explicit_multiply, table, trig_scale);
+    let rhs_str = format.format_expression(rhs_expr, explicit_multiply, table, trig_scale);
 
     println!(
         "{:>24} = {:<24} for x = {:.15} {{{}}}",
@@ -288,7 +178,12 @@ fn print_expression_steps(
 ) {
     println!("    {} steps:", label);
     for (idx, step_expr) in decompose_subexpressions(expression).iter().enumerate() {
-        let rendered = format_expression_for_display(step_expr, format, explicit_multiply, table);
+        let rendered = format.format_expression(
+            step_expr,
+            explicit_multiply,
+            table,
+            eval_context.trig_argument_scale,
+        );
         match ries_rs::eval::evaluate_with_context(step_expr, x, eval_context) {
             Ok(result) => println!(
                 "      {:>2}. {:<28} value={:+.12e} deriv={:+.12e}",
@@ -344,45 +239,6 @@ pub fn print_show_work_details(
     }
 }
 
-/// Compute tolerance for --match-all-digits based on significant digits of the target.
-///
-/// When --match-all-digits is enabled, the match tolerance is set so that matches
-/// must agree with the target value to all significant digits provided.
-///
-/// For example:
-/// - Target "2.5" (1 sig fig after decimal) -> tolerance ~0.05 (half of last digit)
-/// - Target "2.50" (2 sig figs after decimal) -> tolerance ~0.005
-/// - Target "2.500" (3 sig figs after decimal) -> tolerance ~0.0005
-pub fn compute_significant_digits_tolerance(target: f64) -> f64 {
-    if target == 0.0 {
-        return 1e-15;
-    }
-
-    // Convert to string to count significant digits
-    let target_str = format!("{:.15}", target);
-
-    // Remove trailing zeros after decimal to get actual precision
-    let trimmed = target_str.trim_end_matches('0');
-
-    // Find decimal point position
-    let decimal_pos = trimmed.find('.');
-
-    // Count digits after decimal (not counting trailing zeros we removed)
-    let digits_after_decimal = if let Some(pos) = decimal_pos {
-        // Digits after decimal in the trimmed string
-        trimmed.len() - pos - 1
-    } else {
-        0
-    };
-
-    // Tolerance is 0.5 * 10^(-digits_after_decimal)
-    // This means the match must agree to the last digit shown
-    let tolerance = 0.5 * 10_f64.powi(-(digits_after_decimal as i32));
-
-    // Ensure a minimum tolerance for numerical stability
-    tolerance.max(1e-15)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,18 +264,5 @@ mod tests {
             parse_display_format("mathematica"),
             DisplayFormat::Infix(expr::OutputFormat::Mathematica)
         ));
-    }
-
-    #[test]
-    fn test_compute_significant_digits_tolerance() {
-        // 2.5 has 1 digit after decimal -> tolerance ~0.05
-        let tol = compute_significant_digits_tolerance(2.5);
-        assert!(tol > 0.04 && tol < 0.06);
-
-        // Note: 2.50 f64 literal is the same as 2.5, so we can't test 2 digits
-        // The function works based on the actual f64 value, not the source literal
-        // For values with more precision, the tolerance is smaller
-        let tol = compute_significant_digits_tolerance(2.51);
-        assert!(tol > 0.004 && tol < 0.006);
     }
 }

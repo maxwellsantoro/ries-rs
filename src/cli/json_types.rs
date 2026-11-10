@@ -15,6 +15,7 @@ use super::DisplayFormat;
 #[derive(Serialize)]
 pub struct JsonRunOutput {
     pub target: f64,
+    pub trig_argument_scale: f64,
     pub search_level: f32,
     pub max_lhs_complexity: u32,
     pub max_rhs_complexity: u32,
@@ -48,6 +49,7 @@ struct JsonVerificationResult {
     lhs_postfix: String,
     rhs_postfix: String,
     is_verified: bool,
+    status: &'static str,
     highprec_error: Option<f64>,
     error_ratio: Option<f64>,
 }
@@ -62,6 +64,11 @@ impl JsonVerification {
                     lhs_postfix: r.original.lhs.expr.to_postfix(),
                     rhs_postfix: r.original.rhs.expr.to_postfix(),
                     is_verified: r.is_verified,
+                    status: match r.status() {
+                        ries_rs::VerificationStatus::Verified => "verified",
+                        ries_rs::VerificationStatus::Failed => "failed",
+                        ries_rs::VerificationStatus::Unavailable => "unavailable",
+                    },
                     highprec_error: r.highprec_error.filter(|error| error.is_finite()),
                     error_ratio: r.error_ratio.filter(|ratio| ratio.is_finite()),
                 })
@@ -120,7 +127,8 @@ pub struct JsonSearchStats {
     pub pool_evictions: usize,
     pub pool_final_size: usize,
     pub pool_acceptance_rate: f64,
-    pub best_error: f64,
+    pub best_error: Option<f64>,
+    pub adaptive_error_threshold: Option<f64>,
     pub generation_ms: f64,
     pub search_ms: f64,
     pub elapsed_ms: f64,
@@ -171,6 +179,7 @@ pub fn build_json_output(
     output_format: DisplayFormat,
     explicit_multiply: bool,
     symbol_table: &SymbolTable,
+    eval_context: &ries_rs::EvalContext<'_>,
     matches: &[crate::search::Match],
     stats: &SearchStats,
     elapsed: std::time::Duration,
@@ -187,47 +196,29 @@ pub fn build_json_output(
     }
     .to_string();
 
+    let render = |expression: &crate::expr::Expression| {
+        output_format.format_expression(
+            expression,
+            explicit_multiply,
+            Some(symbol_table),
+            eval_context.trig_argument_scale,
+        )
+    };
     let results = matches
         .iter()
         .map(|m| {
-            use super::output::format_expression_for_display;
-            use crate::{canonical_expression_key, solve_for_x_at};
+            use crate::canonical_expression_key;
+            use ries_rs::solve_for_x_at_with_context;
 
-            let lhs = format_expression_for_display(
-                &m.lhs.expr,
-                output_format,
-                explicit_multiply,
-                Some(symbol_table),
-            );
-            let rhs = format_expression_for_display(
-                &m.rhs.expr,
-                output_format,
-                explicit_multiply,
-                Some(symbol_table),
-            );
-
-            // Analytical solver
-            let (solve_for_x, solve_for_x_postfix) = if include_solve_for_x {
-                let solved = solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value);
-                (
-                    solved.as_ref().map(|e: &crate::expr::Expression| {
-                        format!(
-                            "x = {}",
-                            format_expression_for_display(
-                                e,
-                                output_format,
-                                explicit_multiply,
-                                Some(symbol_table),
-                            )
-                        )
-                    }),
-                    solved
-                        .as_ref()
-                        .map(|e: &crate::expr::Expression| e.to_postfix()),
-                )
-            } else {
-                (None, None)
-            };
+            let lhs = render(&m.lhs.expr);
+            let rhs = render(&m.rhs.expr);
+            let solved = include_solve_for_x
+                .then(|| {
+                    solve_for_x_at_with_context(&m.lhs.expr, &m.rhs.expr, m.x_value, eval_context)
+                })
+                .flatten();
+            let solve_for_x = solved.as_ref().map(|e| format!("x = {}", render(e)));
+            let solve_for_x_postfix = solved.as_ref().map(|e| e.to_postfix());
 
             // Canonical key
             let canonical_key = canonical_expression_key(&m.lhs.expr)
@@ -261,6 +252,7 @@ pub fn build_json_output(
     let peak_memory = peak_memory_bytes();
     JsonRunOutput {
         target,
+        trig_argument_scale: eval_context.trig_argument_scale,
         search_level,
         max_lhs_complexity,
         max_rhs_complexity,
@@ -306,7 +298,8 @@ pub fn build_json_output(
             pool_evictions: stats.pool_evictions,
             pool_final_size: stats.pool_final_size,
             pool_acceptance_rate: stats.pool_acceptance_rate(),
-            best_error: stats.pool_best_error,
+            best_error: (stats.pool_final_size != 0).then_some(stats.pool_best_error),
+            adaptive_error_threshold: stats.pool_error_threshold,
             generation_ms: stats.gen_time.as_secs_f64() * 1000.0,
             search_ms: stats.search_time.as_secs_f64() * 1000.0,
             elapsed_ms: elapsed.as_secs_f64() * 1000.0,

@@ -121,10 +121,6 @@ pub mod constants {
 /// This matches original `sinpi(x) = sin(πx)` semantics.
 pub const DEFAULT_TRIG_ARGUMENT_SCALE: f64 = std::f64::consts::PI;
 
-/// Tolerance for snapping default `sinpi/cospi/tanpi` arguments to exact
-/// integer and half-integer values.
-const TRIG_EXACT_ARGUMENT_TOLERANCE: f64 = 1e-12;
-
 /// Explicit evaluation context for a single run.
 ///
 /// This keeps trig scaling and user-defined symbols inside the function
@@ -823,7 +819,7 @@ fn eval_unary(
 
     #[inline]
     fn is_default_trig_scale(scale: f64) -> bool {
-        (scale - DEFAULT_TRIG_ARGUMENT_SCALE).abs() <= f64::EPSILON
+        scale == DEFAULT_TRIG_ARGUMENT_SCALE
     }
 
     /// `i64::MAX as f64` is 2^63, which is not an i64. `as i64` saturates it
@@ -853,7 +849,7 @@ fn eval_unary(
     #[inline]
     fn snap_integer(value: f64) -> IntegerSnap {
         let rounded = value.round();
-        if (value - rounded).abs() > TRIG_EXACT_ARGUMENT_TOLERANCE {
+        if value != rounded {
             return IntegerSnap::NotInteger;
         }
         if !rounded.is_finite() {
@@ -869,7 +865,7 @@ fn eval_unary(
     fn snap_half_integer_index(value: f64) -> Option<i64> {
         let doubled = value * 2.0;
         let rounded = doubled.round();
-        if (doubled - rounded).abs() > TRIG_EXACT_ARGUMENT_TOLERANCE {
+        if doubled != rounded {
             return None;
         }
         let rounded_i = rounded_f64_to_i64(rounded)?;
@@ -886,6 +882,23 @@ fn eval_unary(
         } else {
             -1.0
         }
+    }
+
+    // Reduce before multiplying by π so large noninteger inputs retain their
+    // fractional part. Noninteger f64 values fit exactly within i64.
+    #[inline]
+    fn reduced_sin_cos(value: f64) -> (f64, f64) {
+        let nearest = value.round();
+        let sign = alternating_sign(nearest as i64);
+        let fraction = value - nearest;
+        let (sin, cos) = if fraction.abs() > 0.25 {
+            // Measure from the half-integer to retain accuracy near a pole.
+            let (sin_delta, cos_delta) = ((0.5 - fraction.abs()) * constants::PI).sin_cos();
+            (cos_delta.copysign(fraction), sin_delta)
+        } else {
+            (fraction * constants::PI).sin_cos()
+        };
+        (sign * sin, sign * cos)
     }
 
     let (val, deriv, num_type) = match sym {
@@ -969,9 +982,8 @@ fn eval_unary(
                         if let Some(n) = snap_half_integer_index(a.val) {
                             (alternating_sign(n), 0.0, NumType::Transcendental)
                         } else {
-                            let val = (trig_argument_scale * a.val).sin();
-                            let deriv =
-                                trig_argument_scale * (trig_argument_scale * a.val).cos() * a.deriv;
+                            let (val, cos) = reduced_sin_cos(a.val);
+                            let deriv = trig_argument_scale * cos * a.deriv;
                             (val, deriv, NumType::Transcendental)
                         }
                     }
@@ -997,10 +1009,8 @@ fn eval_unary(
                                 NumType::Transcendental,
                             )
                         } else {
-                            let val = (trig_argument_scale * a.val).cos();
-                            let deriv = -trig_argument_scale
-                                * (trig_argument_scale * a.val).sin()
-                                * a.deriv;
+                            let (sin, val) = reduced_sin_cos(a.val);
+                            let deriv = -trig_argument_scale * sin * a.deriv;
                             (val, deriv, NumType::Transcendental)
                         }
                     }
@@ -1023,11 +1033,8 @@ fn eval_unary(
                         (0.0, trig_argument_scale * a.deriv, NumType::Transcendental)
                     }
                     IntegerSnap::NotInteger => {
-                        let cos_val = (trig_argument_scale * a.val).cos();
-                        if cos_val.abs() < 1e-10 {
-                            return Err(EvalError::Overflow);
-                        }
-                        let val = (trig_argument_scale * a.val).tan();
+                        let (sin_val, cos_val) = reduced_sin_cos(a.val);
+                        let val = sin_val / cos_val;
                         let deriv = trig_argument_scale * a.deriv / (cos_val * cos_val);
                         (val, deriv, NumType::Transcendental)
                     }
@@ -1055,7 +1062,11 @@ fn eval_unary(
                 if denom.abs() > f64::MIN_POSITIVE {
                     val / denom * a.deriv
                 } else {
-                    0.0
+                    if a.deriv == 0.0 {
+                        0.0
+                    } else {
+                        a.deriv.signum() * f64::INFINITY
+                    }
                 }
             };
             (val, deriv, NumType::Transcendental)
@@ -1114,7 +1125,7 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
                 return Err(EvalError::DivisionByZero);
             }
             let val = a.val / b.val;
-            let deriv = (b.val * a.deriv - a.val * b.deriv) / (b.val * b.val);
+            let deriv = (a.deriv - val * b.deriv) / b.val;
             let mut num_type = a.num_type.combine(b.num_type);
             if num_type == NumType::Integer {
                 num_type = NumType::Rational;
@@ -1134,8 +1145,14 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             // Guard for near-zero base to avoid numerical issues
             let deriv = if a.val > f64::MIN_POSITIVE {
                 val * (b.val * a.deriv / a.val + a.val.ln() * b.deriv)
-            } else if a.val.abs() < f64::MIN_POSITIVE && b.val > 0.0 {
-                0.0
+            } else if a.val == 0.0 && b.val > 0.0 {
+                if b.val == 1.0 {
+                    a.deriv
+                } else if b.val > 1.0 || a.deriv == 0.0 {
+                    0.0
+                } else {
+                    a.deriv.signum() * f64::INFINITY
+                }
             } else {
                 // Negative base, integer exponent (or near-zero base treated as 0).
                 // Full formula: val * (b * a.deriv/a + ln(a) * b.deriv).
@@ -1204,6 +1221,10 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             // d(b^(1/a))/dx = b^(1/a) * (db/dx/(a*b) - ln(b)*da/dx/a²)
             let deriv = if b.val.abs() > f64::MIN_POSITIVE {
                 val * (b.deriv / (a.val * b.val) - b.val.abs().ln() * a.deriv / (a.val * a.val))
+            } else if b.val == 0.0 && exp == 1.0 {
+                b.deriv
+            } else if b.val == 0.0 && exp > 0.0 && exp < 1.0 && b.deriv != 0.0 {
+                b.deriv.signum() * f64::INFINITY
             } else {
                 0.0
             };
@@ -1261,8 +1282,15 @@ fn lambert_w(x: f64) -> Result<f64, EvalError> {
     if x == 0.0 {
         return Ok(0.0); // W(0) = 0
     }
-    if (x - NEG_INV_E).abs() < 1e-15 {
-        return Ok(-1.0); // W(-1/e) = -1
+    if x == NEG_INV_E {
+        return Ok(-1.0); // Closest representable branch point.
+    }
+    if x - NEG_INV_E < 1e-8 {
+        // The stored branch point is slightly below the real -1/e. Keeping
+        // this correction avoids cancellation in e*x + 1 near the branch.
+        let delta = (x - NEG_INV_E) - 1.242_875_367_278_836_3e-17;
+        let p = (2.0 * constants::E * delta).sqrt();
+        return Ok(-1.0 + p * (1.0 + p * (-1.0 / 3.0 + p * (11.0 / 72.0 - p * 43.0 / 540.0))));
     }
     if x == constants::E {
         return Ok(1.0); // W(e) = 1
@@ -1351,6 +1379,50 @@ mod tests {
 
     fn approx_eq(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-10
+    }
+
+    #[test]
+    fn trig_reduces_large_arguments_without_snapping_neighbors() {
+        let sin = Expression::parse("xS").unwrap();
+        let cos = Expression::parse("xC").unwrap();
+        let tan = Expression::parse("xT").unwrap();
+        let small = 1e-13;
+        assert!(
+            (evaluate(&sin, small).unwrap().value / (constants::PI * small) - 1.0).abs() < 1e-14
+        );
+        let x = 1_000_000_000_000.25;
+        let expected = std::f64::consts::FRAC_1_SQRT_2;
+        assert!((evaluate(&sin, x).unwrap().value - expected).abs() < 1e-15);
+        assert!((evaluate(&cos, x).unwrap().value - expected).abs() < 1e-15);
+        assert!((evaluate(&tan, x).unwrap().value - 1.0).abs() < 1e-15);
+        let near_pole = 0.5_f64.next_down();
+        let tan_near_pole = evaluate(&tan, near_pole).unwrap().value;
+        let expected_pole = 1.0 / (constants::PI * (0.5 - near_pole));
+        assert!((tan_near_pole / expected_pole - 1.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn lambert_w_preserves_near_branch_values_and_slopes() {
+        let expr = Expression::parse("xW").unwrap();
+        let x = -0.367_879_441_171_441_8;
+        let result = evaluate(&expr, x).unwrap();
+        assert!(
+            (result.value - (-0.999_999_945_683_066_6)).abs() < 1e-15,
+            "{}",
+            result.value
+        );
+        assert!(result.derivative > 1e7 && result.derivative.is_finite());
+        assert!(evaluate(&expr, (-1.0 / constants::E).next_down()).is_err());
+    }
+
+    #[test]
+    fn derivatives_at_zero_and_tiny_divisors() {
+        for postfix in ["x1^", "1xv"] {
+            let result = evaluate(&Expression::parse(postfix).unwrap(), 0.0).unwrap();
+            assert_eq!(result.derivative, 1.0, "{postfix}");
+        }
+        let quotient = Expression::parse("xx/").unwrap();
+        assert_eq!(evaluate(&quotient, 1e-200).unwrap().derivative, 0.0);
     }
 
     #[test]

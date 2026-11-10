@@ -1545,3 +1545,207 @@ fn oversized_match_counts_exit_with_usage_error() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("search pool"));
     }
 }
+
+#[test]
+fn match_all_digits_preserves_the_target_literal() {
+    let common = [
+        "--deterministic",
+        "--report=false",
+        "--match-all-digits",
+        "-l",
+        "1",
+        "-S",
+        "x13/",
+    ];
+    let mut args = common.to_vec();
+    args.push("0.333");
+    let short = json_search(&args);
+    assert!(short["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| { row["lhs_postfix"] == "x" && row["rhs_postfix"] == "13/" }));
+
+    for target in ["0.3330", "3.330e-1"] {
+        *args.last_mut().unwrap() = target;
+        let strict = json_search(&args);
+        assert!(strict["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| { row["error"].as_f64().unwrap().abs() <= 0.00005 }));
+    }
+
+    let tiny = json_search(&[
+        "--match-all-digits",
+        "--one-sided",
+        "--report=false",
+        "-l",
+        "1",
+        "-S",
+        "x1234+-/",
+        "1e-20",
+    ]);
+    assert!(tiny["results"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn near_integer_trig_search_does_not_report_a_false_exact_root() {
+    let output = json_search(&[
+        "--deterministic",
+        "--report=false",
+        "-l",
+        "2",
+        "-S",
+        "xS12+",
+        "1.0000000000001",
+    ]);
+    let rows = output["results"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|row| row["exact"] == false));
+}
+
+#[test]
+fn reports_use_search_symbol_names_and_trig_scale() {
+    let (report, _) = run_ries(&["2", "--stop-at-exact", "--symbol-names", ":2:TWO"]);
+    assert!(report.contains("x = TWO"));
+
+    for (format, expected) in [
+        ("default", "cos(x) = 1"),
+        ("pretty", "cos(x) = 1"),
+        ("sympy", "cos(x) = 1"),
+        ("mathematica", "Cos[x] = 1"),
+    ] {
+        let output = json_search(&[
+            "--deterministic",
+            "--report=false",
+            "--trig-argument-scale",
+            "1",
+            "--format",
+            format,
+            "-s",
+            "-l",
+            "0",
+            "-S",
+            "x1C",
+            "6.283185307179586",
+        ]);
+        assert_eq!(output["trig_argument_scale"], 1.0);
+        let row = &output["results"][0];
+        assert_eq!(row["equation"], expected);
+        assert_eq!(row["exact"], true);
+        assert_eq!(row["solve_for_x_postfix"], "2p*");
+    }
+}
+
+#[test]
+fn reported_best_error_is_the_minimum_in_the_pool() {
+    for strategy in [
+        None,
+        Some("--streaming"),
+        Some("--one-sided"),
+        Some("--stop-at-exact"),
+    ] {
+        let mut args = vec![
+            "--deterministic",
+            "--report=false",
+            "-l",
+            "0",
+            "-S",
+            "x3",
+            "3",
+        ];
+        args.extend(strategy);
+        let output = json_search(&args);
+        assert_eq!(output["results"][0]["error"], 0.0, "{strategy:?}");
+        assert_eq!(output["search_stats"]["best_error"], 0.0, "{strategy:?}");
+        if strategy != Some("--stop-at-exact") {
+            assert!(
+                output["search_stats"]["adaptive_error_threshold"]
+                    .as_f64()
+                    .unwrap()
+                    > 0.0
+            );
+        }
+    }
+
+    let output = json_search(&["--report=false", "-l", "0", "-S", "x3", "7"]);
+    assert_eq!(output["results_returned"], 0);
+    assert!(output["search_stats"]["best_error"].is_null());
+}
+
+#[test]
+fn stability_check_does_not_classify_the_fast_match_as_fragile() {
+    let (stdout, _) = run_ries(&[
+        "--classic",
+        "--deterministic",
+        "--stability-check",
+        "-l",
+        "1",
+        "1.4142135623730951",
+    ]);
+    let (search, stability) = stdout.split_once("Stability Analysis").unwrap();
+    assert!(search.contains("sqrt(2)"));
+    assert!(stability.contains("[5/5 levels]"), "{stability}");
+    assert!(
+        !stability
+            .lines()
+            .any(|line| { line.contains("= sqrt(2)") && line.contains("[1/5 levels]") }),
+        "{stability}"
+    );
+}
+
+#[test]
+fn invalid_precision_and_nonfinite_pslq_target_are_usage_errors() {
+    for (args, message) in [
+        (&["--precision", "0", "3"][..], "--precision"),
+        (&["--pslq", "inf"][..], "TARGET must be finite"),
+    ] {
+        let output = run_ries_raw(args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+    }
+}
+
+#[cfg(feature = "highprec")]
+#[test]
+fn precision_preserves_default_trig_and_distinguishes_unavailable_operators() {
+    let trig = json_search(&[
+        "--precision",
+        "256",
+        "--deterministic",
+        "-l",
+        "0",
+        "-S",
+        "x12C",
+        "10000000000000000",
+    ]);
+    let row = &trig["high_precision_verification"]["results"][0];
+    assert_eq!(row["lhs_postfix"], "xC");
+    assert_eq!(row["status"], "verified");
+    assert_eq!(row["highprec_error"], 0.0);
+
+    let args = [
+        "--precision",
+        "256",
+        "--deterministic",
+        "-l",
+        "1",
+        "-S",
+        "x12348v",
+        "2",
+    ];
+    let root = json_search(&args);
+    let results = root["high_precision_verification"]["results"]
+        .as_array()
+        .unwrap();
+    let row = results
+        .iter()
+        .find(|row| row["lhs_postfix"] == "x4v" && row["rhs_postfix"] == "2")
+        .unwrap();
+    assert_eq!(row["status"], "unavailable");
+    assert!(row["highprec_error"].is_null());
+    let (text, _) = run_ries(&args);
+    assert!(text.contains("High-precision evaluation unavailable"));
+    assert!(!text.contains("impostors"));
+}

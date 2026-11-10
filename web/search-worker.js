@@ -69,6 +69,7 @@ function serializeMatch(match) {
     operator_count: match.operator_count,
     tree_depth: match.tree_depth,
     is_exact: match.is_exact,
+    constants: match.constants,
   };
 }
 

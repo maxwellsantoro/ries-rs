@@ -133,7 +133,10 @@ pub type Complexity = u32;
 
 // High-level API
 pub use search::search;
-pub use solver::{canonical_expression_key, solve_for_x_at, solve_for_x_rhs_expression};
+pub use solver::{
+    canonical_expression_key, solve_for_x_at, solve_for_x_at_with_context,
+    solve_for_x_rhs_expression,
+};
 
 // Fast exact match detection
 pub use fast_match::{find_fast_match, find_fast_match_with_context, FastMatchConfig};
@@ -161,13 +164,14 @@ pub use match_summary::MatchSummary;
 
 // Structured reporting and analysis
 pub use highprec_verify::{
-    format_verification_report, verify_matches_highprec, verify_matches_highprec_with_trig_scale,
-    VerificationResult,
+    format_verification_report, format_verification_report_with, verify_matches_highprec,
+    verify_matches_highprec_with_trig_scale, VerificationResult, VerificationStatus,
 };
 pub use metrics::MatchMetrics;
 pub use presets::{print_presets, Preset};
 pub use pslq::{find_integer_relation, find_rational_approximation, IntegerRelation, PslqConfig};
 pub use report::{DisplayFormat as ReportDisplayFormat, Report, ReportConfig};
 pub use stability::{
-    format_stability_report, StabilityAnalyzer, StabilityClass, StabilityConfig, StabilityResult,
+    format_stability_report, format_stability_report_with, StabilityAnalyzer, StabilityClass,
+    StabilityConfig, StabilityResult,
 };

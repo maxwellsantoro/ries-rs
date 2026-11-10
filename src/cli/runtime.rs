@@ -16,14 +16,14 @@ pub struct CliExit {
 }
 
 impl CliExit {
-    fn usage(message: impl Into<String>) -> Self {
+    pub fn usage(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             code: 1,
         }
     }
 
-    fn config(message: impl Into<String>) -> Self {
+    pub fn config(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             code: 2,
@@ -144,6 +144,13 @@ pub fn handle_special_modes(
 
     let target =
         resolved_target.ok_or_else(|| CliExit::usage("Error: TARGET is required for PSLQ"))?;
+
+    if !target.is_finite() {
+        return Err(CliExit::config("Error: TARGET must be finite for PSLQ."));
+    }
+    if args.pslq_max_coeff <= 0 {
+        return Err(CliExit::config("Error: --pslq-max-coeff must be positive."));
+    }
 
     let config = PslqConfig {
         max_coefficient: args.pslq_max_coeff,

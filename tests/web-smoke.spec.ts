@@ -207,3 +207,28 @@ test("a worker error clears the pending search and allows a retry", async ({ pag
   await expect(page.locator("#results-section")).toBeVisible();
   expect(launches).toBe(2);
 });
+
+test("rejects invalid target input and shared links", async ({ page }) => {
+  await page.goto("/web/?target=1garbage");
+  await page.waitForSelector("#search-button:not([disabled])");
+  await expect(page.locator("#status")).toContainText("Invalid target number");
+  await page.fill("#target", "0x10");
+  await page.click("#search-button");
+  await expect(page.locator("#status")).toContainText("Invalid target number");
+});
+
+test("preset results retain constant names for display and SymPy", async ({ page }) => {
+  await page.goto("/web/");
+  await page.waitForSelector("#search-button:not([disabled])");
+  await page.fill("#target", "1.64493406685");
+  await page.fill("#level", "0");
+  await page.fill("#max-matches", "16");
+  await page.selectOption("#preset", "analytic-nt");
+  await page.click("#search-button");
+  await page.waitForSelector("#results-section:not(.hidden)");
+  const values = await page.locator('[data-format="sympy"]').evaluateAll(
+    (buttons) => buttons.map((button) => (button as HTMLElement).dataset.value ?? ""),
+  );
+  expect(values.some((value) => value.includes('Float("1.6449340668482264")'))).toBe(true);
+  expect(values.every((value) => !value.includes("\u0080"))).toBe(true);
+});

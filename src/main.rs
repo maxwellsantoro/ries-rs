@@ -5,27 +5,26 @@
 // Allow field reassignment with default in test code - common pattern for config building
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 use ries_rs::{
-    eval, expr, format_stability_report, format_verification_report, gen, pool, print_presets,
-    profile, search, symbol, udf, verify_matches_highprec_with_trig_scale, FastMatchConfig, Report,
-    ReportConfig, ReportDisplayFormat, DEGENERATE_DERIVATIVE,
+    eval, expr, format_stability_report_with, format_verification_report_with, gen, pool,
+    print_presets, profile, search, symbol, udf, verify_matches_highprec_with_trig_scale,
+    FastMatchConfig, Report, ReportConfig, DEGENERATE_DERIVATIVE,
 };
 
 mod cli;
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use cli::{
     build_gen_config, build_json_output, build_manifest, canon_reduction_enabled,
-    cli_level_to_complexity, compute_significant_digits_tolerance,
-    expression_constraints_from_args, format_bytes_binary, format_value, handle_special_modes,
-    load_runtime_profile, normalize_legacy_args, parse_diagnostics, parse_display_format,
-    parse_memory_size_bytes, parse_symbol_sets, peak_memory_bytes, print_footer, print_header,
-    print_match_absolute, print_match_relative, print_show_work_details, print_symbol_table,
-    run_search, run_stability_check, Args, CliExit, DisplayFormat, ExpressionConstraintArgs,
-    NormalizedArgs, StabilityRunConfig,
+    cli_level_to_complexity, expression_constraints_from_args, format_bytes_binary, format_value,
+    handle_special_modes, load_runtime_profile, normalize_legacy_args, parse_diagnostics,
+    parse_display_format, parse_memory_size_bytes, parse_symbol_sets, peak_memory_bytes,
+    print_footer, print_header, print_match_absolute, print_match_relative,
+    print_show_work_details, print_symbol_table, run_search, run_stability_check, Args, CliExit,
+    DisplayFormat, ExpressionConstraintArgs, NormalizedArgs, StabilityRunConfig,
 };
 #[cfg(test)]
 use ries_rs::solve_for_x_rhs_expression;
-use ries_rs::{canonical_expression_key, solve_for_x_at};
+use ries_rs::{canonical_expression_key, solve_for_x_at_with_context};
 use std::time::Duration;
 
 // Args struct is now imported from cli::Args
@@ -36,7 +35,12 @@ fn exit_with(err: CliExit) -> ! {
 }
 
 fn main() {
-    let args = Args::parse();
+    let arg_matches = Args::command().get_matches();
+    let explicit_target_literal = arg_matches
+        .get_raw("target")
+        .and_then(|mut values| values.next())
+        .and_then(|value| value.to_str());
+    let args = Args::from_arg_matches(&arg_matches).unwrap_or_else(|err| err.exit());
 
     if args.list_options {
         cli::print_option_list();
@@ -99,6 +103,7 @@ fn main() {
     // Handle legacy argument semantics using the normalize_legacy_args function
     let NormalizedArgs {
         target: resolved_target,
+        target_literal,
         profile: profile_arg,
         enable: enable_arg,
         level: level_value,
@@ -111,7 +116,8 @@ fn main() {
         args.enable.as_deref(),
         &args.level,
         args.target,
-    );
+    )
+    .unwrap_or_else(|err| exit_with(CliExit::config(err)));
 
     let profile = match load_runtime_profile(&args, profile_arg.as_deref()) {
         Ok(profile) => profile,
@@ -321,7 +327,10 @@ fn main() {
 
     // When --match-all-digits is enabled, set tolerance based on target's significant digits
     if args.match_all_digits && args.max_match_distance.is_none() {
-        search_config.max_error = compute_significant_digits_tolerance(target);
+        search_config.max_error = search::significant_digits_tolerance(
+            target,
+            explicit_target_literal.or(target_literal.as_deref()),
+        );
     }
 
     if args.one_sided {
@@ -404,6 +413,8 @@ fn main() {
             matcher: Some(search::MatcherPath::FastMatch),
             lhs_count: 1,
             rhs_count: 1,
+            pool_final_size: 1,
+            pool_best_error: m.error.abs(),
             search_time: elapsed,
             ..Default::default()
         };
@@ -427,8 +438,10 @@ fn main() {
     }
 
     let stability_results = if args.stability_check {
+        let base_matches = (!search_config.stop_at_exact && search_config.stop_below.is_none())
+            .then(|| matches.clone());
         Some(run_stability_check(
-            matches.clone(),
+            base_matches,
             StabilityRunConfig {
                 gen_config: &gen_config,
                 search_config: &search_config,
@@ -507,6 +520,7 @@ fn main() {
             output_format,
             args.explicit_multiply,
             &gen_config.symbol_table,
+            &eval_context,
             &matches[..shown_count],
             &stats,
             elapsed,
@@ -527,6 +541,12 @@ fn main() {
         }
 
         return;
+    }
+
+    if trig_argument_scale != eval::DEFAULT_TRIG_ARGUMENT_SCALE
+        && !matches!(output_format, DisplayFormat::Infix(_))
+    {
+        println!("Trig argument scale: {trig_argument_scale}");
     }
 
     // Print verbose header if requested
@@ -550,7 +570,9 @@ fn main() {
         for m in shown.iter().copied() {
             let show_solve = args.solve && !args.no_solve;
             let solved = show_solve
-                .then(|| solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value))
+                .then(|| {
+                    solve_for_x_at_with_context(&m.lhs.expr, &m.rhs.expr, m.x_value, &eval_context)
+                })
                 .flatten();
             if args.absolute {
                 print_match_absolute(
@@ -560,6 +582,7 @@ fn main() {
                     args.explicit_multiply,
                     solved.as_ref(),
                     Some(&gen_config.symbol_table),
+                    trig_argument_scale,
                 );
             } else {
                 print_match_relative(
@@ -569,6 +592,7 @@ fn main() {
                     args.explicit_multiply,
                     solved.as_ref(),
                     Some(&gen_config.symbol_table),
+                    trig_argument_scale,
                 );
             }
         }
@@ -605,16 +629,15 @@ fn main() {
             report_config = report_config.without_stable();
         }
 
-        // Convert main.rs DisplayFormat to report display format
-        let report_format = match output_format {
-            DisplayFormat::Infix(fmt) => ReportDisplayFormat::Infix(fmt),
-            DisplayFormat::PostfixCompact => ReportDisplayFormat::PostfixCompact,
-            DisplayFormat::PostfixVerbose => ReportDisplayFormat::PostfixVerbose,
-            DisplayFormat::Condensed => ReportDisplayFormat::Condensed,
-        };
-
         let report = Report::generate(matches, target, &report_config);
-        report.print(args.absolute, args.solve && !args.no_solve, report_format);
+        report.print_with_context(
+            args.absolute,
+            args.solve && !args.no_solve,
+            output_format,
+            args.explicit_multiply,
+            Some(&gen_config.symbol_table),
+            &eval_context,
+        );
     }
 
     // Print footer - verbose or standard
@@ -637,13 +660,22 @@ fn main() {
         }
     }
 
+    let render = |expression: &expr::Expression| {
+        output_format.format_expression(
+            expression,
+            args.explicit_multiply,
+            Some(&gen_config.symbol_table),
+            trig_argument_scale,
+        )
+    };
+
     // Print stability analysis if requested
     if let Some(ref results) = stability_results {
         println!();
         println!("  === Stability Analysis ===");
         print!(
             "{}",
-            format_stability_report(results, effective_max_matches)
+            format_stability_report_with(results, effective_max_matches, render)
         );
     }
 
@@ -651,7 +683,7 @@ fn main() {
         println!("\n  === High-Precision Verification ({bits} bits) ===");
         print!(
             "{}",
-            format_verification_report(&results, effective_max_matches)
+            format_verification_report_with(&results, effective_max_matches, render)
         );
     }
 }

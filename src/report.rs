@@ -2,11 +2,13 @@
 //!
 //! Selects top-K matches per category and formats output.
 
+use crate::eval::EvalContext;
 use crate::expr::{Expression, OutputFormat};
 use crate::metrics::{MatchMetrics, OperatorFrequency};
 use crate::pool::{LhsKey, SignatureKey};
 use crate::search::Match;
 use crate::symbol::Symbol;
+use crate::symbol_table::SymbolTable;
 use std::collections::HashSet;
 
 /// Display format for expressions (matches main.rs DisplayFormat)
@@ -22,18 +24,68 @@ pub enum DisplayFormat {
     Condensed,
 }
 
-/// Format an expression for display using the specified format
-fn format_expression_for_display(expression: &Expression, format: DisplayFormat) -> String {
-    match format {
-        DisplayFormat::Infix(inner) => expression.to_infix_with_format(inner),
-        DisplayFormat::PostfixCompact | DisplayFormat::Condensed => expression.to_postfix(),
-        DisplayFormat::PostfixVerbose => expression
-            .symbols()
-            .iter()
-            .map(|sym| postfix_verbose_token(*sym))
-            .collect::<Vec<_>>()
-            .join(" "),
+impl DisplayFormat {
+    /// Format an equation side using the active symbol names and trig scale.
+    pub fn format_expression(
+        self,
+        expression: &Expression,
+        explicit_multiply: bool,
+        table: Option<&SymbolTable>,
+        trig_scale: f64,
+    ) -> String {
+        match self {
+            Self::Infix(format) => {
+                let infix = expression.to_infix_with_context(format, table, trig_scale);
+                if explicit_multiply {
+                    apply_explicit_multiply(&infix)
+                } else {
+                    infix
+                }
+            }
+            Self::PostfixCompact | Self::Condensed => expression.to_postfix(),
+            Self::PostfixVerbose => expression
+                .symbols()
+                .iter()
+                .map(|&symbol| {
+                    if symbol.user_constant_index().is_some()
+                        || symbol.user_function_index().is_some()
+                    {
+                        if let Some(table) = table {
+                            return table.name(symbol).to_owned();
+                        }
+                    }
+                    postfix_verbose_token(symbol)
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+        }
     }
+}
+
+/// Apply explicit '*' multiplication operators to infix output.
+///
+/// Converts implicit multiplication (e.g., "2 x") to explicit form (e.g., "2*x").
+fn apply_explicit_multiply(infix: &str) -> String {
+    let chars: Vec<char> = infix.chars().collect();
+    let mut out = String::with_capacity(infix.len() + 8);
+    for i in 0..chars.len() {
+        let ch = chars[i];
+        if ch != ' ' {
+            out.push(ch);
+            continue;
+        }
+
+        let prev = i.checked_sub(1).and_then(|idx| chars.get(idx).copied());
+        let next = chars.get(i + 1).copied();
+        let implicit_mul = prev.is_some_and(|c| c.is_ascii_digit() || c == ')')
+            && next.is_some_and(|c| c.is_ascii_alphabetic() || c == '(');
+        if implicit_mul {
+            out.push('*');
+        } else {
+            out.push(' ');
+        }
+    }
+    out
 }
 
 fn postfix_verbose_token(sym: Symbol) -> String {
@@ -198,6 +250,27 @@ impl Report {
 
     /// Print the report to stdout
     pub fn print(&self, absolute: bool, solve: bool, format: DisplayFormat) {
+        self.print_with_context(absolute, solve, format, false, None, &EvalContext::new());
+    }
+
+    /// Print using the search's expression names, trig scale and solver context.
+    pub fn print_with_context(
+        &self,
+        absolute: bool,
+        solve: bool,
+        format: DisplayFormat,
+        explicit_multiply: bool,
+        table: Option<&SymbolTable>,
+        context: &EvalContext<'_>,
+    ) {
+        let render = |expression: &Expression| {
+            format.format_expression(
+                expression,
+                explicit_multiply,
+                table,
+                context.trig_argument_scale,
+            )
+        };
         for (category, matches) in &self.categories {
             if matches.is_empty() {
                 continue;
@@ -208,7 +281,7 @@ impl Report {
             println!();
 
             for mwm in matches {
-                print_match(&mwm.m, &mwm.metrics, self.target, absolute, solve, format);
+                print_match(&mwm.m, &mwm.metrics, absolute, solve, &render, context);
             }
         }
     }
@@ -369,13 +442,13 @@ impl Clone for MatchWithMetrics {
 fn print_match(
     m: &Match,
     metrics: &MatchMetrics,
-    _target: f64,
     absolute: bool,
     solve: bool,
-    format: DisplayFormat,
+    render: &impl Fn(&Expression) -> String,
+    context: &EvalContext<'_>,
 ) {
-    let lhs_str = format_expression_for_display(&m.lhs.expr, format);
-    let rhs_str = format_expression_for_display(&m.rhs.expr, format);
+    let lhs_str = render(&m.lhs.expr);
+    let rhs_str = render(&m.rhs.expr);
 
     let error_str = if metrics.is_exact {
         "('exact' match)".to_string()
@@ -390,8 +463,10 @@ fn print_match(
     let info = format!("{{{}}}", m.complexity);
 
     if solve {
-        if let Some(solved) = crate::solver::solve_for_x_at(&m.lhs.expr, &m.rhs.expr, m.x_value) {
-            let solved_str = format_expression_for_display(&solved, format);
+        if let Some(solved) =
+            crate::solver::solve_for_x_at_with_context(&m.lhs.expr, &m.rhs.expr, m.x_value, context)
+        {
+            let solved_str = render(&solved);
             println!("     x = {:40} {} {}", solved_str, error_str, info);
         } else {
             println!("{:>24} = {:<24} {} {}", lhs_str, rhs_str, error_str, info);

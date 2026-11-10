@@ -464,6 +464,13 @@ impl TopKPool {
         matches
     }
 
+    pub(crate) fn minimum_error(&self) -> Option<f64> {
+        self.heap
+            .iter()
+            .map(|entry| entry.m.error.abs())
+            .reduce(f64::min)
+    }
+
     /// Get current pool size
     pub fn len(&self) -> usize {
         self.heap.len()

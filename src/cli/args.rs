@@ -281,7 +281,7 @@ pub struct Args {
     /// Precision in bits for high-precision verification (e.g., 256 for ~77 digits)
     /// Re-evaluates top matches at higher precision to verify/impostor detection
     /// Requires --features highprec at compile time
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub precision: Option<u32>,
 
     /// Threshold for pruning LHS expressions with near-zero values (default: 1e-4)

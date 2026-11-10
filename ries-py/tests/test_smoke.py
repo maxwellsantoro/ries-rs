@@ -68,3 +68,13 @@ def test_search_allows_another_python_thread_to_run():
     finally:
         stop.set()
         thread.join()
+
+
+def test_preset_constants_are_named_and_available():
+    results = ries_rs.search(1.64493406685, preset="analytic-nt", level=0,
+                             max_matches=16, parallel=False)
+    assert results
+    assert all(m.constants[0][0] == "z2" for m in results)
+    assert any("z2" in (m.lhs + m.rhs) for m in results)
+    assert all("u0" not in (m.lhs + m.rhs) for m in results)
+    assert results[0].to_dict()["constants"] == results[0].constants
