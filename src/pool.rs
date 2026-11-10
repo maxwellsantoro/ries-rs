@@ -135,7 +135,7 @@ pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Order
 
     let mut ord = a_exactness
         .cmp(&b_exactness)
-        .then_with(|| a_eff_err.partial_cmp(&b_eff_err).unwrap_or(Ordering::Equal));
+        .then_with(|| a_eff_err.total_cmp(&b_eff_err));
 
     if ord != Ordering::Equal {
         return ord;
@@ -161,6 +161,7 @@ pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Order
 struct PoolEntry {
     m: Match,
     rank_key: (u8, i64, i32, u32), // (exactness, error_bits, mode_tie, complexity)
+    canonical_key: Option<Box<(String, String)>>,
 }
 
 impl PoolEntry {
@@ -186,12 +187,13 @@ impl PoolEntry {
             error_abs.to_bits() as i64
         };
         let mode_tie = match ranking_mode {
-            RankingMode::Complexity => m.complexity as i32,
+            RankingMode::Complexity => 0,
             RankingMode::Parity => legacy_parity_score_match(&m),
         };
         Self {
             rank_key: (exactness_rank, error_bits, mode_tie, m.complexity),
             m,
+            canonical_key: None,
         }
     }
 }
@@ -243,6 +245,8 @@ pub struct TopKPool {
     heap: BinaryHeap<PoolEntry>,
     /// Seen equation keys for dedupe
     seen_eqn: HashSet<EqnKey>,
+    seen_canonical: Option<HashSet<(String, String)>>,
+    max_error: f64,
     /// Best error seen so far (for threshold tightening)
     pub best_error: f64,
     /// Accept error threshold (tightens slowly for diversity)
@@ -259,16 +263,7 @@ impl TopKPool {
     /// Create a new pool with given capacity
     #[allow(dead_code)]
     pub fn new(capacity: usize, initial_max_error: f64) -> Self {
-        Self {
-            capacity,
-            heap: BinaryHeap::with_capacity(capacity + 1),
-            seen_eqn: HashSet::new(),
-            best_error: initial_max_error,
-            accept_error: initial_max_error,
-            stats: PoolStats::default(),
-            show_db_adds: false,
-            ranking_mode: RankingMode::Complexity,
-        }
+        Self::new_with_diagnostics(capacity, initial_max_error, false, RankingMode::Complexity)
     }
 
     /// Create a new pool with diagnostic options
@@ -280,8 +275,10 @@ impl TopKPool {
     ) -> Self {
         Self {
             capacity,
-            heap: BinaryHeap::with_capacity(capacity + 1),
+            heap: BinaryHeap::new(),
             seen_eqn: HashSet::new(),
+            seen_canonical: None,
+            max_error: initial_max_error,
             best_error: initial_max_error,
             accept_error: initial_max_error,
             stats: PoolStats::default(),
@@ -290,14 +287,20 @@ impl TopKPool {
         }
     }
 
+    pub(crate) fn with_canonical_dedup(mut self, enabled: bool) -> Self {
+        self.seen_canonical = enabled.then(HashSet::new);
+        self
+    }
+
     /// Try to insert a match into the pool
     /// Returns true if inserted, false if rejected
     pub fn try_insert(&mut self, m: Match) -> bool {
         let error = m.error.abs();
         let is_exact = m.exact;
 
-        // Check error threshold (must be better than accept_error)
-        if !is_exact && error > self.accept_error {
+        if !(self.would_accept(error, is_exact)
+            || error.is_nan() && self.max_error == f64::INFINITY)
+        {
             self.stats.rejections_error += 1;
             return false;
         }
@@ -310,7 +313,25 @@ impl TopKPool {
         }
 
         // Insert
-        let entry = PoolEntry::new(m, self.ranking_mode);
+        let mut entry = PoolEntry::new(m, self.ranking_mode);
+        if let Some(seen) = &mut self.seen_canonical {
+            let key = canonical_match_key(&entry.m);
+            if !seen.insert(key.clone()) {
+                let existing = self
+                    .heap
+                    .iter()
+                    .find(|item| item.canonical_key.as_deref() == Some(&key))
+                    .expect("canonical key must identify a pooled match");
+                if entry >= *existing {
+                    self.stats.rejections_dedupe += 1;
+                    return false;
+                }
+                self.seen_eqn.remove(&EqnKey::from_match(&existing.m));
+                self.heap
+                    .retain(|item| item.canonical_key.as_deref() != Some(&key));
+            }
+            entry.canonical_key = Some(Box::new(key));
+        }
         self.seen_eqn.insert(eqn_key);
 
         // Diagnostic output for -DG (before moving entry into heap)
@@ -349,6 +370,9 @@ impl TopKPool {
                 // Remove the equation key so a *different* RHS for the same LHS can
                 // be inserted later.
                 self.seen_eqn.remove(&EqnKey::from_match(&evicted.m));
+                if let (Some(seen), Some(key)) = (&mut self.seen_canonical, evicted.canonical_key) {
+                    seen.remove(&*key);
+                }
                 self.stats.evictions += 1;
                 self.relax_accept_error_after_eviction();
             }
@@ -403,10 +427,7 @@ impl TopKPool {
 
     /// Check if a match would be accepted (for early pruning)
     pub fn would_accept(&self, error: f64, is_exact: bool) -> bool {
-        if is_exact {
-            return true;
-        }
-        error <= self.accept_error
+        error <= self.max_error && (is_exact || error <= self.accept_error)
     }
 
     /// Check if a match would be accepted, with stricter gate when pool is near capacity
@@ -453,6 +474,13 @@ impl TopKPool {
     pub fn is_empty(&self) -> bool {
         self.heap.is_empty()
     }
+}
+
+pub(crate) fn canonical_match_key(m: &Match) -> (String, String) {
+    let key = |expr: &Expression| {
+        crate::solver::canonical_expression_key(expr).unwrap_or_else(|| expr.to_postfix())
+    };
+    (key(&m.lhs.expr), key(&m.rhs.expr))
 }
 
 #[cfg(test)]

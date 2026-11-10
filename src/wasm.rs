@@ -336,6 +336,7 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
         derivative_margin: crate::thresholds::DEGENERATE_DERIVATIVE,
         ranking_mode,
         lhs_value_dedup: false,
+        filters: Default::default(),
     };
 
     // Perform search: parallel when wasm-threads (wasm-bindgen-rayon), else sequential

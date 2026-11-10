@@ -17,7 +17,7 @@ use crate::precision::{HighPrec, RiesFloat};
 pub struct VerificationResult {
     /// Original match (f64 precision)
     pub original: Match,
-    /// Error at high precision (None if f64 mode)
+    /// Estimated absolute root error at high precision (None if f64 mode).
     pub highprec_error: Option<f64>,
     /// Whether the match is verified at high precision
     pub is_verified: bool,
@@ -69,16 +69,16 @@ pub fn verify_matches_highprec_with_trig_scale(
 ) -> Vec<VerificationResult> {
     let target_hp = HighPrec::from_f64_with_prec(target, precision_bits);
     let tolerance_hp = HighPrec::from_f64_with_prec(EXACT_MATCH_TOLERANCE, precision_bits);
+    let hp_constants: Vec<_> = user_constants
+        .iter()
+        .map(|constant| HighPrec::from_f64_with_prec(constant.value, precision_bits))
+        .collect();
+    let eval_context = crate::eval::EvalContext::from_slices(user_constants, &[])
+        .with_trig_argument_scale(trig_argument_scale);
 
     matches
         .into_iter()
         .map(|m| {
-            // Get user constant values at high precision
-            let hp_constants: Vec<HighPrec> = user_constants
-                .iter()
-                .map(|uc| HighPrec::from_f64_with_prec(uc.value, precision_bits))
-                .collect();
-
             // Evaluate LHS(x) at high precision
             let lhs_val = evaluate_highprec(
                 &m.lhs.expr,
@@ -100,11 +100,25 @@ pub fn verify_matches_highprec_with_trig_scale(
             match (lhs_val, rhs_val) {
                 (Some(lhs), Some(rhs)) => {
                     // Check if LHS ≈ RHS at high precision
-                    let diff = (lhs.clone() - rhs.clone()).abs();
+                    let residual = lhs - rhs;
 
-                    if diff.clone() < tolerance_hp.clone() {
-                        // Equation holds at high precision - verified!
-                        let hp_error = (lhs - target_hp.clone()).abs().to_f64();
+                    if residual.clone().abs() < tolerance_hp {
+                        // Convert the residual from equation-value units to x units.
+                        // When the derivative is degenerate, use the verified sample.
+                        let mut root = HighPrec::from_f64_with_prec(m.x_value, precision_bits);
+                        if let Ok(sample) = crate::eval::evaluate_with_context(
+                            &m.lhs.expr,
+                            m.x_value,
+                            &eval_context,
+                        ) {
+                            let slope = sample.derivative;
+                            if slope.is_finite() && slope.abs() >= crate::DEGENERATE_DERIVATIVE {
+                                root = root
+                                    - residual
+                                        / HighPrec::from_f64_with_prec(slope, precision_bits);
+                            }
+                        }
+                        let hp_error = (root - target_hp.clone()).abs().to_f64();
                         let error_ratio = if m.error.abs() > 1e-20 {
                             Some(hp_error / m.error.abs())
                         } else {

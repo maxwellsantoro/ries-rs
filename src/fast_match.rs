@@ -12,9 +12,6 @@ use crate::symbol::{NumType, Symbol};
 use crate::symbol_table::SymbolTable;
 use std::collections::HashSet;
 
-/// Tolerance for exact match detection
-const EXACT_TOLERANCE: f64 = 1e-14;
-
 /// Build an expression from symbols using table-based weights
 fn expr_from_symbols_with_table(symbols: &[Symbol], table: &SymbolTable) -> Expression {
     let mut expr = Expression::new();
@@ -24,82 +21,6 @@ fn expr_from_symbols_with_table(symbols: &[Symbol], table: &SymbolTable) -> Expr
     expr
 }
 
-/// Get the num_type of an expression based on its symbols
-/// This is a simplified type inference for the fast_match candidates
-fn get_num_type(symbols: &[Symbol]) -> NumType {
-    // For fast match candidates, we use simplified type inference:
-    // - Integer constants → Integer
-    // - Rational operations (division) → Rational
-    // - Sqrt of integer → Algebraic (constructible)
-    // - Transcendental constants → Transcendental
-    // - Any transcendental function → Transcendental
-
-    use Symbol::*;
-
-    // Handle simple patterns
-    if symbols.len() == 1 {
-        return symbols[0].inherent_type();
-    }
-
-    // Check for sqrt of integer (like 2q = sqrt(2))
-    if symbols.len() == 2 {
-        if matches!(symbols[1], Sqrt) {
-            if matches!(
-                symbols[0],
-                One | Two | Three | Four | Five | Six | Seven | Eight | Nine
-            ) {
-                return NumType::Algebraic; // sqrt of integer is algebraic
-            }
-            // sqrt of transcendental constant is transcendental
-            if matches!(symbols[0], Pi | E | Gamma | Apery | Catalan) {
-                return NumType::Transcendental;
-            }
-        }
-        // Check for reciprocal of integer
-        if matches!(symbols[1], Recip)
-            && matches!(
-                symbols[0],
-                One | Two | Three | Four | Five | Six | Seven | Eight | Nine
-            )
-        {
-            return NumType::Rational;
-        }
-    }
-
-    // Check for division pattern (3 symbols: num, denom, /)
-    if symbols.len() == 3 && matches!(symbols[2], Div) {
-        // Integer / Integer = Rational
-        if matches!(
-            symbols[0],
-            One | Two | Three | Four | Five | Six | Seven | Eight | Nine
-        ) && matches!(
-            symbols[1],
-            One | Two | Three | Four | Five | Six | Seven | Eight | Nine
-        ) {
-            return NumType::Rational;
-        }
-    }
-
-    // Default: check if any symbol is transcendental
-    for &sym in symbols {
-        let sym_type = sym.inherent_type();
-        if sym_type == NumType::Transcendental {
-            return NumType::Transcendental;
-        }
-    }
-
-    // If we have any algebraic constants (phi, plastic), result is algebraic
-    for &sym in symbols {
-        if matches!(sym, Phi | Plastic) {
-            return NumType::Algebraic;
-        }
-    }
-
-    // Default to transcendental (most general)
-    NumType::Transcendental
-}
-
-/// Check if any symbol in the expression is excluded
 fn contains_excluded(symbols: &[Symbol], excluded: &HashSet<u8>) -> bool {
     symbols.iter().any(|s| excluded.contains(&(*s as u8)))
 }
@@ -263,17 +184,6 @@ fn get_constant_candidates() -> &'static [FastCandidate] {
     CANDIDATES
 }
 
-/// Check if target matches a simple integer
-fn check_integer(target: f64) -> Option<(i64, f64)> {
-    let rounded = target.round();
-    let error = (target - rounded).abs();
-    if error < EXACT_TOLERANCE && rounded.abs() < 1000.0 {
-        Some((rounded as i64, error))
-    } else {
-        None
-    }
-}
-
 /// Configuration for fast match filtering
 pub struct FastMatchConfig<'a> {
     /// Symbols that are excluded (via -N flag)
@@ -318,130 +228,45 @@ pub fn find_fast_match_with_context(
     config: &FastMatchConfig<'_>,
     table: &SymbolTable,
 ) -> Option<Match> {
-    // First check integers (fastest)
-    if let Some((n, error)) = check_integer(target) {
-        if (1..=9).contains(&n) {
-            // We have a direct constant for 1-9
-            let symbols: &[Symbol] = match n {
-                1 => &[Symbol::One],
-                2 => &[Symbol::Two],
-                3 => &[Symbol::Three],
-                4 => &[Symbol::Four],
-                5 => &[Symbol::Five],
-                6 => &[Symbol::Six],
-                7 => &[Symbol::Seven],
-                8 => &[Symbol::Eight],
-                9 => &[Symbol::Nine],
-                _ => return None,
-            };
-            // Check if excluded or wrong type
-            if passes_symbol_filters(symbols, config)
-                && get_num_type(symbols) >= config.min_num_type
-            {
-                if let Some(m) = make_match(symbols, target, error, table, context) {
-                    return Some(m);
-                }
-            }
+    let make_candidate = |symbols: &[Symbol]| {
+        if !passes_symbol_filters(symbols, config) {
+            return None;
         }
-        // For other integers, check if they match user constants
-        for (idx, uc) in context.user_constants.iter().enumerate() {
-            if idx < 16 && (uc.value - target).abs() < EXACT_TOLERANCE {
-                if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
-                    let symbols = [sym];
-                    if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
-                    {
-                        if let Some(m) =
-                            make_match(&symbols, target, (uc.value - target).abs(), table, context)
-                        {
-                            return Some(m);
-                        }
-                    }
-                }
-            }
+        let m = make_match(symbols, target, table, context)?;
+        (m.rhs.num_type >= config.min_num_type).then_some(m)
+    };
+
+    // Try the nearest single digit first, then user-defined constants.
+    let digit = target.round();
+    if (1.0..=9.0).contains(&digit) {
+        if let Some(m) = make_candidate(&[Symbol::from_byte(b'0' + digit as u8)?]) {
+            return Some(m);
+        }
+    }
+    let user_symbols = context
+        .user_constants
+        .iter()
+        .enumerate()
+        .filter_map(|(index, _)| crate::symbol_table::user_constant_symbol_opt(index));
+    for symbol in user_symbols.clone() {
+        if let Some(m) = make_candidate(&[symbol]) {
+            return Some(m);
         }
     }
 
-    // Check user constants first (they're explicitly defined)
-    for (idx, uc) in context.user_constants.iter().enumerate() {
-        if idx >= 16 {
-            break;
-        }
-        if (uc.value - target).abs() < EXACT_TOLERANCE {
-            if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
-                let symbols = [sym];
-                if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type {
-                    if let Some(m) =
-                        make_match(&symbols, target, (uc.value - target).abs(), table, context)
-                    {
-                        return Some(m);
-                    }
-                }
-            }
+    for candidate in get_constant_candidates() {
+        if let Some(m) = make_candidate(candidate.symbols) {
+            return Some(m);
         }
     }
 
-    // Check known constant candidates
-    let candidates = get_constant_candidates();
-    for candidate in candidates {
-        // Skip if contains excluded symbols
-        if !passes_symbol_filters(candidate.symbols, config) {
-            continue;
-        }
-        // Skip if type doesn't meet requirement
-        if get_num_type(candidate.symbols) < config.min_num_type {
-            continue;
-        }
-
-        let expr = expr_from_symbols_with_table(candidate.symbols, table);
-        if let Ok(result) = evaluate_with_context(&expr, target, context) {
-            let error = (result.value - target).abs();
-            if error < EXACT_TOLERANCE {
-                if let Some(m) = make_match(candidate.symbols, target, error, table, context) {
-                    return Some(m);
-                }
+    for symbol in user_symbols {
+        for op in [Symbol::Recip, Symbol::Sqrt] {
+            if let Some(m) = make_candidate(&[symbol, op]) {
+                return Some(m);
             }
         }
     }
-
-    // Check user constants with simple operations
-    for (idx, uc) in context.user_constants.iter().enumerate() {
-        if idx >= 16 {
-            break;
-        }
-        if let Some(sym) = Symbol::from_byte(128 + idx as u8) {
-            // Check 1/constant
-            if uc.value != 0.0 {
-                let recip_val = 1.0 / uc.value;
-                if (recip_val - target).abs() < EXACT_TOLERANCE {
-                    let symbols = [sym, Symbol::Recip];
-                    if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
-                    {
-                        if let Some(m) =
-                            make_match(&symbols, target, (recip_val - target).abs(), table, context)
-                        {
-                            return Some(m);
-                        }
-                    }
-                }
-            }
-            // Check sqrt(constant)
-            if uc.value > 0.0 {
-                let sqrt_val = uc.value.sqrt();
-                if (sqrt_val - target).abs() < EXACT_TOLERANCE {
-                    let symbols = [sym, Symbol::Sqrt];
-                    if passes_symbol_filters(&symbols, config) && uc.num_type >= config.min_num_type
-                    {
-                        if let Some(m) =
-                            make_match(&symbols, target, (sqrt_val - target).abs(), table, context)
-                        {
-                            return Some(m);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     None
 }
 
@@ -449,16 +274,20 @@ pub fn find_fast_match_with_context(
 fn make_match(
     symbols: &[Symbol],
     target: f64,
-    error: f64,
     table: &SymbolTable,
     context: &EvalContext<'_>,
 ) -> Option<Match> {
     let lhs_expr = expr_from_symbols_with_table(&[Symbol::X], table);
     let rhs_expr = expr_from_symbols_with_table(symbols, table);
-    let complexity = lhs_expr.complexity() + rhs_expr.complexity();
+    let complexity = lhs_expr.complexity().saturating_add(rhs_expr.complexity());
 
     let lhs_eval = evaluate_with_context(&lhs_expr, target, context).ok()?;
     let rhs_eval = evaluate_with_context(&rhs_expr, target, context).ok()?;
+
+    let x_value = rhs_eval.value;
+    if !crate::search::match_is_exact(lhs_eval.value, rhs_eval.value, x_value, target) {
+        return None;
+    }
 
     Some(Match {
         lhs: EvaluatedExpr {
@@ -473,10 +302,10 @@ fn make_match(
             derivative: 0.0,
             num_type: rhs_eval.num_type,
         },
-        x_value: target,
-        error,
+        x_value,
+        error: x_value - target,
         complexity,
-        exact: error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
+        exact: true,
     })
 }
 
@@ -598,11 +427,6 @@ mod tests {
 
     #[test]
     fn test_division_candidate_is_rational() {
-        assert_eq!(
-            get_num_type(&[Symbol::Two, Symbol::Three, Symbol::Div]),
-            NumType::Rational
-        );
-
         let m = find_fast_match(2.0 / 3.0, &[], &default_config(), &default_table());
         assert!(m.is_some());
         let m = m.unwrap();

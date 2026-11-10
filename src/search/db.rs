@@ -1,7 +1,8 @@
-use super::newton::newton_raphson_with_constants;
+use super::newton::{newton_raphson_with_constants, NewtonHit};
 use super::{Match, SearchConfig, SearchContext, SearchStats, SearchTimer};
 
 use crate::expr::EvaluatedExpr;
+use crate::gen::compare_expression_order;
 
 use crate::pool::TopKPool;
 
@@ -87,7 +88,11 @@ impl TieredExprDatabase {
     /// Finalize the database by sorting each tier by value
     pub fn finalize(&mut self) {
         for tier in &mut self.tiers {
-            tier.sort_by(|a, b| a.value.total_cmp(&b.value));
+            tier.sort_by(|a, b| {
+                a.value
+                    .total_cmp(&b.value)
+                    .then_with(|| compare_expression_order(a, b))
+            });
         }
     }
 
@@ -273,7 +278,7 @@ pub(super) fn calculate_adaptive_search_radius(
     } else {
         1.0
     };
-    let coarse_error_cap = accept_error.max(NEWTON_FINAL_TOLERANCE) * gate_factor;
+    let coarse_error_cap = (accept_error * gate_factor).max(NEWTON_FINAL_TOLERANCE);
     let gated_radius_cap = deriv_abs * coarse_error_cap;
 
     // Ensure we have a reasonable minimum and cap at maximum
@@ -296,7 +301,11 @@ impl ExprDatabase {
     pub fn insert_rhs(&mut self, mut exprs: Vec<EvaluatedExpr>) {
         // Sort by value for binary search range queries
         // Use total_cmp for consistent ordering (NaN sorts as greater than all floats)
-        exprs.sort_by(|a, b| a.value.total_cmp(&b.value));
+        exprs.sort_by(|a, b| {
+            a.value
+                .total_cmp(&b.value)
+                .then_with(|| compare_expression_order(a, b))
+        });
         self.rhs_sorted = exprs;
     }
 
@@ -351,30 +360,34 @@ impl ExprDatabase {
         lhs_exprs: &[EvaluatedExpr],
         context: &SearchContext<'_>,
     ) -> (Vec<Match>, SearchStats) {
-        let config = context.config;
+        self.find_matches_in_order(lhs_exprs, context, false)
+    }
+
+    fn find_matches_in_order(
+        &self,
+        lhs_exprs: &[EvaluatedExpr],
+        context: &SearchContext<'_>,
+        parallel_refinement: bool,
+    ) -> (Vec<Match>, SearchStats) {
         let mut stats = SearchStats::new();
         let search_start = SearchTimer::start();
+        let mut pool = context.config.pool();
 
-        // Respect configured max error (with a tiny floor for numerical stability)
-        let initial_max_error = config.max_error.max(1e-12);
-
-        // Create bounded pool with configured capacity
-        let mut pool = TopKPool::new_with_diagnostics(
-            config.max_matches,
-            initial_max_error,
-            config.show_db_adds,
-            config.ranking_mode,
-        );
-
-        // Sort LHS by complexity so simpler expressions are processed first
         let mut sorted_lhs: Vec<_> = lhs_exprs.iter().collect();
-        sorted_lhs.sort_by_key(|e| e.expr.complexity());
+        sorted_lhs.sort_unstable_by(|a, b| compare_expression_order(a, b));
 
         // Early exit tracking
         let mut early_exit = false;
 
         for lhs in sorted_lhs {
-            if !match_one_lhs(self, lhs, context, &mut pool, &mut stats) {
+            if !match_one_lhs(
+                self,
+                lhs,
+                context,
+                &mut pool,
+                &mut stats,
+                parallel_refinement,
+            ) {
                 early_exit = true;
                 break;
             }
@@ -394,106 +407,36 @@ impl ExprDatabase {
         (pool.into_sorted(), stats)
     }
 
-    /// Turbo matcher: parallelize the LHS match/Newton scan across cores.
+    /// Refine wide candidate windows in parallel and admit matches in serial order.
     ///
-    /// The RHS database is shared read-only. The complexity-sorted LHS set is
-    /// split into contiguous bands; each Rayon worker matches its band with a
-    /// private bounded pool (each sized to the full `max_matches`, so no band
-    /// can drop a match that belongs in the global top-k). The per-band pools
-    /// are then merged through one final pool to produce the global ranking.
-    ///
-    /// # Alternative contract
-    ///
-    /// This intentionally does **not** honor the serial path's byte-identical
-    /// guarantee. What it *does* guarantee is that the single best match (rank 1)
-    /// is identical to serial: the global best is rank 1 within whichever band
-    /// owns its LHS (so it is never evicted), and a band's pool sees a subset of
-    /// the LHS set, so its adaptive scan radius is always at least as wide as
-    /// serial's at the same LHS — turbo therefore cannot miss a match serial
-    /// found. After the merge, the global best sorts to rank 1.
-    ///
-    /// Lower-ranked results may differ from serial: when more matches qualify
-    /// than `max_matches`, each band keeps only its own top-k, so the merged
-    /// tail is a valid top-k but not necessarily the *same* one serial would
-    /// pick among equally-ranked candidates, and it may vary with thread count.
-    ///
-    /// Bands are processed in ascending complexity, so the per-band
-    /// complexity-ceiling early exit in [`match_one_lhs`] stays valid. Explicit
-    /// first-hit stopping conditions are handled by the serial matcher before
-    /// this matcher is called because they are not safe to apply independently
-    /// in parallel bands.
+    /// Both paths share one pool and traversal order, so they apply the same
+    /// adaptive thresholds and rank the same results for a materialized search.
     #[cfg(feature = "parallel")]
     pub fn find_matches_turbo_with_stats_and_context(
         &self,
         lhs_exprs: &[EvaluatedExpr],
         context: &SearchContext<'_>,
     ) -> (Vec<Match>, SearchStats) {
-        use rayon::prelude::*;
-
-        let config = context.config;
-        let search_start = SearchTimer::start();
-        let initial_max_error = config.max_error.max(1e-12);
-
-        let mut sorted_lhs: Vec<_> = lhs_exprs.iter().collect();
-        sorted_lhs.sort_by_key(|e| e.expr.complexity());
-
-        // Aim for several bands per worker so Rayon's work-stealing can balance
-        // the heavier high-complexity bands against the cheap low ones.
-        let threads = rayon::current_num_threads().max(1);
-        let target_bands = (threads * 4).max(1);
-        let band_size = sorted_lhs.len().div_ceil(target_bands).max(1);
-
-        let (all_matches, mut stats) = sorted_lhs
-            .par_chunks(band_size)
-            .map(|band| {
-                let mut local_pool = TopKPool::new_with_diagnostics(
-                    config.max_matches,
-                    initial_max_error,
-                    config.show_db_adds,
-                    config.ranking_mode,
-                );
-                let mut local_stats = SearchStats::new();
-                for lhs in band {
-                    if !match_one_lhs(self, lhs, context, &mut local_pool, &mut local_stats) {
-                        // Ceiling / stop-condition early exit for this band; later
-                        // bands are strictly more complex and cannot beat it.
-                        local_stats.early_exit = true;
-                        break;
-                    }
-                }
-                (local_pool.into_sorted(), local_stats)
-            })
-            .reduce(
-                || (Vec::new(), SearchStats::new()),
-                |(mut acc_matches, mut acc_stats), (band_matches, band_stats)| {
-                    acc_stats.merge_search_counters(&band_stats);
-                    acc_matches.extend(band_matches);
-                    (acc_matches, acc_stats)
-                },
-            );
-
-        // Re-rank the merged per-band candidates through a single bounded pool to
-        // obtain the global top-k under the canonical ordering.
-        let mut pool = TopKPool::new_with_diagnostics(
-            config.max_matches,
-            initial_max_error,
-            config.show_db_adds,
-            config.ranking_mode,
-        );
-        for m in all_matches {
-            pool.try_insert(m);
-        }
-
-        stats.pool_insertions = pool.stats.insertions;
-        stats.pool_rejections_error = pool.stats.rejections_error;
-        stats.pool_rejections_dedupe = pool.stats.rejections_dedupe;
-        stats.pool_evictions = pool.stats.evictions;
-        stats.pool_final_size = pool.len();
-        stats.pool_best_error = pool.best_error;
-        stats.search_time = search_start.elapsed();
-
-        (pool.into_sorted(), stats)
+        self.find_matches_in_order(lhs_exprs, context, true)
     }
+}
+
+fn refine_candidate(
+    lhs: &EvaluatedExpr,
+    rhs: &EvaluatedExpr,
+    x_delta: f64,
+    context: &SearchContext<'_>,
+) -> Option<NewtonHit> {
+    let config = context.config;
+    newton_raphson_with_constants(
+        &lhs.expr,
+        rhs.value,
+        config.target + x_delta,
+        config.newton_iterations,
+        &context.eval,
+        config.show_newton,
+        config.derivative_margin,
+    )
 }
 
 /// Match a single LHS expression against the RHS database, inserting any
@@ -507,8 +450,12 @@ fn match_one_lhs(
     context: &SearchContext<'_>,
     pool: &mut TopKPool,
     stats: &mut SearchStats,
+    parallel_refinement: bool,
 ) -> bool {
     let config = context.config;
+
+    #[cfg(not(feature = "parallel"))]
+    let _ = parallel_refinement;
 
     // A ceiling is available only for complexity ranking. Since LHS are sorted
     // by complexity, an LHS above the ceiling rules out all remaining pairs.
@@ -519,6 +466,19 @@ fn match_one_lhs(
             return false;
         }
     }
+
+    if !config.filters.allows_side(lhs) {
+        return true;
+    }
+
+    // Retain complexity ties for the canonical postfix tie-break.
+    let rhs_is_eligible = |rhs: &EvaluatedExpr| {
+        config.rhs_symbol_allowed(&rhs.expr)
+            && config.filters.allows_side(rhs)
+            && config.filters.allows_pair(&lhs.expr, &rhs.expr)
+            && exact_ceiling
+                .is_none_or(|ceiling| lhs.expr.complexity() + rhs.expr.complexity() <= ceiling)
+    };
 
     // Skip LHS with value too close to 0 - these produce floods of
     // trivial matches (like cospi(2.5)=0 matching many RHS near 0).
@@ -552,7 +512,7 @@ fn match_one_lhs(
         let rhs_slice = db.range(low, high);
         stats.record_candidate_window(lhs, rhs_slice.len());
         for rhs in rhs_slice {
-            if !config.rhs_symbol_allowed(&rhs.expr) {
+            if !rhs_is_eligible(rhs) {
                 continue;
             }
             stats.candidates_tested += 1;
@@ -567,6 +527,7 @@ fn match_one_lhs(
             if super::residual_is_exact(lhs.value, rhs.value)
                 && super::match_is_exact(lhs.value, rhs.value, config.target, config.target)
                 && pool.would_accept(0.0, true)
+                && config.filters.allows_error(0.0)
             {
                 let m = Match {
                     lhs: lhs.clone(),
@@ -576,7 +537,11 @@ fn match_one_lhs(
                     complexity: lhs.expr.complexity() + rhs.expr.complexity(),
                     exact: true,
                 };
+                let stop = super::stop_condition_met(&m, config);
                 pool.try_insert(m);
+                if stop {
+                    return false;
+                }
             }
         }
         return true;
@@ -598,25 +563,40 @@ fn match_one_lhs(
 
     let rhs_slice = db.range(low, high);
     stats.record_candidate_window(lhs, rhs_slice.len());
-    for rhs in rhs_slice {
-        if !config.rhs_symbol_allowed(&rhs.expr) {
-            continue;
-        }
+    // Speculate only on wide windows. Newton depends on the expressions and
+    // the starting guess, while the acceptance gates depend on earlier hits.
+    #[cfg(feature = "parallel")]
+    let refined = if parallel_refinement
+        && config.refine_with_newton
+        && !config.show_newton
+        && !config.stop_at_exact
+        && config.stop_below.is_none()
+        && rhs_slice.len() >= 64
+        && rayon::current_num_threads() > 1
+    {
+        use rayon::prelude::*;
+        let hits: Vec<_> = rhs_slice
+            .par_iter()
+            .map(|rhs| {
+                let x_delta = -(lhs.value - rhs.value) / lhs.derivative;
+                let coarse_error = x_delta.abs();
+                let passes_gate =
+                    pool.would_accept_strict(coarse_error, coarse_error < NEWTON_FINAL_TOLERANCE);
+                (passes_gate && rhs_is_eligible(rhs))
+                    .then(|| refine_candidate(lhs, rhs, x_delta, context))
+            })
+            .collect();
+        stats.newton_calls += hits.iter().flatten().count();
+        Some(hits)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "parallel"))]
+    let refined: Option<Vec<Option<Option<NewtonHit>>>> = None;
 
-        // Complexity-ceiling skip: when the pool is saturated with exact
-        // matches, complexity ranking rules out a candidate strictly more
-        // complex than the worst pooled exact match before Newton refinement.
-        //
-        // The bound is strict (`>`), not `>=`: a candidate whose total
-        // complexity *equals* the ceiling ties on exactness and complexity, and
-        // the canonical comparator then breaks the tie on lexicographic postfix
-        // order — so it can still legitimately displace the pool's worst exact
-        // match. Skipping ties would change which equation occupies the final
-        // rank, so they must still go through refinement.
-        if let Some(ceiling) = exact_ceiling {
-            if lhs.expr.complexity() + rhs.expr.complexity() > ceiling {
-                continue;
-            }
+    for (index, rhs) in rhs_slice.iter().enumerate() {
+        if !rhs_is_eligible(rhs) {
+            continue;
         }
 
         stats.candidates_tested += 1;
@@ -628,8 +608,7 @@ fn match_one_lhs(
         }
 
         // Compute initial error estimate (coarse filter).
-        let val_diff = lhs.value - rhs.value;
-        let x_delta = -val_diff / lhs.derivative;
+        let x_delta = -(lhs.value - rhs.value) / lhs.derivative;
         let coarse_error = x_delta.abs();
 
         // Skip if coarse estimate won't pass threshold. The strict gate avoids
@@ -640,75 +619,37 @@ fn match_one_lhs(
             continue;
         }
 
-        if !config.refine_with_newton {
-            let refined_x = config.target + x_delta;
-            let refined_error = x_delta;
-            let is_exact = super::match_is_exact(lhs.value, rhs.value, refined_x, config.target);
-
-            if pool.would_accept(refined_error.abs(), is_exact) {
-                let m = Match {
-                    lhs: lhs.clone(),
-                    rhs: rhs.clone(),
-                    x_value: refined_x,
-                    error: refined_error,
-                    complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                    exact: is_exact,
-                };
-
-                pool.try_insert(m);
-
-                if config.stop_at_exact && is_exact {
-                    return false;
+        let (x_value, error) = if config.refine_with_newton {
+            let hit = match refined.as_ref().and_then(|hits| hits[index]) {
+                Some(hit) => hit,
+                None => {
+                    stats.newton_calls += 1;
+                    refine_candidate(lhs, rhs, x_delta, context)
                 }
-                if let Some(threshold) = config.stop_below {
-                    if refined_error.abs() < threshold {
-                        return false;
-                    }
-                }
-            }
-            continue;
-        }
-
-        // Refine with Newton-Raphson.
-        stats.newton_calls += 1;
-        let initial_guess = config.target + x_delta;
-        if let Some(hit) = newton_raphson_with_constants(
-            &lhs.expr,
-            rhs.value,
-            initial_guess,
-            config.newton_iterations,
-            &context.eval,
-            config.show_newton,
-            config.derivative_margin,
-        ) {
-            if !hit.real {
+            };
+            let Some(hit) = hit.filter(|hit| hit.real) else {
                 continue;
-            }
-            let refined_x = hit.x;
+            };
             stats.newton_success += 1;
-            let refined_error = refined_x - config.target;
-            let is_exact = super::match_is_exact(lhs.value, rhs.value, refined_x, config.target);
+            (hit.x, hit.x - config.target)
+        } else {
+            (config.target + x_delta, x_delta)
+        };
 
-            if pool.would_accept(refined_error.abs(), is_exact) {
-                let m = Match {
-                    lhs: lhs.clone(),
-                    rhs: rhs.clone(),
-                    x_value: refined_x,
-                    error: refined_error,
-                    complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                    exact: is_exact,
-                };
-
-                pool.try_insert(m);
-
-                if config.stop_at_exact && is_exact {
-                    return false;
-                }
-                if let Some(threshold) = config.stop_below {
-                    if refined_error.abs() < threshold {
-                        return false;
-                    }
-                }
+        let exact = super::match_is_exact(lhs.value, rhs.value, x_value, config.target);
+        if pool.would_accept(error.abs(), exact) && config.filters.allows_error(error) {
+            let m = Match {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                x_value,
+                error,
+                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                exact,
+            };
+            let stop = super::stop_condition_met(&m, config);
+            pool.try_insert(m);
+            if stop {
+                return false;
             }
         }
     }
@@ -748,5 +689,45 @@ mod tests {
             (radius - expected_cap).abs() < 1e-12,
             "strict-gate fullness should tighten the scan radius cap"
         );
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn turbo_preserves_pool_admission_with_a_wide_candidate_window() {
+        use crate::eval::evaluate;
+        use crate::expr::Expression;
+
+        let config = SearchConfig {
+            target: 1.035,
+            max_error: 0.1,
+            max_matches: 1,
+            ..Default::default()
+        };
+        let evaluated = |postfix: &str| {
+            let expr = Expression::parse(postfix).unwrap();
+            let result = evaluate(&expr, config.target).unwrap();
+            EvaluatedExpr::new(expr, result.value, result.derivative, result.num_type)
+        };
+        let mut db = ExprDatabase::new();
+        // Generate constants 1 + n/1000 with two nonzero digits in n.
+        db.insert_rhs(
+            (1..=9)
+                .flat_map(|tens| (1..=9).map(move |ones| (tens, ones)))
+                .map(|(tens, ones)| evaluated(&format!("119+{tens}*{ones}+19+3^/+")))
+                .collect(),
+        );
+        let lhs = [evaluated("x")];
+        let (serial, serial_stats) = db.find_matches_with_stats(&lhs, &config);
+        let (turbo, turbo_stats) = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap()
+            .install(|| db.find_matches_turbo_with_stats_and_context(&lhs, &config.context()));
+        assert_eq!(serial.len(), 1);
+        assert_eq!(turbo.len(), 1);
+        assert!(turbo_stats.newton_calls > serial_stats.newton_calls);
+        assert_eq!(serial[0].rhs.expr, turbo[0].rhs.expr);
+        assert_eq!(serial[0].x_value, turbo[0].x_value);
+        assert!(turbo[0].exact);
     }
 }

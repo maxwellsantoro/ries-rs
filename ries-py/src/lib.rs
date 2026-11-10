@@ -219,6 +219,7 @@ fn build_gen_config(
 #[pyfunction]
 #[pyo3(signature = (target, level=2, max_matches=16, preset=None, parallel=true))]
 fn search(
+    py: Python<'_>,
     target: f64,
     level: u32,
     max_matches: usize,
@@ -290,21 +291,27 @@ fn search(
         derivative_margin: ries_core::DEGENERATE_DERIVATIVE,
         ranking_mode: ries_core::pool::RankingMode::Complexity,
         lhs_value_dedup: false,
+        filters: Default::default(),
     };
 
     // Perform search
-    let (matches, _stats) = if parallel {
-        #[cfg(feature = "parallel")]
-        {
-            ries_core::search::search_parallel_with_stats_and_config(&gen_config, &search_config)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
+    let (matches, _stats) = py.detach(|| {
+        if parallel {
+            #[cfg(feature = "parallel")]
+            {
+                ries_core::search::search_parallel_with_stats_and_config(
+                    &gen_config,
+                    &search_config,
+                )
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                ries_core::search::search_with_stats_and_config(&gen_config, &search_config)
+            }
+        } else {
             ries_core::search::search_with_stats_and_config(&gen_config, &search_config)
         }
-    } else {
-        ries_core::search::search_with_stats_and_config(&gen_config, &search_config)
-    };
+    });
 
     // Convert to PyMatch and limit to max_matches
     let py_matches: Vec<PyMatch> = matches
@@ -394,7 +401,17 @@ mod tests {
 
     #[test]
     fn test_search_rejects_unknown_preset() {
-        let result = search(std::f64::consts::PI, 2, 8, Some("does-not-exist"), false);
+        Python::initialize();
+        let result = Python::attach(|py| {
+            search(
+                py,
+                std::f64::consts::PI,
+                2,
+                8,
+                Some("does-not-exist"),
+                false,
+            )
+        });
         assert!(
             result.is_err(),
             "unknown preset should return a Python error"

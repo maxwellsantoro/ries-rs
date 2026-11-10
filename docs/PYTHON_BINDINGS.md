@@ -98,6 +98,8 @@ Notes:
   CLI's broader flag surface.
 - `target` must be finite; `NaN` and `Infinity` raise `ValueError`.
 
+The native search releases the Python GIL so other Python threads can run.
+
 ### API vs CLI level scale
 
 The Python `level` parameter uses `search::level_to_complexity`, not the CLI

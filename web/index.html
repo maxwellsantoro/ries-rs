@@ -174,7 +174,7 @@
   <header class="sticky top-0 z-50 backdrop-blur-md bg-white/80 dark:bg-zinc-950/80 border-b border-zinc-200 dark:border-zinc-800">
     <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-emerald-600 bg-clip-text text-transparent">
+        <h1 class="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
           RIES-RS
         </h1>
         <p class="text-sm text-zinc-600 dark:text-zinc-400">Find algebraic equations for any number</p>
@@ -312,51 +312,49 @@
         </button>
 
         <!-- Advanced panel -->
-        <div id="advanced-panel" class="hidden">
-          <div class="bg-white dark:bg-zinc-950 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 space-y-4">
-            <!-- Ranking mode -->
-            <div>
-              <label for="ranking-mode" class="block text-sm font-medium text-zinc-700 dark:text-zinc-400 mb-2">
-                Ranking Mode
-              </label>
-              <select
-                id="ranking-mode"
-                name="ranking-mode"
-                class="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
-              >
-                <option value="parity">Parity (matches original RIES)</option>
-                <option value="complexity">Complexity (simpler first)</option>
-              </select>
-            </div>
-
-            <!-- Checkboxes -->
-            <div class="flex flex-wrap gap-4">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  id="use-pslq"
-                  name="use-pslq"
-                  disabled
-                  class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                  title="PSLQ mode is not available in the web build yet"
-                />
-                <span class="text-sm text-zinc-700 dark:text-zinc-300">Use PSLQ (CLI only)</span>
-              </label>
-
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  id="match-all-digits"
-                  name="match-all-digits"
-                  class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
-                />
-                <span class="text-sm text-zinc-700 dark:text-zinc-300">Match all digits</span>
-              </label>
-            </div>
-            <p id="advanced-support-note" class="text-xs text-zinc-600 dark:text-zinc-500">
-              Web build supports ranking mode and match-all-digits. PSLQ mode is CLI-only.
-            </p>
+        <div id="advanced-panel" class="hidden mt-3 border-t border-zinc-200 dark:border-zinc-800 pt-4 space-y-4">
+          <!-- Ranking mode -->
+          <div class="max-w-sm">
+            <label for="ranking-mode" class="block text-sm font-medium text-zinc-700 dark:text-zinc-400 mb-2">
+              Ranking Mode
+            </label>
+            <select
+              id="ranking-mode"
+              name="ranking-mode"
+              class="w-full px-3 py-2 bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
+            >
+              <option value="parity">Parity (matches original RIES)</option>
+              <option value="complexity">Complexity (simpler first)</option>
+            </select>
           </div>
+
+          <!-- Checkboxes -->
+          <div class="flex flex-wrap gap-4">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                id="use-pslq"
+                name="use-pslq"
+                disabled
+                class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+                title="PSLQ mode is not available in the web build yet"
+              />
+              <span class="text-sm text-zinc-700 dark:text-zinc-300">Use PSLQ (CLI only)</span>
+            </label>
+
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                id="match-all-digits"
+                name="match-all-digits"
+                class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
+              />
+              <span class="text-sm text-zinc-700 dark:text-zinc-300">Match all digits</span>
+            </label>
+          </div>
+          <p id="advanced-support-note" class="text-xs text-zinc-600 dark:text-zinc-400">
+            Web build supports ranking mode and match-all-digits. PSLQ mode is CLI-only.
+          </p>
         </div>
 
         <!-- Search button -->
@@ -465,26 +463,6 @@
       { name: 'G', value: 0.915965594177219, label: "Catalan's constant", color: 'blue' },
       { name: 'ζ(3)', value: 1.2020569031595942, label: "Apery's constant", color: 'blue' },
     ];
-
-    function getPkgCandidates() {
-      const currentUrl = new URL(window.location.href);
-      const pathname = currentUrl.pathname;
-      const servedFromWebDir =
-        pathname.includes('/web/') ||
-        pathname.endsWith('/web') ||
-        pathname.endsWith('/web/index.html');
-
-      const candidates = [
-        new URL(servedFromWebDir ? '../pkg/ries_rs.js' : './pkg/ries_rs.js', currentUrl).href,
-      ];
-
-      if (!servedFromWebDir) {
-        candidates.push(new URL('../pkg/ries_rs.js', currentUrl).href);
-      }
-
-      candidates.push(new URL('/pkg/ries_rs.js', currentUrl).href);
-      return [...new Set(candidates)];
-    }
 
     let wasmModule = null;
     let wasmWorker = null;
@@ -847,7 +825,12 @@
       const id = workerRequestId++;
       return new Promise(function(resolve, reject) {
         workerPending.set(id, { resolve: resolve, reject: reject });
-        wasmWorker.postMessage({ type: type, id: id, ...payload });
+        try {
+          wasmWorker.postMessage({ type: type, id: id, ...payload });
+        } catch (err) {
+          workerPending.delete(id);
+          reject(err);
+        }
       });
     }
 
@@ -863,11 +846,26 @@
       workerInitPromise = new Promise(function(resolve, reject) {
         const worker = new Worker(new URL('./search-worker.js', import.meta.url), { type: 'module' });
         wasmWorker = worker;
+        let ready = false;
+
+        function handleWorkerError(err) {
+          if (worker !== wasmWorker) {
+            return;
+          }
+          if (ready) {
+            const message = 'WASM worker failed: ' + formatError(err);
+            setWorkerError(message, err);
+            setWorkerStatus({ type: 'error', message: message });
+          } else {
+            reject(err);
+          }
+        }
 
         worker.onmessage = function(event) {
           const data = event.data || {};
 
           if (data.type === 'ready') {
+            ready = true;
             isThreaded = Boolean(data.threaded);
             workerCount = data.workerCount || 0;
             if (data.version) {
@@ -894,12 +892,15 @@
               entry.reject(new Error(data.error || 'Unknown worker error'));
               return;
             }
-            reject(new Error(data.error || 'Unknown worker error'));
+            handleWorkerError(new Error(data.error || 'Unknown worker error'));
           }
         };
 
         worker.onerror = function(err) {
-          reject(err instanceof ErrorEvent ? err.error || new Error(err.message) : err);
+          handleWorkerError(err instanceof ErrorEvent ? err.error || new Error(err.message) : err);
+        };
+        worker.onmessageerror = function() {
+          handleWorkerError(new Error('Unable to read a WASM worker response'));
         };
 
         worker.postMessage({
@@ -931,8 +932,7 @@
 
     async function getPresets() {
       if (wasmRuntime === 'worker') {
-        const presets = await postWorkerRequest('listPresets');
-        return normalizePresets(presets);
+        return postWorkerRequest('listPresets');
       }
 
       if (!wasmModule || typeof wasmModule.listPresets !== 'function') {
@@ -944,6 +944,10 @@
 
     async function runSearch(targetValue, searchConfig) {
       if (wasmRuntime === 'worker') {
+        if (!wasmWorker) {
+          await initWorkerRuntime();
+          setWorkerStatus({ type: 'ready', workers: workerCount });
+        }
         return postWorkerRequest('search', {
           targetValue: targetValue,
           searchConfig: searchConfig,
@@ -997,12 +1001,13 @@
         return;
       }
 
-      setWorkerStatus({ type: 'ready', workers: workerCount });
-      enableSearch();
-
       // Initialize UI
       renderQuickConstants();
       await fillPresets();
+      if (wasmRuntime !== 'worker' || wasmWorker) {
+        setWorkerStatus({ type: 'ready', workers: workerCount });
+      }
+      enableSearch();
       loadFromURL();
     }
 
@@ -1614,7 +1619,7 @@
       }
 
       // Auto-search if target is present and WASM is ready
-      if (params.has('target') && params.get('target').trim() && wasmModule) {
+      if (params.has('target') && params.get('target').trim() && (wasmModule || wasmRuntime === 'worker')) {
         const target = params.get('target').trim();
         performSearch(target);
         // If URL requested text view, apply it after search completes

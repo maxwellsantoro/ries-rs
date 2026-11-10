@@ -71,6 +71,9 @@ pub struct SearchConfigInfo {
     pub excluded_symbols: Vec<String>,
     /// Allowed symbols (if restricted)
     pub allowed_symbols: Option<Vec<String>>,
+    /// Resolved grammar, matcher options, and display options for CLI runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<serde_json::Value>,
 }
 
 /// User constant information

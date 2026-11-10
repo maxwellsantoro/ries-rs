@@ -511,10 +511,19 @@ fn test_one_sided_mode_uses_single_lhs() {
 
 #[test]
 fn test_symbol_weights_flag_changes_complexity() {
-    let (stdout, _stderr) = run_ries(&["2", "--classic", "-n", "1", "--symbol-weights", ":2:100"]);
-    // x=15 (new calibrated weight) + 2=100 (overridden) = 115
+    let (stdout, _stderr) = run_ries(&[
+        "2",
+        "--classic",
+        "-l",
+        "0",
+        "-n",
+        "1",
+        "--symbol-weights",
+        ":2:20",
+    ]);
+    // x=15 + 2=20 (overridden) = 35
     assert!(
-        stdout.contains("{115}"),
+        stdout.contains("{35}"),
         "expected x = 2 complexity to reflect overridden weight\n{}",
         stdout
     );
@@ -1063,6 +1072,10 @@ fn test_dy_enables_stats_output() {
 fn test_max_equate_value_filters_matches() {
     let (stdout, _stderr) = run_ries(&[
         "2.5",
+        "-l",
+        "0",
+        "-S",
+        "x123+",
         "--classic",
         "--report",
         "false",
@@ -1235,4 +1248,300 @@ fn test_min_memory_disables_auto_streaming() {
         "expected non-streaming search to complete\n{}",
         no_auto_streaming_stdout
     );
+}
+
+fn json_search(args: &[&str]) -> Value {
+    let mut args = args.to_vec();
+    args.push("--json");
+    serde_json::from_str(&run_ries(&args).0).expect("valid search JSON")
+}
+
+#[test]
+fn deterministic_search_has_stable_discovery_order() {
+    for args in [
+        vec![
+            "--deterministic",
+            "--lhs-value-dedup",
+            "--report=false",
+            "-n",
+            "1",
+            "-l",
+            "0",
+            "-S",
+            "x1234567+-*qsr/vp",
+            "10.2154322005",
+        ],
+        vec![
+            "--deterministic",
+            "--one-sided",
+            "--report=false",
+            "--stop-below",
+            "1",
+            "--max-match-distance",
+            "1",
+            "-n",
+            "1",
+            "-l",
+            "0",
+            "-S",
+            "x123",
+            "2.5",
+        ],
+    ] {
+        let first = json_search(&args);
+        assert_eq!(first["results_returned"], 1);
+        for _ in 0..8 {
+            assert_eq!(json_search(&args)["results"], first["results"]);
+        }
+    }
+}
+
+#[test]
+fn fast_match_uses_canonical_exactness_and_generation_limits() {
+    let near = json_search(&[
+        "-l",
+        "0",
+        "-S",
+        "x1",
+        "--stop-at-exact",
+        "--report=false",
+        "1.000000000000005",
+    ]);
+    assert_ne!(near["matcher"], "fast_match");
+    assert_eq!(near["results"][0]["exact"], false);
+    assert_eq!(near["results"][0]["x_value"], 1.0);
+
+    let weighted = json_search(&[
+        "-l",
+        "0",
+        "-S",
+        "x12+",
+        "--symbol-weights",
+        ":2:100",
+        "--stop-at-exact",
+        "--report=false",
+        "2",
+    ]);
+    assert_ne!(weighted["matcher"], "fast_match");
+    assert_eq!(weighted["results"][0]["rhs_postfix"], "11+");
+}
+
+#[test]
+fn match_filters_apply_before_pool_and_first_hit_stopping() {
+    for mode in ["--deterministic", "--streaming", "--stop-at-exact"] {
+        let output = json_search(&[
+            "-l",
+            "0",
+            "-S",
+            "x1234+",
+            "--report=false",
+            "-n",
+            "1",
+            "--min-equate-value",
+            "4",
+            mode,
+            "2",
+        ]);
+        assert_eq!(output["results_returned"], 1);
+        assert!(matches!(
+            output["results"][0]["lhs_postfix"].as_str(),
+            Some("2x+" | "x2+" | "xx+")
+        ));
+        assert_eq!(output["results"][0]["rhs_postfix"], "4");
+    }
+}
+
+#[test]
+fn canonical_dedup_leaves_room_for_distinct_equations() {
+    let output = json_search(&[
+        "-l",
+        "0",
+        "-S",
+        "x1234+",
+        "--report=false",
+        "-n",
+        "2",
+        "--min-equate-value",
+        "4",
+        "--canon-simplify",
+        "2",
+    ]);
+    assert_eq!(output["results_returned"], 2);
+    assert_ne!(
+        output["results"][0]["canonical_key"],
+        output["results"][1]["canonical_key"]
+    );
+}
+
+#[test]
+fn numeric_anagram_keeps_rhs_representatives_for_each_digit_multiset() {
+    for mode in ["--deterministic", "--streaming"] {
+        let output = json_search(&[
+            "-l",
+            "1",
+            "-S",
+            "x1+",
+            "--S-RHS",
+            "12+",
+            "--min-equate-value",
+            "2",
+            "--report=false",
+            "-n",
+            "1",
+            "--numeric-anagram",
+            mode,
+            "0",
+        ]);
+        assert_eq!(output["results_returned"], 1);
+        assert_eq!(output["results"][0]["rhs_postfix"], "11+");
+    }
+}
+
+#[test]
+fn explicit_sub_picounit_max_distance_is_enforced() {
+    for mode in ["--deterministic", "--streaming", "--one-sided"] {
+        let output = json_search(&[
+            "-l",
+            "0",
+            "-S",
+            "x1",
+            "--report=false",
+            "--max-match-distance",
+            "1e-16",
+            mode,
+            "1.0000000000005",
+        ]);
+        assert_eq!(output["results_returned"], 0);
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn turbo_agrees_with_serial_on_inexact_rank_one() {
+    let run = |mode| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ries-rs"))
+            .env("RAYON_NUM_THREADS", "4")
+            .args([
+                "--json",
+                "--report=false",
+                "-n",
+                "1",
+                "-l",
+                "0",
+                "-S",
+                "x1234567+-*qsr/vp",
+                mode,
+                "9.5124027528",
+            ])
+            .output()
+            .expect("execute search");
+        assert!(output.status.success(), "{:?}", output.stderr);
+        serde_json::from_slice::<Value>(&output.stdout).expect("valid search JSON")
+    };
+    let serial = run("--deterministic");
+    let turbo = run("--turbo");
+    assert_eq!(turbo["matcher"], "turbo");
+    assert_eq!(turbo["results_returned"], 1);
+    assert_eq!(turbo["results"], serial["results"]);
+}
+
+#[test]
+fn manifest_records_resolved_search_options() {
+    let run = |weight| {
+        let path = unique_tmp_path("resolved-config");
+        json_search(&[
+            "-l",
+            "0",
+            "-S",
+            "x12+",
+            "--deterministic",
+            "--report=false",
+            "-n",
+            "1",
+            "--S-RHS",
+            "12+",
+            "--symbol-weights",
+            weight,
+            "--trig-argument-scale",
+            "2",
+            "--emit-manifest",
+            path.to_str().unwrap(),
+            "2",
+        ]);
+        let manifest = serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap();
+        std::fs::remove_file(path).unwrap();
+        manifest
+    };
+    let standard = run(":2:13");
+    let weighted = run(":2:100");
+    let replay = &weighted["config"]["replay"];
+    assert_eq!(replay["generation"]["symbol_table"]["50"]["weight"], 100);
+    assert_eq!(replay["matching"]["trig_argument_scale"], 2.0);
+    assert_eq!(
+        replay["matching"]["rhs_allowed_symbols"],
+        serde_json::json!([43, 49, 50])
+    );
+    assert_ne!(standard["config"], weighted["config"]);
+    assert_eq!(standard["results"][0]["rhs_postfix"], "2");
+    assert_eq!(weighted["results"][0]["rhs_postfix"], "11+");
+}
+
+#[cfg(feature = "highprec")]
+#[test]
+fn precision_verifies_matches_without_manifest() {
+    let args = [
+        "-l",
+        "0",
+        "-S",
+        "x1",
+        "--report=false",
+        "--precision",
+        "128",
+        "1",
+    ];
+    let (stdout, _) = run_ries(&args);
+    assert!(stdout.contains("Verified at high precision"));
+    assert!(stdout.contains("[hp error: 0.00e0]"));
+
+    let output = json_search(&args);
+    let verification = &output["high_precision_verification"];
+    assert_eq!(verification["precision_bits"], 128);
+    assert_eq!(verification["results"][0]["is_verified"], true);
+
+    let transformed = json_search(&[
+        "-l",
+        "0",
+        "-S",
+        "x4+",
+        "--S-RHS",
+        "4",
+        "--report=false",
+        "--precision",
+        "128",
+        "2",
+    ]);
+    let row = &transformed["high_precision_verification"]["results"][0];
+    assert_eq!(row["lhs_postfix"], "xx+");
+    assert_eq!(row["is_verified"], true);
+    assert_eq!(row["highprec_error"], 0.0);
+}
+
+#[test]
+fn oversized_match_counts_exit_with_usage_error() {
+    let oversized = usize::MAX.to_string();
+    for args in [
+        vec!["-l", "0", "--top-k", &oversized, "1"],
+        vec![
+            "-l",
+            "0",
+            "--report=false",
+            "--max-matches",
+            &oversized,
+            "1",
+        ],
+    ] {
+        let output = run_ries_raw(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("search pool"));
+    }
 }

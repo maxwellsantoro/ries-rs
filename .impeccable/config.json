@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "web/index.html"
+        ],
+        "createdAt": "2026-11-10T16:19:06.684Z",
+        "reason": "Codex: Chromium computed body 16px, h2 20px, and h1 24px, meeting the 1.25x threshold from body to h2. The detector reported 16px for all three roles."
+      }
+    ]
+  }
+}
