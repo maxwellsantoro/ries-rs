@@ -229,7 +229,7 @@ impl Report {
         }
 
         // Compute metrics for all matches
-        let mut with_metrics: Vec<MatchWithMetrics> = matches
+        let with_metrics: Vec<MatchWithMetrics> = matches
             .into_iter()
             .map(|m| {
                 let metrics = MatchMetrics::from_match(&m, Some(&freq_map));
@@ -241,7 +241,7 @@ impl Report {
         let mut categories = Vec::new();
 
         for &cat in &config.categories {
-            let selected = select_category(&mut with_metrics, cat, config);
+            let selected = select_category(&with_metrics, cat, config);
             categories.push((cat, selected));
         }
 
@@ -289,7 +289,7 @@ impl Report {
 
 /// Select top-K matches for a category
 fn select_category(
-    matches: &mut [MatchWithMetrics],
+    matches: &[MatchWithMetrics],
     category: Category,
     config: &ReportConfig,
 ) -> Vec<MatchWithMetrics> {
@@ -304,6 +304,7 @@ fn select_category(
 
     // Dedupe based on category
     let mut result = Vec::new();
+    let mut seen_equations = HashSet::new();
     let mut seen_lhs: HashSet<LhsKey> = HashSet::new();
     let mut seen_sig: HashSet<SignatureKey> = HashSet::new();
 
@@ -312,50 +313,42 @@ fn select_category(
             break;
         }
 
-        // Category-specific dedupe
+        let key = displayed_equation_key(&mwm.m);
+        if seen_equations.contains(&key) {
+            continue;
+        }
+
         let accept = match category {
-            Category::Exact => {
-                // Dedupe by full equation (allow multiple forms)
-                true
+            Category::Exact => true,
+            Category::Best | Category::Elegant | Category::Stable => {
+                seen_lhs.insert(LhsKey::from_match(&mwm.m))
             }
-            Category::Best | Category::Elegant => {
-                // Dedupe by LHS (one match per LHS)
-                let lhs_key = LhsKey::from_match(&mwm.m);
-                if seen_lhs.contains(&lhs_key) {
-                    false
-                } else {
-                    seen_lhs.insert(lhs_key);
-                    true
-                }
-            }
-            Category::Interesting => {
-                // Dedupe by signature (force variety)
-                let sig_key = SignatureKey::from_match(&mwm.m);
-                if seen_sig.contains(&sig_key) {
-                    false
-                } else {
-                    seen_sig.insert(sig_key);
-                    true
-                }
-            }
-            Category::Stable => {
-                // Dedupe by LHS
-                let lhs_key = LhsKey::from_match(&mwm.m);
-                if seen_lhs.contains(&lhs_key) {
-                    false
-                } else {
-                    seen_lhs.insert(lhs_key);
-                    true
-                }
-            }
+            Category::Interesting => seen_sig.insert(SignatureKey::from_match(&mwm.m)),
         };
 
         if accept {
+            seen_equations.insert(key);
             result.push(mwm.clone());
         }
     }
 
     result
+}
+
+/// Compare visible equation forms with leading negation moved to one side.
+fn displayed_equation_key(m: &Match) -> (String, String, bool) {
+    let side = |expr: &Expression| {
+        let mut expr = expr.clone();
+        let mut negative = false;
+        while expr.symbols().last() == Some(&Symbol::Neg) {
+            expr.pop();
+            negative = !negative;
+        }
+        (expr.to_infix_or_postfix(), negative)
+    };
+    let (lhs, lhs_negative) = side(&m.lhs.expr);
+    let (rhs, rhs_negative) = side(&m.rhs.expr);
+    (lhs, rhs, lhs_negative ^ rhs_negative)
 }
 
 /// Filter for category membership
@@ -502,5 +495,41 @@ mod tests {
 
         // Should have entries in multiple categories
         assert!(!report.categories.is_empty());
+    }
+
+    #[test]
+    fn report_fills_slots_after_skipping_equivalent_rows() {
+        let matches = vec![
+            make_match("xCn", "1", 0.0),
+            make_match("xC", "1n", 0.0),
+            make_match("xs", "2", 0.0),
+            make_match("x2^", "2", 0.0),
+            make_match("1xs*", "2", 0.0),
+            make_match("x", "2q", 0.0),
+            make_match("xC", "1", 0.0),
+        ];
+        let config = ReportConfig {
+            top_k: 4,
+            categories: vec![Category::Exact],
+            ..ReportConfig::default()
+        };
+        let report = Report::generate(matches, 2.5, &config);
+        let rows: Vec<_> = report.categories[0]
+            .1
+            .iter()
+            .map(|row| displayed_equation_key(&row.m))
+            .collect();
+        assert_eq!(rows.len(), 4);
+        for (lhs, rhs, negative) in [
+            ("cospi(x)", "1", true),
+            ("cospi(x)", "1", false),
+            ("x^2", "2", false),
+            ("x", "sqrt(2)", false),
+        ] {
+            assert!(
+                rows.contains(&(lhs.into(), rhs.into(), negative)),
+                "{rows:?}"
+            );
+        }
     }
 }

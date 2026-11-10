@@ -216,6 +216,11 @@ Ordering is:
 
 This final lexical tie-break is what makes total ordering explicit and stable.
 
+Within each report category, the highest-ranked row represents equations that
+share the same default infix form or differ only by negating both sides.
+Default and pretty infix omit multiplication by literal `1` and use explicit
+`*` after compound factors. Postfix output records the original operations.
+
 Search keeps one admissible RHS representative for each bit-identical value.
 It applies RHS symbol, value, and expression filters before choosing by the
 configured ranking mode. Numeric-anagram searches keep a representative per

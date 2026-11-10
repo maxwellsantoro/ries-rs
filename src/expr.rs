@@ -522,22 +522,26 @@ impl Expression {
         const PREC_MUL: u8 = 6;
         const PREC_ADD: u8 = 4;
 
-        let mut stack: Vec<(String, u8)> = Vec::new();
+        // Track the literal symbol separately from the text, since a profile
+        // can give any symbol the display name "1".
+        let mut stack: Vec<(String, u8, bool)> = Vec::new();
 
         let mut index = 0;
         while index < self.symbols().len() {
             if let Some(literal) = self.take_decimal_literal(&mut index) {
-                stack.push((literal, PREC_ATOM));
+                stack.push((literal, PREC_ATOM, false));
                 continue;
             }
             let sym = self.symbols()[index];
             index += 1;
             match sym.seft() {
                 Seft::A => {
-                    stack.push((name(sym), PREC_ATOM));
+                    let text = name(sym);
+                    let literal_one = sym == Symbol::One && text == "1";
+                    stack.push((text, PREC_ATOM, literal_one));
                 }
                 Seft::B => {
-                    let (arg, arg_prec) =
+                    let (arg, arg_prec, _) =
                         stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
                     // Unary results carry the precedence of the operator they
                     // print as. Tagging them as atoms drops parentheses, so
@@ -596,11 +600,22 @@ impl Expression {
                         | Symbol::UserFunction15 => (format!("{}({})", name(sym), arg), PREC_ATOM),
                         _ => ("?".to_string(), PREC_ATOM),
                     };
-                    stack.push((result, prec));
+                    stack.push((result, prec, false));
                 }
                 Seft::C => {
-                    let (b, b_prec) = stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
-                    let (a, a_prec) = stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
+                    let (b, b_prec, b_is_one) =
+                        stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
+                    let (a, a_prec, a_is_one) =
+                        stack.pop().ok_or(crate::eval::EvalError::StackUnderflow)?;
+                    if sym == Symbol::Mul && (a_is_one || b_is_one) {
+                        let operand = if a_is_one {
+                            (b, b_prec, b_is_one)
+                        } else {
+                            (a, a_prec, a_is_one)
+                        };
+                        stack.push(operand);
+                        continue;
+                    }
                     let (result, prec) = match sym {
                         Symbol::Add => {
                             let b_s = infix_maybe_paren(&b, b_prec, PREC_ADD, false, true);
@@ -613,7 +628,8 @@ impl Expression {
                         Symbol::Mul => {
                             let a_s = infix_maybe_paren(&a, a_prec, PREC_MUL, false, false);
                             let b_s = infix_maybe_paren(&b, b_prec, PREC_MUL, false, true);
-                            if a_s.chars().last().is_some_and(|c| c.is_ascii_digit())
+                            if a_prec == PREC_ATOM
+                                && a_s.bytes().all(|byte| byte.is_ascii_digit())
                                 && b_s.chars().next().is_some_and(|c| c.is_alphabetic())
                             {
                                 (format!("{} {}", a_s, b_s), PREC_MUL)
@@ -643,12 +659,12 @@ impl Expression {
                         Symbol::Atan2 => (format!("atan2({}, {})", a, b), PREC_ATOM),
                         _ => unreachable!(),
                     };
-                    stack.push((result, prec));
+                    stack.push((result, prec, false));
                 }
             }
         }
 
-        Ok(stack.pop().map(|(s, _)| s).unwrap_or_else(|| "?".into()))
+        Ok(stack.pop().map(|(s, _, _)| s).unwrap_or_else(|| "?".into()))
     }
 
     pub fn to_infix(&self) -> String {
