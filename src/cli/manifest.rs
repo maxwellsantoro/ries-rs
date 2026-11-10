@@ -4,6 +4,7 @@
 //! the full configuration and results of a search run for reproducibility.
 
 use ries_rs::pool::RankingMode;
+use ries_rs::search::MatcherPath;
 use ries_rs::{
     Match, MatchInfo, MatchMetrics, RunManifest, SearchConfigInfo, UserConstant, UserConstantInfo,
 };
@@ -20,6 +21,8 @@ pub fn build_manifest(
     max_error: f64,
     max_matches: usize,
     ranking_mode: RankingMode,
+    lhs_value_dedup: bool,
+    matcher: Option<MatcherPath>,
     user_constants: &[UserConstant],
     excluded_symbols: &Option<String>,
     allowed_symbols: &Option<String>,
@@ -38,6 +41,9 @@ pub fn build_manifest(
             RankingMode::Complexity => "complexity".to_string(),
             RankingMode::Parity => "parity".to_string(),
         },
+        lhs_value_dedup: Some(lhs_value_dedup),
+        lhs_value_dedup_applied: matcher.map(|path| path.applies_lhs_value_dedup(lhs_value_dedup)),
+        matcher,
         user_constants: user_constants
             .iter()
             .map(|uc| UserConstantInfo {

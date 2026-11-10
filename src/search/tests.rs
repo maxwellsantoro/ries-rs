@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn batch_limit_reports_streaming_and_skips_lhs_value_dedup() {
+    let config = SearchConfig {
+        target: 2.5,
+        lhs_value_dedup: true,
+        ..Default::default()
+    };
+    let (_, stats) = search_with_batch_limit(&fast_test_config(), &config, 1);
+    let matcher = stats.matcher.expect("search executed");
+    assert_eq!(matcher, MatcherPath::Streaming);
+    assert!(!matcher.applies_lhs_value_dedup(config.lhs_value_dedup));
+}
+
 /// Create a fast test config with limited complexity and operators.
 /// max_length: 8 keeps expression count tiny; complexity limits are set
 /// high enough that simple 3-symbol expressions (e.g. `2x*` = 32) are

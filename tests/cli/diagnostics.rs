@@ -2,7 +2,18 @@ use super::*;
 
 #[test]
 fn test_f1_condensed_format_accepted() {
-    let (stdout, _stderr) = run_ries(&["2.5", "-F1", "--classic", "--report", "false", "-n", "1"]);
+    let (stdout, _stderr) = run_ries(&[
+        "2.5",
+        "-F1",
+        "--classic",
+        "--report",
+        "false",
+        "--one-sided",
+        "-S",
+        "x25/",
+        "-n",
+        "1",
+    ]);
     // -F1 should work as an alias for -F0 postfix compact
     // Postfix compact for x = 5/2 would be "x52/" (no spaces)
     assert!(
@@ -306,7 +317,7 @@ fn test_s_flag_prints_the_branch_in_report_and_classic_modes() {
         "false",
         "-s",
         "-n",
-        "4",
+        "8",
         "-l",
         "0",
     ]);

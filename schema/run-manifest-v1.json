@@ -101,6 +101,19 @@
                     ],
                     "description": "The sort order strategy applied to the output pool"
                 },
+                "lhs_value_dedup": {
+                    "type": "boolean",
+                    "description": "Whether target-local LHS merging was requested"
+                },
+                "lhs_value_dedup_applied": {
+                    "type": "boolean",
+                    "description": "Whether the actual matcher applied target-local LHS merging"
+                },
+                "matcher": {
+                    "type": "string",
+                    "enum": ["serial", "parallel", "turbo", "adaptive", "streaming", "one_sided", "fast_match"],
+                    "description": "The actual search path, after any fallback"
+                },
                 "user_constants": {
                     "type": "array",
                     "items": {

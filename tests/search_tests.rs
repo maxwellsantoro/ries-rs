@@ -607,7 +607,7 @@ fn test_numeric_deduplication_against_atomic_equation_oracle() {
 }
 
 #[test]
-fn test_streaming_parity_stopping_prefers_simplest_acceptable_match() {
+fn test_streaming_stop_priority_changes_results_without_ending_the_scan() {
     use ries_rs::pool::{compare_matches, RankingMode};
 
     let mut gen = fast_config();
@@ -615,27 +615,37 @@ fn test_streaming_parity_stopping_prefers_simplest_acceptable_match() {
     gen.unary_ops.clear();
     gen.binary_ops = vec![Symbol::Add];
     gen.max_length = 3;
-    for (stop_at_exact, stop_below) in [(true, None), (false, Some(1e-8))] {
-        let cfg = SearchConfig {
+    for max_matches in [1, 10] {
+        let config = SearchConfig {
             target: 2.0,
-            max_matches: 10,
+            max_matches,
             ranking_mode: RankingMode::Parity,
-            stop_at_exact,
-            stop_below,
+            rhs_excluded_symbols: Some([Symbol::Add as u8].into()),
             ..Default::default()
         };
-        let (batch, _) = search_with_stats_and_config(&gen, &cfg);
-        let (streaming, _) = search_streaming_with_config(&gen, &cfg);
-        assert!(!batch.is_empty() && !streaming.is_empty());
-        assert_eq!(streaming[0].lhs.expr.to_postfix(), "x");
-        assert_eq!(streaming[0].rhs.expr.to_postfix(), "2");
-        // Streaming's stop priority may precede a better parity-ranked result.
-        assert!(streaming.iter().skip(1).any(|m| compare_matches(
-            m,
-            &streaming[0],
-            RankingMode::Parity
-        )
-        .is_lt()));
+        let (ranked, scanned) = search_streaming_with_config(&gen, &config);
+        for (stop_at_exact, stop_below) in [(true, None), (false, Some(1e-8))] {
+            let with_stop = SearchConfig {
+                stop_at_exact,
+                stop_below,
+                ..config.clone()
+            };
+            let (priority, stats) = search_streaming_with_config(&gen, &with_stop);
+            let (_, batch_stats) = search_with_stats_and_config(&gen, &with_stop);
+            assert!(batch_stats.early_exit);
+            assert!(!stats.early_exit);
+            assert_eq!(stats.lhs_count, scanned.lhs_count);
+            assert_eq!(stats.candidates_tested, scanned.candidates_tested);
+            assert_eq!(stats.newton_calls, scanned.newton_calls);
+
+            assert_eq!(priority[0].lhs.expr.to_postfix(), "x");
+            assert_eq!(priority[0].rhs.expr.to_postfix(), "2");
+            assert!(compare_matches(&ranked[0], &priority[0], RankingMode::Parity).is_lt());
+            let has_ranked_winner = priority
+                .iter()
+                .any(|m| m.lhs.expr == ranked[0].lhs.expr && m.rhs.expr == ranked[0].rhs.expr);
+            assert_eq!(has_ranked_winner, max_matches > 1);
+        }
     }
 }
 
@@ -1060,10 +1070,8 @@ fn test_turbo_best_match_equals_sequential() {
 fn test_turbo_small_batch_generation_matches_sequential_best() {
     use ries_rs::search::search_turbo_with_stats_and_config;
 
-    // This small search stays below the serial batch limit, where canonical
-    // serial search deduplicates LHS expressions by target-local value and
-    // derivative before matching. Turbo must mirror that generation semantics,
-    // not always preserve raw streaming LHS expressions.
+    // Exercise the opt-in heuristic below the serial batch limit. Turbo
+    // should use the same representative policy as the serial matcher.
     let gen_config = GenConfig {
         max_lhs_complexity: 65,
         max_rhs_complexity: 10,
@@ -1081,6 +1089,7 @@ fn test_turbo_small_batch_generation_matches_sequential_best() {
         target: 2.506314,
         max_matches: 16,
         max_error: 2.506314 * 0.01,
+        lhs_value_dedup: true,
         user_constants: gen_config.user_constants.clone(),
         user_functions: gen_config.user_functions.clone(),
         ..Default::default()
@@ -1252,7 +1261,7 @@ fn test_turbo_finds_known_exact_match() {
 #[cfg(feature = "parallel")]
 #[test]
 fn test_parallel_rhs_override_matches_sequential() {
-    use ries_rs::search::search_parallel_with_stats_and_config;
+    use ries_rs::search::{search_parallel_with_stats_and_config, MatcherPath};
 
     let mut gen_config = fast_config();
     gen_config.rhs_constants = Some(vec![
@@ -1272,8 +1281,9 @@ fn test_parallel_rhs_override_matches_sequential() {
     };
 
     let (sequential, _) = search_with_stats_and_config(&gen_config, &search_config);
-    let (parallel, _) = search_parallel_with_stats_and_config(&gen_config, &search_config);
+    let (parallel, stats) = search_parallel_with_stats_and_config(&gen_config, &search_config);
 
+    assert_eq!(stats.matcher, Some(MatcherPath::Serial));
     assert_eq!(
         match_signatures(&sequential),
         match_signatures(&parallel),
@@ -1356,7 +1366,17 @@ fn test_target_zero_finds_x_equals_ln_one() {
     // `1-1` is a zero, but RHS dedupe keeps the cheaper `ln(1)` (complexity
     // 23 vs 25). The near-zero prune used to drop `x` itself, so that identity
     // could not be formed. Keeping `x` when the target is 0 surfaces it.
-    let (gen, cfg) = api_level_configs(3, 0.0);
+    let gen = GenConfig {
+        constants: vec![Symbol::One],
+        unary_ops: vec![Symbol::Ln],
+        binary_ops: vec![Symbol::Sub],
+        max_length: 3,
+        ..fast_config()
+    };
+    let cfg = SearchConfig {
+        target: 0.0,
+        ..Default::default()
+    };
     let (batch, _) = search_with_stats_and_config(&gen, &cfg);
     assert!(
         has_exact_postfix(&batch, "x", "1l"),

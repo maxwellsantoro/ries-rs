@@ -152,10 +152,16 @@ Turbo mode (parallelize matching across all cores for maximum speed):
 ries-rs 2.506314 -l3 --turbo
 ```
 
-`--turbo` runs the match/Newton phase on every core. It returns the same single
-best match as the serial path but trades reproducibility and memory for speed —
-the lower-ranked tail may differ between runs and thread counts. Use
-`--deterministic` instead when you need reproducible output.
+`--turbo` runs the match/Newton phase on every core. Materialized serial and
+turbo searches aim for the same best match. The lower-ranked tail may differ
+between runs and thread counts. Use `--deterministic` when you need reproducible
+output.
+
+Search preserves distinct left-hand sides by default. For a materialized search,
+`--lhs-value-dedup` can reduce matching work by merging left-hand sides with the
+same value and derivative at the target. It can change which equations and
+roots are returned. See the [search model](docs/SEARCH_MODEL.md) for the measured
+tradeoff and streaming fallback behavior.
 
 For the authoritative option list:
 

@@ -3,6 +3,7 @@
 //! Provides structured output of search configuration and results
 //! for academic reproducibility and verification.
 
+use crate::search::MatcherPath;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -55,6 +56,15 @@ pub struct SearchConfigInfo {
     pub max_matches: usize,
     /// Ranking mode used
     pub ranking_mode: String,
+    /// Whether the run requested target-local LHS merging.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lhs_value_dedup: Option<bool>,
+    /// Whether the matcher applied the requested target-local LHS merging.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lhs_value_dedup_applied: Option<bool>,
+    /// Actual matcher, after any fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matcher: Option<MatcherPath>,
     /// User constants (names and values)
     pub user_constants: Vec<UserConstantInfo>,
     /// Excluded symbols

@@ -196,19 +196,64 @@ Ordering is:
 
 This final lexical tie-break is what makes total ordering explicit and stable.
 
-This ordering applies to candidates that reach the result pool. Generation
-keeps a least-complex representative for each bit-identical RHS value. Batch
-generation also keeps a least-complex representative for each bit-identical
-LHS (value, derivative) pair at the target. Distinct floating-point values,
-including large finite values, survive deduplication even when they are close.
-Expressions with identical keys can still differ in parity score or, for LHS
-expressions, in how they evaluate away from the target during refinement.
+Search keeps one admissible RHS representative for each bit-identical value.
+It applies the RHS symbol filters before choosing by the configured ranking
+mode. Parity compares the signed score first. Both modes compare complexity
+and then postfix symbol order. Equations with the same RHS value can differ
+on the left, while all use the same chosen RHS expression.
 
-Streaming with `stop_at_exact` or `stop_below` has a separate ordering rule:
-it scans the LHS stream and puts the simplest qualifying match first, even if
-another returned match ranks ahead of it under the configured comparator.
-The batch matcher instead stops when it encounters a qualifying match in its
-own traversal, so the two stopping modes do not promise identical results.
+By default search passes all generated LHS forms to the matcher. With
+`--lhs-value-dedup` (`SearchConfig::lhs_value_dedup` in Rust), materialized
+searches keep a least-complex representative for each bit-identical LHS
+(value, derivative) pair at the target. LHS expressions with identical keys
+can differ in parity score or refine to different roots. Streaming, including
+the automatic fallback, processes the generated LHS stream with either setting.
+
+Without stop priority, streaming ranks the matches it discovers with the same
+comparator as batch search. The streaming traversal and candidate windows can
+admit a different set of matches, so an automatic fallback does not promise
+the same rank one or ordered top k as a materialized run. The CLI `--max-memory`
+option selects a strategy; it does not enforce an RSS limit.
+
+### Measured cost of the LHS key
+
+A bounded study held RHS representative selection, the batch matcher, and
+the order of equal-complexity LHS candidates fixed. It compared the former
+target-local key with keeping every structurally distinct LHS. Across 20
+cases (two small fixtures and 16 default-grammar searches, split across
+complexity and parity ranking), the key changed the first equation in 7
+cases and the ordered result list in 17. All seven first-equation changes
+occurred under parity. One of them also changed the winning root by more
+than eight ulps.
+
+At complexity budget 55, the key removed 66–68% of LHS candidates. Keeping
+them all raised peak RSS by 11–22%, while the median end-to-end time ranged
+from 5% faster to 14% slower on an Apple M1 (five release runs per case).
+The 17 changed lists measure equation identity and order. The default-grammar
+cases returned the same number of exact rows with either policy.
+
+At CLI level 3 (budget 65), the full grammar produced about 4.78 million
+expressions for the `3.301` qualification case. Serial and parallel requests
+crossed the two-million-expression guard and streamed. Turbo materialized the
+search and peaked at 448 MiB. The forced streaming run and all three requested
+modes returned the same ordered 16 equations on that case.
+
+To compare materialized paths at the same budget, the qualification excluded
+the symbols in `TASClW^vLE` and used a maximum match distance of `0.001`. For
+the square-root-of-two parity case, serial preservation raised median wall
+time from 0.55 to 1.04 seconds at about 148 MiB. Candidate checks rose from
+0.51 to 1.48 million while RHS database construction stayed near 5 ms. The
+larger matching cost is workload dependent, even when memory fits.
+
+**Streaming stop priority.** With `stop_at_exact` or `stop_below`, the streaming
+matcher still scans the full LHS stream and reports `early_exit = false`. It
+tracks a qualifying match separately from the ranked pool. It prefers lower
+LHS complexity, then lower RHS complexity, then lower absolute error, then
+lexicographic LHS and RHS postfix strings. After the scan it places that match
+first and truncates the list to `max_matches`. At capacity one this can replace
+the best match under the configured ranking. With neither option, streaming
+returns the ranked pool directly. The batch matcher can stop on a qualifying
+match during traversal.
 
 Under complexity ranking, once the bounded result pool is full of exact
 matches, `TopKPool::exact_complexity_ceiling` returns the complexity of its
@@ -238,7 +283,7 @@ This yields stable output ordering for identical:
 
 - target
 - search level / complexity limits
-- ranking mode
+- ranking mode and LHS deduplication policy
 - symbol set / weights / profile configuration
 - build + feature set
 
@@ -249,15 +294,13 @@ Practical caveat:
 ## Turbo Contract (Alternative)
 
 `--turbo` deliberately opts out of the determinism contract above to parallelize
-the match/Newton phase across all cores. It mirrors serial generation semantics:
-small batch searches use the same target-local LHS deduplication as serial, while
-streaming-sized searches preserve the raw LHS stream before splitting matching
-work into parallel bands. Turbo is for throughput, not reproducibility, and
-`--deterministic` disables it.
+the match/Newton phase across all cores. Materialized serial and turbo searches
+use the same LHS policy. Turbo is for throughput and `--deterministic` disables
+it.
 
 What turbo **guarantees**:
 
-- the single best (rank-1) match is identical to serial search — the global best
+- the single best (rank-1) match is identical to materialized serial search — the global best
   is rank 1 in whichever band owns its LHS and is never evicted, and a band's
   adaptive scan radius is always at least as wide as serial's, so turbo cannot
   miss a match serial found;
@@ -286,6 +329,12 @@ For automation and archival:
 
 - `--json`: structured stdout results + search statistics
 - `--emit-manifest FILE`: full run manifest JSON for replay/audit metadata
+
+Both formats record `matcher`, `lhs_value_dedup` (requested), and
+`lhs_value_dedup_applied` (effective). In a streaming fallback, `matcher` is
+`streaming` and `lhs_value_dedup_applied` is false even if the heuristic was
+requested. The top-level CLI JSON `streaming` flag reflects the actual path.
+Older manifests may omit these fields.
 
 Recommended reproducibility workflow:
 

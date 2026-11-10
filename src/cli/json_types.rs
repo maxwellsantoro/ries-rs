@@ -5,7 +5,7 @@
 
 use ries_rs::expr::OutputFormat;
 use ries_rs::pool::RankingMode;
-use ries_rs::search::SearchStats;
+use ries_rs::search::{MatcherPath, SearchStats};
 use ries_rs::SymbolTable;
 use serde::Serialize;
 
@@ -21,6 +21,9 @@ pub struct JsonRunOutput {
     pub max_matches: usize,
     pub results_returned: usize,
     pub ranking_mode: &'static str,
+    pub matcher: Option<MatcherPath>,
+    pub lhs_value_dedup: bool,
+    pub lhs_value_dedup_applied: Option<bool>,
     pub deterministic: bool,
     pub parallel: bool,
     pub streaming: bool,
@@ -124,9 +127,9 @@ pub fn build_json_output(
     max_rhs_complexity: u32,
     max_matches: usize,
     ranking_mode: RankingMode,
+    lhs_value_dedup: bool,
     deterministic: bool,
     parallel: bool,
-    streaming: bool,
     adaptive: bool,
     one_sided: bool,
     report_mode_requested: bool,
@@ -229,9 +232,14 @@ pub fn build_json_output(
         max_matches,
         results_returned: results.len(),
         ranking_mode: ranking_mode_name(ranking_mode),
+        matcher: stats.matcher,
+        lhs_value_dedup,
+        lhs_value_dedup_applied: stats
+            .matcher
+            .map(|matcher| matcher.applies_lhs_value_dedup(lhs_value_dedup)),
         deterministic,
         parallel,
-        streaming,
+        streaming: stats.matcher == Some(MatcherPath::Streaming),
         adaptive,
         one_sided,
         report_mode_requested,

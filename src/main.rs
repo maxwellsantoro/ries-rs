@@ -289,6 +289,7 @@ fn main() {
             .or(args.significance_loss_margin)
             .unwrap_or(DEGENERATE_DERIVATIVE),
         ranking_mode,
+        lhs_value_dedup: args.lhs_value_dedup,
     };
 
     // When --match-all-digits is enabled, set tolerance based on target's significant digits
@@ -376,6 +377,7 @@ fn main() {
         ) {
             use search::SearchStats;
             let fast_stats = SearchStats {
+                matcher: Some(search::MatcherPath::FastMatch),
                 lhs_count: 1,
                 rhs_count: 1,
                 search_time: std::time::Duration::from_micros(1),
@@ -493,9 +495,9 @@ fn main() {
             max_rhs_complexity,
             effective_max_matches,
             ranking_mode,
+            search_config.lhs_value_dedup,
             args.deterministic,
             !args.deterministic && args.parallel,
-            use_streaming,
             args.adaptive,
             args.one_sided,
             use_report,
@@ -527,6 +529,8 @@ fn main() {
                 search_config.max_error,
                 effective_max_matches,
                 ranking_mode,
+                search_config.lhs_value_dedup,
+                stats.matcher,
                 &profile.constants,
                 &args.exclude,
                 &args.only_symbols,
@@ -702,6 +706,8 @@ fn main() {
             search_config.max_error,
             effective_max_matches,
             ranking_mode,
+            search_config.lhs_value_dedup,
+            stats.matcher,
             &profile.constants,
             &args.exclude,
             &args.only_symbols,
