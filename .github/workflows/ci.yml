@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main, master]
@@ -221,14 +222,14 @@ jobs:
         run: cargo audit
 
   parity-check:
-    name: Parity Check (Original RIES)
+    name: Historical root-accuracy smoke (Original RIES)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout ries-rs
         uses: actions/checkout@v5
 
       - name: Test parity and benchmark validation
-        run: python3 tests/test_ci_validation.py
+        run: python3 -m unittest discover -s tests -p 'test_*py'
 
       - name: Download and verify original RIES source
         run: |
@@ -247,9 +248,87 @@ jobs:
       - name: Build ries-rs
         run: cargo build --release --locked
 
-      - name: Run parity checks
+      - name: Check decimal parsing against an independent Fraction oracle
+        run: python3 scripts/check_decimal_boundary.py --binary target/release/ries-rs --output qualification/decimal-boundary.json
+
+      - name: Qualify matcher corpus and retain independent evidence
+        run: python3 scripts/qualify_search.py --output qualification/matchers
+
+      - name: Compare historical equation identities and independently bound roots
+        run: python3 scripts/compare_original.py --original /tmp/ries-original --output qualification/historical
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: search-qualification-${{ github.sha }}
+          path: qualification/
+          retention-days: 90
+
+      - name: Run historical accuracy smoke checks
         run: |
           ./tests/compare_with_original.sh 2 2 6 /tmp/ries-original
           ./tests/compare_with_original.sh 3.1415926535 2 6 /tmp/ries-original
           ./tests/compare_with_original.sh 2.7182818284 2 6 /tmp/ries-original
           ./tests/compare_with_original.sh 1.6180339887 2 6 /tmp/ries-original
+
+  test-web:
+    name: Test (built browser UI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: taiki-e/install-action@wasm-pack
+      - run: npm ci --no-fund --no-audit
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:web:smoke:build
+      - name: Check committed CSS is current
+        run: git diff --exit-code -- web/styles.css
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: browser-failure-evidence
+          path: test-results/
+
+  test-installed-consumers:
+    name: Test (installed release consumers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: taiki-e/install-action@wasm-pack
+      - run: rustup toolchain install nightly --profile minimal --component rust-src --target wasm32-unknown-unknown
+      - run: npm ci --no-fund --no-audit
+      - run: npx playwright install --with-deps chromium
+      - name: Smoke-test packaged and installed consumers at this commit
+        run: python3 scripts/test_release_consumers.py --output "$RUNNER_TEMP/ries-consumers"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: installed-consumers-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/ries-consumers/*.stdout
+            ${{ runner.temp }}/ries-consumers/*.stderr
+            ${{ runner.temp }}/ries-consumers/*.json
+            ${{ runner.temp }}/ries-consumers/*.crate
+            ${{ runner.temp }}/ries-consumers/*.tgz
+            ${{ runner.temp }}/ries-consumers/cli/bin/*
+            ${{ runner.temp }}/ries-consumers/wheels/*
+          retention-days: 90

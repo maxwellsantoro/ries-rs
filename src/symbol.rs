@@ -903,6 +903,20 @@ mod tests {
     /// Weights must match original RIES calibration so that the complexity
     /// scale has the same meaning — preventing expression count explosion.
     #[test]
+    fn documented_default_weights_match_implementation() {
+        let doc = include_str!("../docs/COMPLEXITY.md");
+        for symbol in Symbol::ALL {
+            if symbol.user_constant_index().is_none() && symbol.user_function_index().is_none() {
+                let row = format!("| {:?} | {} |", symbol, symbol.default_weight());
+                assert!(
+                    doc.lines().any(|line| line == row),
+                    "missing weight row: {row}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_weights_match_original_ries() {
         // Digits: original RIES uses 10/13/15/16/17/18/18/19/19
         assert_eq!(Symbol::One.default_weight(), 10);

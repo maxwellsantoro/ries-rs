@@ -84,7 +84,8 @@ cargo build --features wasm --locked
 Web UI smoke test when touching `web/`, `src/wasm.rs`, or packaging:
 
 ```bash
-npm install
+npm ci
+npx playwright install chromium
 npm run test:web:smoke:build
 ```
 
@@ -117,3 +118,17 @@ If your change affects a public interface, update the matching docs:
 - Python API: `docs/PYTHON_BINDINGS.md`
 - WASM/browser surface: `docs/WASM_BINDINGS.md`, `web/README.md`
 - release process or artifacts: `RELEASING.md`, `docs/releases/`, `CHANGELOG.md`
+
+Independent checks and experiment tooling:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*py'
+cargo test --locked --test stop_contract
+cargo build --release --locked
+python3 scripts/qualify_search.py --output output/qualification
+```
+
+See [QUALIFICATION.md](docs/QUALIFICATION.md) for the exact-arithmetic certificate
+grammar, historical differential scope, evidence format, and Linux resource limits.
+The 50% line-coverage threshold is an aggregate regression floor; it is not a
+correctness or high-risk-path coverage claim.

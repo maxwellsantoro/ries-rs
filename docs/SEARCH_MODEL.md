@@ -572,3 +572,36 @@ admission, including when refinement is disabled. The Newton entry point uses
 the same range check. A loose residual threshold near an extremum is insufficient
 to establish existence of a root; `tests/numeric_contract.rs` includes an
 out-of-range regression that failed before this guard.
+
+## Independent qualification and resource limits
+
+[QUALIFICATION.md](QUALIFICATION.md) documents the finite matcher corpus,
+randomized tiny-grammar analytic oracle, historical polynomial differential,
+experimental rational root certificates, and Linux address-space supervisor.
+CLI JSON includes `target_literal` and a candidate-window histogram; high-precision
+reevaluation still starts from the parsed `f64`, not that original decimal text.
+No narrower candidate gate or new completeness claim is introduced by these tools.
+
+## Decimal input, verification requests, and adaptive bounds
+
+CLI decimal input and WASM `targetText` use `target::validate_decimal_target`.
+It compares exact decimal integers to the exact binary f64 value without rounded
+subtraction. With match-all-digits enabled, parsing error must be at most half
+the last typed decimal place. Nonzero input rounded to zero is always rejected.
+These checks protect the requested input precision; accepted results still carry
+numerical exactness, not symbolic proof. The shared check bounds input length to
+4096 characters. An independent Python `Fraction` oracle exercises 110 boundary
+and seeded cases in CI (`scripts/check_decimal_boundary.py`).
+
+Explicit CLI verification requests fail when unavailable unless
+`--allow-unverified` is supplied; fallback JSON then records unavailable status.
+The flag is preserved in self-contained replay arguments.
+
+Adaptive generation deliberately grows independently of supplied fixed bounds.
+Its statistics retain actual final per-side bounds; JSON and manifests use those
+as `max_lhs_complexity` and `max_rhs_complexity`. JSON also records requested
+bounds, and manifest replay metadata stores `requested_complexity_bounds`.
+CLI adaptive and one-sided modes reject `--streaming`, `--turbo`, and memory-hint
+flags, as well as each other. Their fixed corpus case compares the applicable
+serial/parallel adaptive paths and checks every returned side against its reported
+bound using the manifest's effective symbol weights.

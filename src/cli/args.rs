@@ -17,6 +17,10 @@ use crate::udf;
 #[command(version)]
 #[command(about = "Find algebraic equations given their solution", long_about = None)]
 pub struct Args {
+    /// Fail on invalid custom definitions, overrides, or ignored configuration
+    #[arg(long = "strict-config")]
+    pub strict_config: bool,
+
     /// Target value to find equations for (optional if using --eval-expression)
     pub target: Option<f64>,
 
@@ -124,7 +128,7 @@ pub struct Args {
     /// Materialized serial and turbo runs return the same ranked matches.
     /// Turbo can materialize larger searches before switching to streaming.
     /// First-hit options such as `--stop-at-exact` use serial matching.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["adaptive", "one_sided"])]
     pub turbo: bool,
 
     /// Force deterministic output (disables parallelism, uses stable sorting)
@@ -134,7 +138,7 @@ pub struct Args {
 
     /// Use streaming search for lower memory usage at high complexity levels
     /// Streaming processes expressions on-the-fly instead of accumulating in memory
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["adaptive", "one_sided"])]
     pub streaming: bool,
 
     /// Merge LHS expressions with the same value and derivative in batch searches (may change results)
@@ -144,7 +148,7 @@ pub struct Args {
     /// Use adaptive search (like original RIES) for better precision
     /// Iteratively expands LHS/RHS complexity to match original RIES expression counts
     /// Generates ~500K expressions at level 2 (vs ~3K with default mode)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "one_sided")]
     pub adaptive: bool,
 
     /// Use report mode with categorized output (default: true)
@@ -285,6 +289,10 @@ pub struct Args {
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub precision: Option<u32>,
 
+    /// Explicitly accept unavailable high-precision verification, reported in JSON
+    #[arg(long, requires = "precision")]
+    pub allow_unverified: bool,
+
     /// Threshold for pruning LHS expressions with near-zero values (default: 1e-4)
     #[arg(long)]
     pub zero_threshold: Option<f64>,
@@ -338,11 +346,11 @@ pub struct Args {
     pub max_equate_value: Option<f64>,
 
     /// Memory budget hint used by streaming fallback heuristics (e.g. 512M, 2G)
-    #[arg(long = "max-memory")]
+    #[arg(long = "max-memory", conflicts_with_all = ["adaptive", "one_sided"])]
     pub max_memory: Option<String>,
 
     /// Threshold used with --max-memory to trigger streaming fallback
-    #[arg(long = "memory-abort-threshold")]
+    #[arg(long = "memory-abort-threshold", conflicts_with_all = ["adaptive", "one_sided"])]
     pub memory_abort_threshold: Option<f64>,
 
     /// Maximum number of trig operators allowed in accepted matches
@@ -354,7 +362,7 @@ pub struct Args {
     pub min_equate_value: Option<f64>,
 
     /// Lower memory bound hint used by streaming fallback heuristics
-    #[arg(long = "min-memory")]
+    #[arg(long = "min-memory", conflicts_with_all = ["adaptive", "one_sided"])]
     pub min_memory: Option<String>,
 
     /// Disable canonical simplification even if requested elsewhere

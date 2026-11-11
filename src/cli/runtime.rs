@@ -50,7 +50,100 @@ fn evaluate_and_print(expr_str: &str, x: f64, context: &EvalContext<'_>) -> Resu
     }
 }
 
+fn configuration_error(args: &Args, message: String) -> Result<(), CliExit> {
+    if args.strict_config {
+        Err(CliExit::config(format!("Error: {message}")))
+    } else {
+        eprintln!("Warning: {message}");
+        Ok(())
+    }
+}
+
+/// Reject inputs that permissive compatibility parsing would otherwise ignore.
+pub fn validate_strict_config(args: &Args) -> Result<(), CliExit> {
+    if !args.strict_config {
+        return Ok(());
+    }
+    let invalid = |message: String| CliExit::config(format!("Error: {message}"));
+    for (label, spec) in [
+        ("--symbol-weights", &args.symbol_weights),
+        ("--symbol-names", &args.symbol_names),
+    ] {
+        if let Some(spec) = spec {
+            if spec.trim().is_empty() {
+                return Err(invalid(format!("{label} cannot be empty")));
+            }
+            for part in spec.split_whitespace() {
+                let fields = part.strip_prefix(':').and_then(|s| s.split_once(':'));
+                if !fields
+                    .is_some_and(|(symbol, value)| symbol.chars().count() == 1 && !value.is_empty())
+                {
+                    return Err(invalid(format!("Invalid {label} entry: {part}")));
+                }
+            }
+        }
+    }
+    for (label, spec) in [
+        ("--max-memory", &args.max_memory),
+        ("--min-memory", &args.min_memory),
+    ] {
+        if let Some(spec) = spec {
+            if !super::parse_memory_size_bytes(spec).is_some_and(|n| n > 0) {
+                return Err(invalid(format!("Invalid {label}: {spec}")));
+            }
+        }
+    }
+    if args
+        .memory_abort_threshold
+        .is_some_and(|t| !t.is_finite() || !(0.0..=1.0).contains(&t))
+    {
+        return Err(invalid(
+            "--memory-abort-threshold must be finite and between 0 and 1".into(),
+        ));
+    }
+    if args.memory_abort_threshold.is_some() && args.max_memory.is_none() {
+        return Err(invalid(
+            "--memory-abort-threshold requires --max-memory".into(),
+        ));
+    }
+    if args
+        .trig_argument_scale
+        .is_some_and(|s| !s.is_finite() || s == 0.0)
+    {
+        return Err(invalid(
+            "--trig-argument-scale must be finite and non-zero".into(),
+        ));
+    }
+    #[cfg(not(feature = "highprec"))]
+    if args.precision.is_some() && !args.allow_unverified {
+        return Err(invalid(
+            "--precision requires a build with the highprec feature".into(),
+        ));
+    }
+    for (label, spec) in [
+        ("--only-symbols", &args.only_symbols),
+        ("--exclude", &args.exclude),
+        ("--enable", &args.enable),
+        ("--S-RHS", &args.only_symbols_rhs),
+        ("--N-RHS", &args.exclude_rhs),
+        ("--E-RHS", &args.enable_rhs),
+    ] {
+        if let Some(spec) = spec {
+            if (label == "--enable" || label == "--E-RHS") && spec == "all" {
+                continue;
+            }
+            for c in spec.chars() {
+                if crate::symbol::Symbol::from_postfix_char(c).is_none() {
+                    return Err(invalid(format!("Unknown symbol '{c}' in {label}")));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn load_runtime_profile(args: &Args, profile_arg: Option<&str>) -> Result<Profile, CliExit> {
+    validate_strict_config(args)?;
     let mut profile = if let Some(profile_path) = profile_arg {
         Profile::from_file(profile_path).map_err(|e| CliExit::config(e.to_string()))?
     } else {
@@ -79,34 +172,37 @@ pub fn load_runtime_profile(args: &Args, profile_arg: Option<&str>) -> Result<Pr
 
     for constant_spec in &args.user_constant {
         if let Err(e) = parse_user_constant_from_cli(&mut profile, constant_spec) {
-            eprintln!(
-                "Warning: Failed to parse user constant '{}': {}",
-                constant_spec, e
-            );
+            configuration_error(
+                args,
+                format!("Failed to parse user constant '{constant_spec}': {e}"),
+            )?;
         }
     }
 
     for func_spec in &args.define {
         if let Err(e) = parse_user_function_from_cli(&mut profile, func_spec) {
-            eprintln!(
-                "Warning: Failed to parse user function '{}': {}",
-                func_spec, e
-            );
+            configuration_error(
+                args,
+                format!("Failed to parse user function '{func_spec}': {e}"),
+            )?;
         }
     }
 
     if let Some(spec) = &args.symbol_weights {
         if let Err(e) = parse_symbol_weights_from_cli(&mut profile, spec) {
-            eprintln!(
-                "Warning: Failed to parse --symbol-weights '{}': {}",
-                spec, e
-            );
+            configuration_error(
+                args,
+                format!("Failed to parse --symbol-weights '{spec}': {e}"),
+            )?;
         }
     }
 
     if let Some(spec) = &args.symbol_names {
         if let Err(e) = parse_symbol_names_from_cli(&mut profile, spec) {
-            eprintln!("Warning: Failed to parse --symbol-names '{}': {}", spec, e);
+            configuration_error(
+                args,
+                format!("Failed to parse --symbol-names '{spec}': {e}"),
+            )?;
         }
     }
 

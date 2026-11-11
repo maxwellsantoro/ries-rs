@@ -24,7 +24,7 @@ guidance.
 From the repository root:
 
 ```bash
-npm install
+npm ci
 rustup toolchain install nightly
 ```
 
@@ -39,6 +39,9 @@ npm run build
 ```
 
 This produces `pkg/ries_rs.js` and `pkg/ries_rs_bg.wasm`.
+Run `npm run build:css` after editing utility classes; the checked-in
+`web/styles.css` is compiled with the pinned Tailwind dependency. The browser
+loads static CSS and does not run a Tailwind compiler.
 
 ## Serve From The Repo
 
@@ -66,6 +69,7 @@ npm run build:web:site
 This creates:
 
 - `dist/web-site/index.html`
+- `dist/web-site/styles.css`
 - `dist/web-site/pkg/ries_rs.js`
 - `dist/web-site/pkg/ries_rs_bg.wasm`
 
@@ -83,6 +87,7 @@ from the repository checkout.
 Build the static bundle and run the Playwright smoke tests:
 
 ```bash
+npx playwright install chromium
 npm run test:web:smoke:build
 ```
 
@@ -123,3 +128,7 @@ The UI restores state from URL parameters for shared links. Example:
 ```
 ?target=3.14159&level=3&preset=analytic-nt&max-matches=20&advanced=1
 ```
+
+CI runs the built browser suite, including a mobile viewport, and checks that
+committed CSS matches a fresh build. Results explicitly explain the numerical
+meaning of “exact”; they are not proof certificates.

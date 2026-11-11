@@ -99,7 +99,14 @@ Notes:
   not the CLI's `-l/--level` mapping (`35 + 10*L`).
 - Non-threaded WASM builds search sequentially; threaded builds can use the
   parallel engine after `initThreadPool(...)`.
-- With `matchAllDigits`, `targetText` preserves entered precision; without it the shortest round-trip number spelling determines tolerance.
+- With `matchAllDigits`, `targetText` determines the requested last-digit tolerance.
+  The exact decimal is checked against the exact binary value: rounding loss
+  beyond half that last decimal place is rejected. Long zero padding on an exact
+  representable value is allowed. This does not create an arbitrary-precision target.
+- Nonzero `targetText` that underflows to zero is rejected even without
+  `matchAllDigits`. Numeric-only callers already pass a JavaScript f64; lost
+  spelling cannot be reconstructed. With no `targetText`, match-all-digits uses
+  the shortest round-trip spelling of that numeric value.
 - `target` must be finite; `NaN` and `Infinity` return an error.
 
 ### API vs CLI level scale

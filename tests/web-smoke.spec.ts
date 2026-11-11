@@ -24,7 +24,15 @@ async function runSmokeTest(page: Page, entryPath: string, screenshotName: strin
 
   await page.goto(entryPath, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#search-button:not([disabled])");
+  await expect(page).toHaveTitle("RIES-RS • Find Equations for Any Number");
+  await expect(page.locator("#numerical-evidence-note")).toBeVisible();
+  expect(await page.locator('script[src*="tailwind"]').count()).toBe(0);
+  expect(await page.evaluate(() => typeof (window as any).tailwind)).toBe("undefined");
+  await expect(page.locator('link[href="./styles.css"]')).toHaveCount(1);
 
+  const screenshotDir = path.join(process.cwd(), "test-results", "playwright");
+  fs.mkdirSync(screenshotDir, { recursive: true });
+  await page.screenshot({ path: path.join(screenshotDir, screenshotName.replace(".png", "-initial.png")), fullPage: false });
   await expect(page.locator("#worker-status")).toContainText("WASM ready");
   await expect(page.getByText("Built-in constants the solver can represent directly.")).toBeVisible();
   await expect(page.getByRole("button", { name: /Speed of light/ })).toHaveCount(0);
@@ -127,12 +135,9 @@ async function runSmokeTest(page: Page, entryPath: string, screenshotName: strin
   await expect(page.locator("#results-container")).toBeVisible();
   await expect(page.locator("#text-output-container")).toBeHidden();
 
-  const screenshotDir = path.join(process.cwd(), "output", "playwright");
-  fs.mkdirSync(screenshotDir, { recursive: true });
-  await page.screenshot({
-    path: path.join(screenshotDir, screenshotName),
-    fullPage: true,
-  });
+  await expect(page.locator("#results-container .katex-error")).toHaveCount(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: path.join(screenshotDir, screenshotName), fullPage: false });
 
   expect(consoleErrors).toEqual([]);
   expect(externalCdnRequests).toEqual([]);
@@ -273,6 +278,8 @@ test("indexed roots render and copy as grouped LaTeX", async ({ page }) => {
           { lhs: "x", rhs: '(3"/2)"/(4"/5)', lhs_postfix: "x", rhs_postfix: "32v45vv" },
           { lhs: "x", rhs: "1", solve_for_x: 'x = sqrt(2)+3"/phi', solve_for_x_postfix: "2q3fv+" },
           { lhs: "x", rhs: "sinpi(2)+pi", lhs_postfix: "x", rhs_postfix: "2Sp+" },
+          { lhs: "x", rhs: "pi^pi^2", lhs_postfix: "x", rhs_postfix: "pp2^^" },
+          { lhs: "x", rhs: "(pi^pi)^2", lhs_postfix: "x", rhs_postfix: "pp^s" },
         ].map(match => ({ ...match, x_value: 1, error: 0, complexity: 1, constants: [] })) });
       };` });
   });
@@ -280,7 +287,7 @@ test("indexed roots render and copy as grouped LaTeX", async ({ page }) => {
   await page.waitForSelector("#search-button:not([disabled])");
   await page.fill("#target", "1");
   await page.click("#search-button");
-  await expect(page.locator('[data-format="latex"]')).toHaveCount(5);
+  await expect(page.locator('[data-format="latex"]')).toHaveCount(7);
   const values = await page.locator('[data-format="latex"]').evaluateAll(
     buttons => buttons.map(button => (button as HTMLElement).dataset.value),
   );
@@ -290,8 +297,10 @@ test("indexed roots render and copy as grouped LaTeX", async ({ page }) => {
     String.raw`x = \sqrt[{\sqrt[{3}]{2}}]{\sqrt[{4}]{5}}`,
     String.raw`x = \sqrt{2}+\sqrt[{3}]{\varphi}`,
     String.raw`x = \sin(\pi \cdot 2)+\pi`,
+    String.raw`x = \pi^{\pi^{2}}`,
+    String.raw`x = (\pi^{\pi})^{2}`,
   ]);
-  await expect(page.locator("#results-container .katex")).toHaveCount(5);
+  await expect(page.locator("#results-container .katex")).toHaveCount(7);
   await expect(page.locator("#results-container .katex-error")).toHaveCount(0);
 });
 
@@ -352,4 +361,28 @@ test("isolated opt-in loads the threaded worker package", async ({ page, context
   await page.waitForSelector("#search-button:not([disabled])");
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
   await expect(page.locator("#worker-status")).toContainText("threads");
+});
+
+test("built site keeps static styles and search usable on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await runSmokeTest(page, "/dist/web-site/index.html", "web-site-mobile.png");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("decimal target loss is rejected through the real worker", async ({ page }) => {
+  await page.goto("/web/");
+  await page.waitForSelector("#search-button:not([disabled])");
+  await page.click("#advanced-toggle");
+  await page.check("#match-all-digits");
+  await page.fill("#level", "0");
+  await page.fill("#target", "1.000000000000000000000000000001");
+  await page.click("#search-button");
+  await expect(page.locator("#status")).toContainText("last-digit tolerance");
+  await expect(page.locator("#results-section")).toBeHidden();
+  await page.fill("#target", "1e-400");
+  await page.click("#search-button");
+  await expect(page.locator("#status")).toContainText("underflows");
+  await page.fill("#target", "1.000000000000000000000000000000");
+  await page.click("#search-button");
+  await expect(page.locator("#results-section")).toBeVisible();
 });

@@ -40,3 +40,5 @@ For published install and release surfaces, trust these in order:
 1. crates.io for the Rust package (`ries`)
 2. PyPI for the Python package (`ries-rs`)
 3. GitHub Releases for native binaries and WASM artifacts
+
+- [QUALIFICATION.md](QUALIFICATION.md): independent search checks, fixed-corpus evidence, experimental root certificates, and enforced Linux resource limits.

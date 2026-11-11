@@ -10,8 +10,15 @@ permissions:
   id-token: write
 
 jobs:
+  test-release:
+    name: Test exact release commit
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   validate-tag:
     name: Validate release tag
+    needs: test-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -110,7 +117,7 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install Node dependencies
-        run: npm install --no-fund --no-audit
+        run: npm ci --no-fund --no-audit
 
       - name: Build WASM
         run: npm run build:all
@@ -264,7 +271,7 @@ jobs:
 
   publish-python:
     name: Publish Python distributions to PyPI
-    needs: [build-python, build-python-sdist]
+    needs: [build-binaries, build-wasm, build-python, build-python-sdist]
     runs-on: ubuntu-latest
     environment:
       name: pypi

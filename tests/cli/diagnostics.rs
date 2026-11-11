@@ -267,13 +267,14 @@ fn test_report_mode_honors_format() {
 }
 
 #[test]
-fn test_no_slow_messages_suppresses_precision_warning() {
+fn explicit_unverified_fallback_respects_no_slow_messages() {
     let output = run_ries_raw(&[
         "2.5",
         "--report",
         "false",
         "--max-matches",
         "1",
+        "--allow-unverified",
         "--precision",
         "256",
         "--no-slow-messages",
@@ -448,4 +449,255 @@ fn test_trig_argument_scale_changes_evaluation() {
         "expected scaled trig argument to change evaluation\n{}",
         scaled_stdout
     );
+}
+
+#[test]
+fn strict_configuration_rejects_ignored_or_invalid_inputs() {
+    for options in [
+        vec!["--define", "4:outer:wrapper:H"],
+        vec!["-X", "invalid"],
+        vec!["--symbol-weights", "garbage"],
+        vec!["--symbol-weights", ":pp:25"],
+        vec!["--symbol-weights", ":p:bad"],
+        vec!["--symbol-names", ":pp:PI"],
+        vec!["--max-memory", "bogus"],
+        vec!["--memory-abort-threshold", "1.5"],
+        vec!["--trig-argument-scale", "0"],
+        vec!["-S", "x?"],
+    ] {
+        let mut args = vec!["2", "--strict-config", "--json", "--classic"];
+        args.extend(options);
+        let output = run_ries_raw(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(
+            output.stdout.is_empty(),
+            "invalid configuration started a search: {args:?}"
+        );
+    }
+    let (stdout, _) = run_ries(&[
+        "2",
+        "--strict-config",
+        "--json",
+        "--classic",
+        "--symbol-weights",
+        ":p:25 :e:30",
+    ]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap()["results"][0]["equation"],
+        "x = 2"
+    );
+    // Permissive compatibility mode remains available.
+    let (_, stderr) = run_ries(&["2", "--classic", "--define", "4:outer:wrapper:H"]);
+    assert!(stderr.contains("Nested user-function"));
+}
+
+#[test]
+fn json_preserves_original_decimal_literal() {
+    let (stdout, _) = run_ries(&["2.00000000000000000000", "--json", "--classic"]);
+    let data: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(data["target_literal"], "2.00000000000000000000");
+}
+
+#[test]
+fn decimal_precision_loss_and_underflow_are_rejected_before_search() {
+    for args in [
+        vec!["1.000000000000000000000000000001", "--match-all-digits"],
+        vec!["-1.000000000000000000000000000001", "--match-all-digits"],
+        vec!["1e-400"],
+        vec!["-1e-400"],
+    ] {
+        let mut args = args;
+        let target = args.remove(0);
+        args.extend(["--json", "--report=false", "-l0", "-Sx1", "--", target]);
+        let output = run_ries_raw(&args);
+        assert!(!output.status.success(), "accepted {args:?}");
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("tolerance") || error.contains("underflows"),
+            "{error}"
+        );
+    }
+    let (stdout, _) = run_ries(&[
+        "1.000000000000000000000000000000",
+        "--match-all-digits",
+        "--json",
+        "-l0",
+        "-Sx1",
+    ]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap()["results"][0]["exact"],
+        true
+    );
+}
+
+#[test]
+fn precision_availability_requires_explicit_fallback() {
+    let output = run_ries_raw(&["2", "--json", "--precision", "53", "--no-slow-messages"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let (stdout, _) = run_ries(&[
+        "2",
+        "--json",
+        "--classic",
+        "--precision",
+        "53",
+        "--allow-unverified",
+    ]);
+    let data: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        data["high_precision_verification"]["results"][0]["status"],
+        "unavailable"
+    );
+    assert_eq!(
+        data["high_precision_verification"]["results"][0]["is_verified"],
+        false
+    );
+    #[cfg(not(feature = "highprec"))]
+    {
+        let output = run_ries_raw(&["2", "--json", "--precision", "128"]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn conflicting_search_modes_cannot_silently_ignore_memory_hints() {
+    for mode in ["--adaptive", "--one-sided"] {
+        for options in [
+            vec!["--streaming"],
+            vec!["--turbo"],
+            vec!["--max-memory", "1M"],
+            vec!["--min-memory", "1M"],
+            vec!["--memory-abort-threshold", "0.5"],
+        ] {
+            let mut args = vec!["2", "--json", mode];
+            args.extend(options);
+            let output = run_ries_raw(&args);
+            assert_eq!(output.status.code(), Some(2), "{args:?}");
+            assert!(output.stdout.is_empty());
+        }
+    }
+}
+
+#[test]
+fn adaptive_json_and_manifest_report_actual_and_requested_bounds() {
+    let path = unique_tmp_path("adaptive-bounds");
+    let (stdout, _) = run_ries(&[
+        "2.506314",
+        "--adaptive",
+        "--deterministic",
+        "-l0",
+        "-Sx12+",
+        "--max-match-distance",
+        "0.1",
+        "-n10",
+        "--json",
+        "--report=false",
+        "--emit-manifest",
+        path.to_str().unwrap(),
+    ]);
+    let data: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(data["matcher"], "adaptive");
+    assert_eq!(data["requested_max_lhs_complexity"], 35);
+    assert_eq!(data["requested_max_rhs_complexity"], 35);
+    assert!(data["max_lhs_complexity"].as_u64().unwrap() > 35);
+    assert_eq!(
+        data["max_lhs_complexity"],
+        manifest["config"]["max_lhs_complexity"]
+    );
+    assert_eq!(
+        data["max_rhs_complexity"],
+        manifest["config"]["max_rhs_complexity"]
+    );
+    assert_eq!(
+        manifest["config"]["replay"]["requested_complexity_bounds"]["lhs"],
+        35
+    );
+    for row in data["results"].as_array().unwrap() {
+        let lhs = ries_rs::Expression::parse(row["lhs_postfix"].as_str().unwrap()).unwrap();
+        let rhs = ries_rs::Expression::parse(row["rhs_postfix"].as_str().unwrap()).unwrap();
+        assert!(u64::from(lhs.complexity()) <= data["max_lhs_complexity"].as_u64().unwrap());
+        assert!(u64::from(rhs.complexity()) <= data["max_rhs_complexity"].as_u64().unwrap());
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn pslq_cannot_bypass_decimal_validation() {
+    for (target, precision) in [
+        ("1e-400", false),
+        ("1.000000000000000000000000000001", true),
+    ] {
+        let mut args = vec![target, "--pslq", "--pslq-max-coeff", "10"];
+        if precision {
+            args.push("--match-all-digits");
+        }
+        let output = run_ries_raw(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            output.stdout.is_empty(),
+            "special mode printed a result for {target}"
+        );
+    }
+}
+
+#[test]
+fn manifests_preserve_decimal_spelling_and_signed_zero() {
+    for literal in ["1.000000000000000000000000000000", "-0"] {
+        let path = unique_tmp_path("target-literal");
+        run_ries(&[
+            "--match-all-digits",
+            "-l0",
+            "-Sx1",
+            "--json",
+            "--emit-manifest",
+            path.to_str().unwrap(),
+            "--",
+            literal,
+        ]);
+        let data: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(data["config"]["target_literal"], literal);
+        assert_eq!(data["config"]["replay"]["cli_args"][0], literal);
+        let Some(python) = super::basics::replay_python() else {
+            let _ = std::fs::remove_file(path);
+            continue;
+        };
+        let script = format!("{}/tools/replay_manifest.py", env!("CARGO_MANIFEST_DIR"));
+        let output = Command::new(python)
+            .args([
+                script.as_str(),
+                path.to_str().unwrap(),
+                "--bin",
+                env!("CARGO_BIN_EXE_ries-rs"),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("identical f64 bit patterns"));
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[test]
+fn evaluation_point_cannot_bypass_decimal_validation() {
+    for (point, precision) in [
+        ("1e-400", false),
+        ("1.000000000000000000000000000001", true),
+    ] {
+        let mut args = vec!["--eval-expression", "x", "--at", point];
+        if precision {
+            args.push("--match-all-digits");
+        }
+        let output = run_ries_raw(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
 }

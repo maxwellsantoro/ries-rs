@@ -165,3 +165,37 @@ fn test_preset_constants_are_named() {
         .iter()
         .all(|m| !m.lhs.contains("u0") && !m.rhs.contains("u0")));
 }
+
+#[wasm_bindgen_test]
+fn test_decimal_precision_and_underflow_are_checked() {
+    let options = search_options(0, 1);
+    Reflect::set(
+        &options,
+        &JsValue::from_str("matchAllDigits"),
+        &JsValue::TRUE,
+    )
+    .unwrap();
+    for text in [
+        "1.000000000000000000000000000001",
+        "-1.000000000000000000000000000001",
+        "1e-400",
+    ] {
+        Reflect::set(
+            &options,
+            &JsValue::from_str("targetText"),
+            &JsValue::from_str(text),
+        )
+        .unwrap();
+        assert!(
+            search(text.parse().unwrap(), Some(options.clone())).is_err(),
+            "{text}"
+        );
+    }
+    Reflect::set(
+        &options,
+        &JsValue::from_str("targetText"),
+        &JsValue::from_str("1.000000000000000000000000000000"),
+    )
+    .unwrap();
+    assert!(search(1.0, Some(options)).is_ok());
+}

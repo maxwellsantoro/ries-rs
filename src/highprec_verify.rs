@@ -1,7 +1,7 @@
 //! High-precision verification for match refinement
 //!
 //! After f64 search finds candidate matches, this module verifies them
-//! at higher precision to distinguish true formulas from numerical coincidences.
+//! at higher precision to corroborate numerical matches; this is not symbolic proof.
 
 use crate::search::Match;
 #[cfg(feature = "highprec")]
@@ -20,7 +20,8 @@ pub struct VerificationResult {
     /// Estimated absolute root error. Infinity means a failed verification.
     /// `None` means no high-precision evaluation was available.
     pub highprec_error: Option<f64>,
-    /// Whether the match is verified at high precision
+    /// Whether the match passed numerical verification at high precision.
+    /// False when verification is unavailable; see [`Self::status`].
     pub is_verified: bool,
     /// Relative change in error (highprec_error / original.error)
     /// Values >> 1 indicate the f64 match was an impostor
@@ -60,7 +61,7 @@ impl VerificationResult {
         Self {
             original: m,
             highprec_error: None,
-            is_verified: true, // Assume verified in f64 mode
+            is_verified: false,
             error_ratio: None,
         }
     }
@@ -69,7 +70,8 @@ impl VerificationResult {
 /// Verify matches at high precision
 ///
 /// When the `highprec` feature is enabled, this re-evaluates matches
-/// using arbitrary precision to verify they are true formulas.
+/// using arbitrary precision for numerical corroboration, not symbolic proof.
+/// The target is the already-parsed `f64`; additional decimal digits are not recovered.
 #[cfg(feature = "highprec")]
 pub fn verify_matches_highprec(
     matches: Vec<Match>,
@@ -532,7 +534,8 @@ mod tests {
         };
 
         let result = VerificationResult::f64_result(m);
-        assert!(result.is_verified);
+        assert!(!result.is_verified);
+        assert_eq!(result.status(), VerificationStatus::Unavailable);
         assert!(result.highprec_error.is_none());
     }
 

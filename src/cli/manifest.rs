@@ -17,6 +17,7 @@ use super::json_types::{effective_thread_count, ranking_mode_name, uses_parallel
 use super::Args;
 
 /// Build a manifest from the effective settings and the ranked results.
+#[allow(clippy::too_many_arguments)]
 pub fn build_manifest(
     args: &Args,
     gen: &GenConfig,
@@ -25,14 +26,20 @@ pub fn build_manifest(
     max_matches: usize,
     stats: &SearchStats,
     matches: &[Match],
+    target_literal: Option<&str>,
 ) -> RunManifest {
     let matcher = stats.matcher;
     let parallel = uses_parallelism(matcher, args.parallel && !args.deterministic, gen);
     let config = SearchConfigInfo {
         target: search.target,
+        target_literal: target_literal.map(str::to_owned),
         level,
-        max_lhs_complexity: gen.max_lhs_complexity,
-        max_rhs_complexity: gen.max_rhs_complexity,
+        max_lhs_complexity: stats
+            .effective_max_lhs_complexity
+            .unwrap_or(gen.max_lhs_complexity),
+        max_rhs_complexity: stats
+            .effective_max_rhs_complexity
+            .unwrap_or(gen.max_rhs_complexity),
         deterministic: args.deterministic,
         parallel,
         max_error: search.max_error,
@@ -60,7 +67,7 @@ pub fn build_manifest(
             .only_symbols
             .as_ref()
             .map(|s| s.chars().map(|c| c.to_string()).collect()),
-        replay: Some(replay_settings(args, gen, search, parallel)),
+        replay: Some(replay_settings(args, gen, search, parallel, target_literal)),
     };
 
     let results: Vec<MatchInfo> = matches
@@ -110,7 +117,13 @@ fn sorted_set(set: &HashSet<u8>) -> Vec<u8> {
     symbols
 }
 
-fn replay_settings(args: &Args, gen: &GenConfig, search: &SearchConfig, parallel: bool) -> Value {
+fn replay_settings(
+    args: &Args,
+    gen: &GenConfig,
+    search: &SearchConfig,
+    parallel: bool,
+    target_literal: Option<&str>,
+) -> Value {
     let symbol_table: BTreeMap<_, _> = (0..=u8::MAX)
         .filter_map(Symbol::from_byte)
         .map(|symbol| {
@@ -161,7 +174,8 @@ fn replay_settings(args: &Args, gen: &GenConfig, search: &SearchConfig, parallel
         .collect();
 
     json!({
-        "cli_args": replay_cli_args(args, search),
+        "cli_args": replay_cli_args(args, search, target_literal),
+        "requested_complexity_bounds": {"lhs": gen.max_lhs_complexity, "rhs": gen.max_rhs_complexity},
         "generation": {
             "max_length": gen.max_length,
             "min_num_type": gen.min_num_type as u8,
@@ -216,11 +230,17 @@ fn replay_settings(args: &Args, gen: &GenConfig, search: &SearchConfig, parallel
 
 // Record an allowlisted, self-contained invocation. Profile files cannot safely be
 // replayed from an untrusted manifest, and may change after the original run.
-fn replay_cli_args(args: &Args, search: &SearchConfig) -> Option<Vec<String>> {
+fn replay_cli_args(
+    args: &Args,
+    search: &SearchConfig,
+    target_literal: Option<&str>,
+) -> Option<Vec<String>> {
     if args.target.is_none() || args.profile.is_some() || !args.include.is_empty() {
         return None;
     }
-    let mut out = vec![search.target.to_string()];
+    let mut out = vec![target_literal
+        .map(str::to_owned)
+        .unwrap_or_else(|| search.target.to_string())];
     macro_rules! value {
         ($name:literal, $value:expr) => {
             out.push(format!("--{}={}", $name, $value));
@@ -283,6 +303,8 @@ fn replay_cli_args(args: &Args, search: &SearchConfig) -> Option<Vec<String>> {
     for spec in &args.define {
         value!("define", spec);
     }
+    flag!("strict-config", args.strict_config);
+    flag!("allow-unverified", args.allow_unverified);
     flag!("absolute", args.absolute);
     flag!("solve", args.solve);
     flag!("no-solve-for-x", args.no_solve);
