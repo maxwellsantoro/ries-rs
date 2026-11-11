@@ -75,7 +75,7 @@ def main():
         run([python, "-I", "-c", "import ries_rs; assert ries_rs.search(2, level=0, max_matches=1); print(ries_rs.__file__)"])
         receipt["wheel_sha256"] = {p.name: sha(p) for p in (output / "wheels").glob("*.whl")}
 
-        run(["npm", "ci", "--no-fund", "--no-audit"])
+        run(["npm", "ci", "--no-fund", "--no-audit", "--cache", output / "npm-cache"])
         run(["npm", "run", "build:all"], env=dict(os.environ, CARGO_TARGET_DIR=str(output / "build-wasm")))
         package = json.loads(run(["npm", "pack", "--ignore-scripts", "--json", "--pack-destination", output]).stdout)[0]
         tarball = output / package["filename"]

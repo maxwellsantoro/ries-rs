@@ -209,3 +209,5 @@ Consumer validation requires a fresh output directory and distinct explicit Carg
 target directories for packaging, CLI installation, Python, and WASM. Shared
 same-version outputs are not accepted as artifact provenance. Failed receipts
 are retained; reruns use a new directory.
+
+Update npm root metadata structurally (for example `npm version --no-git-tag-version --ignore-scripts`), never with a global version-string replacement in the lockfile. Consumer validation uses a fresh npm cache so tarball integrity is checked against the committed resolution.
