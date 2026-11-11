@@ -168,6 +168,17 @@ For the authoritative option list:
 ries-rs --help
 ```
 
+### Search with a custom profile
+
+The [Fano–Heawood example profile](examples/fano-heawood.ries) gives the search
+names and weights for the Heawood graph’s 14 vertices and 21 edges. From the
+repository root, search for a rounded value of π/21 to see `x = pi/edges`.
+
+```bash
+ries-rs --profile examples/fano-heawood.ries --one-sided --deterministic \
+  --report=false -l0 -n1 0.14959965017094254
+```
+
 ## Project Scope
 
 `ries-rs` is intended to be a disciplined, modern reference implementation:
