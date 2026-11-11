@@ -25,6 +25,8 @@ def main():
         parser.error("output must be outside the source checkout")
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT):
         parser.error("consumer validation requires a clean committed checkout")
+    if output.exists() and any(output.iterdir()):
+        parser.error("a fresh empty output directory is required; preserve previous receipts")
     output.mkdir(parents=True, exist_ok=True)
     receipt = {"schema": "ries-installed-consumers-v1",
                "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
@@ -46,15 +48,15 @@ def main():
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     try:
-        run(["cargo", "package", "--locked"])
+        run(["cargo", "package", "--locked", "--target-dir", output / "build-package"])
         metadata = json.loads(run(["cargo", "metadata", "--no-deps", "--format-version=1"]).stdout)
         version = next(p["version"] for p in metadata["packages"] if p["name"] == "ries")
-        crate = Path(metadata["target_directory"]) / "package" / f"ries-{version}.crate"
+        crate = output / "build-package/package" / f"ries-{version}.crate"
         shutil.copyfile(crate, output / crate.name)
         extracted = output / "crate"
         extracted.mkdir(exist_ok=True)
         run(["tar", "-xzf", output / crate.name, "-C", extracted])
-        run(["cargo", "install", "--path", extracted / f"ries-{version}", "--locked", "--root", output / "cli", "--force"])
+        run(["cargo", "install", "--path", extracted / f"ries-{version}", "--locked", "--root", output / "cli", "--target-dir", output / "build-cli", "--force"])
         cli = output / "cli/bin" / ("ries-rs.exe" if os.name == "nt" else "ries-rs")
         receipt["cli_sha256"] = sha(cli)
         literal = "1.000000000000000000000000000000"
@@ -67,14 +69,14 @@ def main():
             rejected = run([cli, target, "--pslq", "--pslq-max-coeff", "10", *flags], ok=(2,))
             assert not rejected.stdout
 
-        env = dict(os.environ, RIES_PY_TEST_VENV=str(output / "python-env"), RIES_PY_TEST_DIST=str(output / "wheels"))
+        env = dict(os.environ, CARGO_TARGET_DIR=str(output / "build-python"), RIES_PY_TEST_VENV=str(output / "python-env"), RIES_PY_TEST_DIST=str(output / "wheels"))
         run(["bash", ROOT / "scripts/test_ries_py_python.sh", "-q"], env=env)
         python = output / "python-env/bin/python"
         run([python, "-I", "-c", "import ries_rs; assert ries_rs.search(2, level=0, max_matches=1); print(ries_rs.__file__)"])
         receipt["wheel_sha256"] = {p.name: sha(p) for p in (output / "wheels").glob("*.whl")}
 
         run(["npm", "ci", "--no-fund", "--no-audit"])
-        run(["npm", "run", "build:all"])
+        run(["npm", "run", "build:all"], env=dict(os.environ, CARGO_TARGET_DIR=str(output / "build-wasm")))
         package = json.loads(run(["npm", "pack", "--ignore-scripts", "--json", "--pack-destination", output]).stdout)[0]
         tarball = output / package["filename"]
         receipt["npm_sha256"] = sha(tarball)

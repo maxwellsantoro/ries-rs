@@ -204,3 +204,8 @@ CI runs it at the checked-out SHA and retains a commit/tree-bound receipt. The
 browser smoke suite uses the npm-installed WASM for the built-site path.
 No RC review step tags or publishes. Obtain a fresh independent review of that
 immutable source and inspect hosted CI before authorizing a release.
+
+Consumer validation requires a fresh output directory and distinct explicit Cargo
+target directories for packaging, CLI installation, Python, and WASM. Shared
+same-version outputs are not accepted as artifact provenance. Failed receipts
+are retained; reruns use a new directory.
