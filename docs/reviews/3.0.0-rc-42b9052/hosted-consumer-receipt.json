@@ -1,0 +1,208 @@
+{
+  "schema": "ries-installed-consumers-v1",
+  "commit": "42b90521e0808b467e58f9e4c4bbb33d4d0f1b3f",
+  "git_tree": "1b0ab177d1e4e651b0ec60ae4b203e0f381a5b4b",
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "package",
+        "--locked",
+        "--target-dir",
+        "/home/runner/work/_temp/ries-consumers/build-package"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cargo",
+        "metadata",
+        "--no-deps",
+        "--format-version=1"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "tar",
+        "-xzf",
+        "/home/runner/work/_temp/ries-consumers/ries-3.0.0.crate",
+        "-C",
+        "/home/runner/work/_temp/ries-consumers/crate"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cargo",
+        "install",
+        "--path",
+        "/home/runner/work/_temp/ries-consumers/crate/ries-3.0.0",
+        "--locked",
+        "--root",
+        "/home/runner/work/_temp/ries-consumers/cli",
+        "--target-dir",
+        "/home/runner/work/_temp/ries-consumers/build-cli",
+        "--force"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/home/runner/work/_temp/ries-consumers/cli/bin/ries-rs",
+        "1.000000000000000000000000000000",
+        "--classic",
+        "-l0",
+        "-Sx1",
+        "--match-all-digits",
+        "--precision",
+        "53",
+        "--allow-unverified",
+        "--json",
+        "--emit-manifest",
+        "/home/runner/work/_temp/ries-consumers/installed-manifest.json"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/opt/hostedtoolcache/Python/3.11.18/x64/bin/python3",
+        "/home/runner/work/ries-rs/ries-rs/tools/replay_manifest.py",
+        "/home/runner/work/_temp/ries-consumers/installed-manifest.json",
+        "--bin",
+        "/home/runner/work/_temp/ries-consumers/cli/bin/ries-rs"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/home/runner/work/_temp/ries-consumers/cli/bin/ries-rs",
+        "1e-400",
+        "--pslq",
+        "--pslq-max-coeff",
+        "10"
+      ],
+      "returncode": 2
+    },
+    {
+      "argv": [
+        "/home/runner/work/_temp/ries-consumers/cli/bin/ries-rs",
+        "1.000000000000000000000000000001",
+        "--pslq",
+        "--pslq-max-coeff",
+        "10",
+        "--match-all-digits"
+      ],
+      "returncode": 2
+    },
+    {
+      "argv": [
+        "/home/runner/work/_temp/ries-consumers/cli/bin/ries-rs",
+        "1.000000000000001",
+        "--pslq",
+        "--pslq-max-coeff",
+        "10",
+        "--match-all-digits"
+      ],
+      "returncode": 2
+    },
+    {
+      "argv": [
+        "bash",
+        "/home/runner/work/ries-rs/ries-rs/scripts/test_ries_py_python.sh",
+        "-q"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/home/runner/work/_temp/ries-consumers/python-env/bin/python",
+        "-I",
+        "-c",
+        "import ries_rs; assert ries_rs.search(2, level=0, max_matches=1); print(ries_rs.__file__)"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "ci",
+        "--no-fund",
+        "--no-audit",
+        "--cache",
+        "/home/runner/work/_temp/ries-consumers/npm-cache"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "build:all"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "pack",
+        "--ignore-scripts",
+        "--json",
+        "--pack-destination",
+        "/home/runner/work/_temp/ries-consumers"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "install",
+        "--ignore-scripts",
+        "--no-fund",
+        "--no-audit",
+        "--prefix",
+        "/home/runner/work/_temp/ries-consumers/npm-consumer",
+        "/home/runner/work/_temp/ries-consumers/ries-rs-3.0.0.tgz"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "node",
+        "-e",
+        "const m=require('ries-rs'); if(!m.search(2,{level:0,maxMatches:1}).length) throw Error('no results'); console.log(m.version())"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "build:css"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "bash",
+        "/home/runner/work/ries-rs/ries-rs/scripts/build_web_site.sh"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "test:web:smoke"
+      ],
+      "returncode": 0
+    }
+  ],
+  "passed": true,
+  "cli_sha256": "72d3b11aec9bfe44510c14c17740b31c8e12b077c84673774420f87e7ebd2c45",
+  "wheel_sha256": {
+    "ries_rs-3.0.0-cp39-abi3-manylinux_2_34_x86_64.whl": "d7c5069cc13a5524070794a9726f15530ad91d2af241147358393380051257a8"
+  },
+  "npm_sha256": "1ae484466385204d0ac59899b4cf103d368c961d2898d988ed0c6577b1cfd79d",
+  "browser_wasm_sha256": "84e7f3e3df3cb5be0aecae9e1f5099531758af903be073d1a046daefc0a5c522"
+}

@@ -1,0 +1,27 @@
+{
+  "source_commit": "42b90521e0808b467e58f9e4c4bbb33d4d0f1b3f",
+  "source_tree": "1b0ab177d1e4e651b0ec60ae4b203e0f381a5b4b",
+  "independent_review": "separate read-only agent; scoped review, not external human approval",
+  "source_hashes_verified": 165,
+  "local_consumers_passed": true,
+  "hosted_consumers_passed": true,
+  "hosted_ci": {
+    "url": "https://github.com/maxwellsantoro/ries-rs/actions/runs/43105978252",
+    "conclusion": "success",
+    "headSha": "42b90521e0808b467e58f9e4c4bbb33d4d0f1b3f"
+  },
+  "hosted_coverage": {
+    "url": "https://github.com/maxwellsantoro/ries-rs/actions/runs/43105900475",
+    "conclusion": "success",
+    "headSha": "42b90521e0808b467e58f9e4c4bbb33d4d0f1b3f"
+  },
+  "local_matcher_runs": 126,
+  "hosted_matcher_runs": 42,
+  "decimal_oracle_cases": 119,
+  "independent_decimal_oracle_cases": 15005,
+  "artifact_cli_sha256": "d04c9ad140c947b6aa95cbfee009021686a8ef2487e8f29a17c88f52cb37bcad",
+  "qualification_cli_sha256": "d04c9ad140c947b6aa95cbfee009021686a8ef2487e8f29a17c88f52cb37bcad",
+  "archive_sha256": "7ca278db5ea617373bfea76e7fc56542dec1505ea27cb64ea0ce34d24373ffcd",
+  "publication": "hold",
+  "hosted_qualification_note": "All recorded source blobs match the source commit and tracked diff is empty. working_tree_clean=false in that job reflects untracked qualification output under checkout; local qualification and both consumer receipts use clean source checkouts."
+}

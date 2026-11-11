@@ -1,0 +1,15 @@
+{
+  "source_commit": "42b90521e0808b467e58f9e4c4bbb33d4d0f1b3f",
+  "source_tree": "1b0ab177d1e4e651b0ec60ae4b203e0f381a5b4b",
+  "source_files_verified_against_git": 165,
+  "checkout_clean": true,
+  "consumer_passed": true,
+  "packaged_crate_vcs": {
+    "git": {
+      "sha1": "42b90521e0808b467e58f9e4c4bbb33d4d0f1b3f"
+    },
+    "path_in_vcs": ""
+  },
+  "consumer_cli_matches_qualification_binary": true,
+  "source_snapshot_agrees_with_commit": true
+}

@@ -1,0 +1,208 @@
+{
+  "schema": "ries-installed-consumers-v1",
+  "commit": "42b90521e0808b467e58f9e4c4bbb33d4d0f1b3f",
+  "git_tree": "1b0ab177d1e4e651b0ec60ae4b203e0f381a5b4b",
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "package",
+        "--locked",
+        "--target-dir",
+        "/private/tmp/ries-42b9052-consumers/build-package"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cargo",
+        "metadata",
+        "--no-deps",
+        "--format-version=1"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "tar",
+        "-xzf",
+        "/private/tmp/ries-42b9052-consumers/ries-3.0.0.crate",
+        "-C",
+        "/private/tmp/ries-42b9052-consumers/crate"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cargo",
+        "install",
+        "--path",
+        "/private/tmp/ries-42b9052-consumers/crate/ries-3.0.0",
+        "--locked",
+        "--root",
+        "/private/tmp/ries-42b9052-consumers/cli",
+        "--target-dir",
+        "/private/tmp/ries-42b9052-consumers/build-cli",
+        "--force"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private/tmp/ries-42b9052-consumers/cli/bin/ries-rs",
+        "1.000000000000000000000000000000",
+        "--classic",
+        "-l0",
+        "-Sx1",
+        "--match-all-digits",
+        "--precision",
+        "53",
+        "--allow-unverified",
+        "--json",
+        "--emit-manifest",
+        "/private/tmp/ries-42b9052-consumers/installed-manifest.json"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/private/tmp/ries-42b9052-review/tools/replay_manifest.py",
+        "/private/tmp/ries-42b9052-consumers/installed-manifest.json",
+        "--bin",
+        "/private/tmp/ries-42b9052-consumers/cli/bin/ries-rs"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private/tmp/ries-42b9052-consumers/cli/bin/ries-rs",
+        "1e-400",
+        "--pslq",
+        "--pslq-max-coeff",
+        "10"
+      ],
+      "returncode": 2
+    },
+    {
+      "argv": [
+        "/private/tmp/ries-42b9052-consumers/cli/bin/ries-rs",
+        "1.000000000000000000000000000001",
+        "--pslq",
+        "--pslq-max-coeff",
+        "10",
+        "--match-all-digits"
+      ],
+      "returncode": 2
+    },
+    {
+      "argv": [
+        "/private/tmp/ries-42b9052-consumers/cli/bin/ries-rs",
+        "1.000000000000001",
+        "--pslq",
+        "--pslq-max-coeff",
+        "10",
+        "--match-all-digits"
+      ],
+      "returncode": 2
+    },
+    {
+      "argv": [
+        "bash",
+        "/private/tmp/ries-42b9052-review/scripts/test_ries_py_python.sh",
+        "-q"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private/tmp/ries-42b9052-consumers/python-env/bin/python",
+        "-I",
+        "-c",
+        "import ries_rs; assert ries_rs.search(2, level=0, max_matches=1); print(ries_rs.__file__)"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "ci",
+        "--no-fund",
+        "--no-audit",
+        "--cache",
+        "/private/tmp/ries-42b9052-consumers/npm-cache"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "build:all"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "pack",
+        "--ignore-scripts",
+        "--json",
+        "--pack-destination",
+        "/private/tmp/ries-42b9052-consumers"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "install",
+        "--ignore-scripts",
+        "--no-fund",
+        "--no-audit",
+        "--prefix",
+        "/private/tmp/ries-42b9052-consumers/npm-consumer",
+        "/private/tmp/ries-42b9052-consumers/ries-rs-3.0.0.tgz"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "node",
+        "-e",
+        "const m=require('ries-rs'); if(!m.search(2,{level:0,maxMatches:1}).length) throw Error('no results'); console.log(m.version())"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "build:css"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "bash",
+        "/private/tmp/ries-42b9052-review/scripts/build_web_site.sh"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "test:web:smoke"
+      ],
+      "returncode": 0
+    }
+  ],
+  "passed": true,
+  "cli_sha256": "d04c9ad140c947b6aa95cbfee009021686a8ef2487e8f29a17c88f52cb37bcad",
+  "wheel_sha256": {
+    "ries_rs-3.0.0-cp39-abi3-macosx_11_0_arm64.whl": "17bc5536a8635bdec7e179a04f64883dc06995faf69fd68e33b8c5644118c795"
+  },
+  "npm_sha256": "1ba12fb3a3882faeb16f01369eaab04cb55f66fbc925d1b83f885ab66eb3298e",
+  "browser_wasm_sha256": "72f73feae55feb97dfab06d7f6cf9c891b4dce3e7a83f00dca5134aa3a0629be"
+}
