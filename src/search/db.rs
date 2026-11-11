@@ -727,16 +727,27 @@ mod tests {
             EvaluatedExpr::new(expr, at.value, at.derivative, at.num_type)
         };
         let lhs = eval("px-Cr");
-        let rhs = eval("14/Ts");
-        // sec(pi*(pi-x)) >= 1 near pi, while tanpi(1/4)^2 is below 1.
-        assert!(rhs.value < 1.0);
+        // sec(pi*(pi-x)) >= 1 near pi. Use an exact, below-one RHS
+        // rather than tanpi(1/4)^2, whose rounding differs across libm implementations.
         let config = SearchConfig {
             target,
             max_matches: 16,
             max_error: 0.1,
+            user_constants: vec![crate::profile::UserConstant {
+                weight: 1,
+                name: "below_one".into(),
+                description: "platform-independent plateau fixture".into(),
+                value: 1.0_f64.next_down().next_down(),
+                num_type: crate::symbol::NumType::Rational,
+            }],
             ..Default::default()
         };
         let context = config.context();
+        let mut rhs_expr = Expression::new();
+        rhs_expr.push(crate::symbol::Symbol::UserConstant0);
+        let at = crate::eval::evaluate_with_context(&rhs_expr, target, &context.eval).unwrap();
+        let rhs = EvaluatedExpr::new(rhs_expr, at.value, at.derivative, at.num_type);
+        assert!(rhs.value < 1.0);
         let delta = -(lhs.value - rhs.value) / lhs.derivative;
         let hit =
             refine_candidate(&lhs, &rhs, delta, &context).expect("Newton returns a plateau hit");
