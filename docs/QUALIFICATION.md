@@ -157,3 +157,8 @@ over-budget discovery returns unavailable and certificate verification returns
 false. Rational input text is also bounded before conversion. Cancellation can
 make a reduced result small even when the preflight declines it; acceptance of
 every reducible expression is not promised by this experimental tool.
+
+`--pslq --match-all-digits` is explicitly unsupported and returns a configuration
+error before results. Decimal validation still applies to PSLQ targets, but a
+PSLQ residual tolerance is not a general root-distance guarantee. Use ordinary
+numerical search for the match-all-digits result contract.

@@ -337,7 +337,8 @@ pub struct Args {
     #[arg(long = "explicit-multiply")]
     pub explicit_multiply: bool,
 
-    /// Require matches to agree with target precision (uses target significant digits)
+    /// Require numerical-search matches to agree with target precision
+    /// Unsupported with --pslq, whose residual criterion is different
     #[arg(long = "match-all-digits")]
     pub match_all_digits: bool,
 

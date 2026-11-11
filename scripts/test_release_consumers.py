@@ -65,7 +65,7 @@ def main():
         assert json.loads(result.stdout)["high_precision_verification"]["results"][0]["status"] == "unavailable"
         assert json.loads(manifest.read_text())["config"]["target_literal"] == literal
         run([sys.executable, ROOT / "tools/replay_manifest.py", manifest, "--bin", cli])
-        for target, flags in [("1e-400", []), ("1.000000000000000000000000000001", ["--match-all-digits"])]:
+        for target, flags in [("1e-400", []), ("1.000000000000000000000000000001", ["--match-all-digits"]), ("1.000000000000001", ["--match-all-digits"])]:
             rejected = run([cli, target, "--pslq", "--pslq-max-coeff", "10", *flags], ok=(2,))
             assert not rejected.stdout
 

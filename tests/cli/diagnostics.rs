@@ -701,3 +701,17 @@ fn evaluation_point_cannot_bypass_decimal_validation() {
         assert!(output.stdout.is_empty());
     }
 }
+
+#[test]
+fn pslq_rejects_a_root_precision_contract_it_cannot_honor() {
+    let output = run_ries_raw(&[
+        "1.000000000000001",
+        "--match-all-digits",
+        "--pslq",
+        "--pslq-max-coeff",
+        "10",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not supported with --pslq"));
+}

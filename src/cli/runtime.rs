@@ -244,6 +244,11 @@ pub fn handle_special_modes(
     if !target.is_finite() {
         return Err(CliExit::config("Error: TARGET must be finite for PSLQ."));
     }
+    if args.match_all_digits {
+        return Err(CliExit::config(
+            "Error: --match-all-digits is not supported with --pslq; PSLQ uses a residual criterion, not the requested root-distance bound.",
+        ));
+    }
     if args.pslq_max_coeff <= 0 {
         return Err(CliExit::config("Error: --pslq-max-coeff must be positive."));
     }

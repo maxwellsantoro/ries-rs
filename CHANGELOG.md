@@ -13,6 +13,7 @@ changes observable ordering. Package metadata is staged at 3.0.0; this batch
 remains unpublished until the coordinated release in `RELEASING.md`.
 
 ### Fixed
+- Reject PSLQ with match-all-digits instead of silently substituting residual tolerance for a root-distance contract.
 - Validate decimal targets before PSLQ/special-mode dispatch.
 - Preserve original target spelling in manifests and replay arguments; exact replay now requires identical root/error bits, with explicit opt-in tolerance.
 - Bound experimental certificate arithmetic before expensive integer operations.

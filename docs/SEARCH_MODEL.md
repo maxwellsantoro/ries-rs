@@ -605,3 +605,8 @@ CLI adaptive and one-sided modes reject `--streaming`, `--turbo`, and memory-hin
 flags, as well as each other. Their fixed corpus case compares the applicable
 serial/parallel adaptive paths and checks every returned side against its reported
 bound using the manifest's effective symbol weights.
+
+`--pslq --match-all-digits` is explicitly unsupported and returns a configuration
+error before results. Decimal validation still applies to PSLQ targets, but a
+PSLQ residual tolerance is not a general root-distance guarantee. Use ordinary
+numerical search for the match-all-digits result contract.

@@ -384,3 +384,8 @@ Adaptive searches grow their own budgets: JSON `max_lhs_complexity` and
 mapping. Manifests record actual bounds and requested bounds in replay metadata.
 Adaptive and one-sided modes reject streaming, turbo, and memory-hint flags that
 they cannot honor; memory hints still do not impose a hard RSS ceiling.
+
+`--pslq --match-all-digits` is explicitly unsupported and returns a configuration
+error before results. Decimal validation still applies to PSLQ targets, but a
+PSLQ residual tolerance is not a general root-distance guarantee. Use ordinary
+numerical search for the match-all-digits result contract.
