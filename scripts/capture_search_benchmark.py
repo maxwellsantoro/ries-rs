@@ -42,7 +42,7 @@ def repo_relative(path: Path) -> str:
 
 
 def command_output(cmd: list[str]) -> str:
-    return run_command(cmd).stdout.strip()
+    return run_command(cmd, cwd=REPO_DIR).stdout.strip()
 
 
 def maybe_command_output(cmd: list[str]) -> str:

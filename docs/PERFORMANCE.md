@@ -76,6 +76,24 @@ That command writes:
 - environment metadata
 - a generated Markdown summary table including the newer search metrics used for heuristic tuning
 
+### Comparing LHS deduplication policies
+
+Run the same deterministic release search with and without `--lhs-value-dedup`.
+This example uses the restricted level-3 workload from the [search model](SEARCH_MODEL.md#measured-cost-of-the-lhs-key).
+
+```bash
+python3 scripts/compare_lhs_dedup.py --target 1.4142135623730951 --level 3 \
+  --ranking parity --exclude 'TASClW^vLE' --max-match-distance 0.001 \
+  --repeats 5 --output /tmp/ries-lhs-dedup.json
+```
+
+The runner uses an empty profile, warms up each policy, and alternates their
+order. The JSON includes the commands, environment, raw samples, median times
+and peak RSS when available, and changes to the ranked equations and winning
+root. It checks the effective matcher and deduplication setting. If the search
+falls back to streaming, lower the level or restrict the symbol set to obtain
+a materialized comparison.
+
 ## Criterion Benchmarks
 
 Repository microbenchmarks live under `benches/` and use Criterion.
