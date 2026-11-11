@@ -252,6 +252,10 @@ pool at 1,000,000 entries after applying report-mode sizing.
 
 ### Measured cost of the LHS key
 
+The measurements below predate the current exactness and error-bucketing
+rules. Use the [paired benchmark runner](PERFORMANCE.md#comparing-lhs-deduplication-policies)
+to measure the current checkout.
+
 A bounded study held RHS representative selection, the batch matcher, and
 the order of equal-complexity LHS candidates fixed. It compared the former
 target-local key with keeping every structurally distinct LHS. Across 20

@@ -1,0 +1,4 @@
+# The Fano plane has seven points and seven lines, with three points on each
+# line. Its incidence graph, the Heawood graph, has 14 vertices and 21 edges.
+-X "4:vertices:Heawood graph vertex count:14"
+-X "4:edges:Heawood graph edge count:21"
