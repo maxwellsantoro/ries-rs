@@ -117,6 +117,9 @@ pub(super) fn newton_raphson_with_constants(
     show_newton: bool,
     derivative_margin: f64,
 ) -> Option<NewtonHit> {
+    if !crate::eval::value_in_expression_range(lhs, rhs_value) {
+        return None;
+    }
     let mut x = initial_x;
     let tolerance = NEWTON_TOLERANCE;
 

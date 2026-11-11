@@ -34,6 +34,14 @@ Examples:
 - `xT` -> `tanpi(x)`
 - `xCr` -> `1/cospi(x)`
 
+Postfix strings use one character per symbol (`Symbol::to_postfix_char` and
+`Symbol::from_postfix_char`). Built-in symbols are ASCII. User constant slots
+0-15 and user function slots 0-15 are U+0080..U+009F; they are decoded per
+character, never per UTF-8 byte. `Expression::parse` also accepts the printable
+user-function aliases `H I J K M N O Q R U V Y Z B D F`. `-S`, `-N`, `-E`, `-O`,
+`--symbol-weights`, and `--symbol-names` decode characters the same way, so a
+character above U+00FF never truncates onto an ASCII symbol.
+
 ## Symbol Classes (Arity)
 
 Each symbol has a fixed arity category (`Seft` in code):
@@ -80,6 +88,77 @@ multiplying by π and handles representable integers and half-integers exactly.
 `--trig-argument-scale` changes the evaluation and the displayed infix
 equations. `solve_for_x_at_with_context` uses the same scale and custom
 symbols as the search when choosing and checking the inverse branch.
+
+Numeric classification describes expression structure, not the value sampled at
+one target. The variable is a polynomial indeterminate: `x^2` preserves the
+integer-polynomial class, but `2^x` and a root with an x-dependent index have no
+algebraic guarantee, even at an integer or stationary sample. Evaluation tracks
+variable dependence separately from the derivative, including through user
+functions. Shared power/root classification rules govern evaluation, symbol type
+inference, and structural constraints. Constant rational powers of algebraic
+bases remain algebraic; equivalent square-root spellings therefore all survive
+algebraic-only filtering.
+
+Division and reciprocal reject an actual zero denominator. Nonzero subnormal
+operands remain eligible; unrepresentable results are handled as overflow, and
+nonfinite derivatives remain unavailable for root refinement.
+
+Integer-only generation excludes negative powers of integer bases: `2^(-2)`
+is classified as rational, while `2^3` remains integer. Type-only inference
+conservatively treats an integer power of an integer base as rational when the
+exponent's sign is unknown. Root pruning reads the index operand in `a b v`
+(`b^(1/a)`), so cube roots of 2 remain eligible.
+
+The evaluator scales reciprocal, power, root, logarithm, and `atan2` derivative
+calculations to avoid losing representable slopes through intermediate overflow
+or underflow. A power's value may underflow to zero while its derivative remains
+representable.
+
+Root expressions preserve an algebraic classification only when the index is
+rational and the radicand is algebraic. A transcendental radicand or an irrational
+index receives a conservative non-algebraic classification, so these roots do
+not bypass algebraic-only generation. Binary identity pruning inspects complete
+operands, including when an exponent or factor is a compound expression.
+
+A user function's class depends on its argument: with `sq(a) = a^2`, `sq(2)`
+is an integer and `sq(pi)` is not. Structural constraints (`--rational-exponents`,
+`--rational-trig-args`, `--max-trig-cycles`) therefore walk the function body
+using `UserFunctionConstraints`. The body counts toward trig cycles and must
+satisfy the same restrictions. A function without a body summary is opaque,
+and its fixed `user_function_types` entry applies. The walker and evaluator
+traverse expressions separately but use the same built-in type transitions in
+`Symbol::result_type` and `result_type_with_facts`. A differential test
+(`constraint_walker_type_matches_evaluator`) checks traversal agreement on
+small expressions. Without a known value for a non-literal integer exponent,
+the walker can conservatively classify a power as rational rather than integer.
+
+### Pruning
+
+Generation prunes candidates before evaluation (`src/gen.rs`). Each rule
+belongs to one class:
+
+- **Identity.** The candidate is degenerate (`a/a`, `1^b`, `log_1(b)`, roots of
+  1) or equals a spelling from its own symbols at no greater complexity
+  (`--a`, `ln(e^a)`, `-(a-b)` as `b-a`, `2+3` as `3+2`). A respelling counts
+  only when that spelling is not itself pruned. `1/sqrt(ln a)` is kept because
+  `1/ln(a)` is pruned heuristically.
+- **Rewrite.** The candidate has a preferred spelling that uses a symbol it does
+  not contain: `2 b v` as `b q`, `log_e(b)` as `ln(b)`, and `a+a` as `2*a`. A
+  rewrite fires only when the replacement is enabled on the side being
+  generated, is not heavier under the active weights, fits its per-symbol
+  count limit, and is not itself pruned. With `-S x2v`, for example, `x = 22v`
+  remains reachable.
+- **Heuristic.** Deliberate, lossy reductions that may remove values:
+  `sqrt(a^2)`, `1/ln(a)`, `sinpi(sinpi(a))`, `cospi(cospi(a))`,
+  `exp(exp(a))`, `W(e^a)`, and `W(1/a)`. `(a^2)^2` and `sqrt(sqrt(a))` are pruned
+  only when a power (`^` and `4`) or a fourth root (`v` and `4`) is enabled.
+
+`pruning_never_loses_reachable_values` compares generation under restricted
+symbol sets, custom weights, and count limits against generation with only
+the heuristics active. Identities and rewrites must never lose a value or
+raise its minimum complexity. Excluded from this check are constant LHS sides
+and RHS values 0 and 1, which come from degenerate forms: `A - B = 0` and
+`A / B = 1` are costlier spellings of `A = B`.
 
 ## Search Space Partition
 
@@ -171,8 +250,9 @@ A row is exact when all three conditions hold (`match_exactness`):
   the LHS slope, i.e. `ulp(rhs) ≤ 8 · ulp(target) · |f′(target)|`
 
 A stationary LHS cannot locate a root with the linearized search and is
-skipped. For a nonzero slope, a hit within eight ulps of the target is also
-discarded if it fails the slope condition. A rounded residual of zero can
+skipped. Every match, including an approximation, must resolve x at the
+precision of its claimed error: `ulp(rhs) / |f′(target)|` must be at most
+`max(|solved_x - target|, 8 · ulp(target))`. A rounded residual of zero can
 span many representable values around a trigonometric extremum or arise
 from an identity such as `x*(1/x) = 1`.
 
@@ -250,6 +330,24 @@ has room for at least 5,000 candidates so its simplicity-based categories can
 still see equations crowded out by closer approximations. The CLI caps the
 pool at 1,000,000 entries after applying report-mode sizing.
 
+For nonzero targets smaller than one in magnitude, the adaptive candidate
+window and initial pool acceptance threshold scale with `|target|`. The radius
+cap uses an eight-ulp floor in x rather than an absolute `1e-10` floor, so tiny
+targets do not scan RHS values far outside their local x scale. Zero retains
+the ordinary search window.
+
+In CLI reports, Best approximations treats errors at or below half the place
+value of the last typed decimal digit as equally accurate and prefers lower
+complexity, then lower ugliness. For example, `3.14159265` puts `x = pi` before
+more complicated cancellation fits with errors below `5e-9`. Extra trailing
+zeros tighten this threshold. This report preference does not change the
+recorded errors, exactness classification, or canonical pool ordering.
+Library reports can opt into this behavior with
+`ReportConfig::with_target_precision`; the default `best_error_floor` is zero.
+CLI infix output simplifies certified constant zeros such as `sinpi(1)` and
+`ln(1)` to `0`; postfix output retains the searched expression.
+
+
 ### Measured cost of the LHS key
 
 The measurements below predate the current exactness and error-bucketing
@@ -284,15 +382,43 @@ time from 0.55 to 1.04 seconds at about 148 MiB. Candidate checks rose from
 0.51 to 1.48 million while RHS database construction stayed near 5 ms. The
 larger matching cost is workload dependent, even when memory fits.
 
-**Streaming stop priority.** With `stop_at_exact` or `stop_below`, the streaming
-matcher still scans the full LHS stream and reports `early_exit = false`. It
-tracks a qualifying match separately from the ranked pool. It prefers lower
-LHS complexity, then lower RHS complexity, then lower absolute error, then
-lexicographic LHS and RHS postfix strings. After the scan it places that match
-first and truncates the list to `max_matches`. At capacity one this can replace
-the best match under the configured ranking. With neither option, streaming
-returns the ranked pool directly. The batch matcher can stop on a qualifying
-match during traversal.
+**Stop contract.** With `stop_at_exact` or `stop_below`, every matcher (batch,
+streaming, one-sided, and the parallel and turbo paths, which delegate to
+batch) follows one rule, implemented once in `StopBound` (`src/search.rs`). A
+match that meets the stop condition bounds result complexity by its own total
+complexity. The simplest such match, with ties broken by the requested
+ranking, is the stop match.
+
+1. Phase 1 scans until no unvisited pair can fall within the bound. Batch and
+   one-sided matching visit expressions in complexity order and end early;
+   streaming scans its whole LHS stream and reports `early_exit = false`.
+2. Phase 2 rescans only the pairs within the bound, using a fresh pool.
+   Streaming regenerates LHS expressions up to the bound for this pass.
+3. The result contains the phase-2 matches within the bound, led by the stop
+   match and truncated to `max_matches`.
+
+Before the bound is known, a pool can admit costlier matches that displace
+cheaper ones, so phase 2 makes the result independent of visit order. For
+bit-identical RHS values under a stop condition, the RHS representative is the
+simplest spelling, with ties broken by the ranking. A costlier spelling would
+raise the bound, and any costlier spelling lies past it anyway.
+`tests/stop_contract.rs` checks that batch, streaming, and the certified fast
+path agree. It also independently enumerates a tiny arithmetic grammar and
+solves each linear/quadratic LHS analytically. This oracle checks the simplest
+qualifying winner under both stop conditions, both rankings, custom weights,
+and a pool of one, without using generation, Newton, or `StopBound` to choose
+that winner. Agreement between optimized paths alone is not sufficient.
+
+**Fast match.** The CLI skips the search only for an exact `x = <atom>` match
+from `find_certified_fast_match`. It tries every enabled RHS atom and applies
+the caller's full eligibility check. Among atoms meeting a stop condition
+(exact, or within `stop_below`, which `--classic` sets), it chooses the simplest,
+with ties broken by `compare_matches`. The choice is accepted only when it is
+exact and its complexity is below
+`non_atomic_equation_complexity_floor`, which is `w(x) + min_atom +
+min(min_unary, min_binary + min_atom)` over the enabled symbols. Below that
+floor no other equation shape can be as simple. Other targets run the search.
+A fast match reports a single result.
 
 Under complexity ranking, once the bounded result pool is full of exact
 matches, `TopKPool::exact_complexity_ceiling` returns the complexity of its
@@ -410,3 +536,39 @@ Authoritative implementation points:
 - `src/symbol.rs` / `src/symbol_table.rs` (symbol set + weights)
 - `src/search.rs` (search execution)
 - `src/pool.rs` (ranking + dedupe + ordering)
+
+## Effective RHS grammar and numerical interpretation
+
+Search resolves `SearchConfig::rhs_allowed_symbols` and `rhs_excluded_symbols`
+into the RHS generation grammar before pruning, representative selection, or
+matching. The intersection never adds symbols omitted by `GenConfig`, and LHS
+symbols are unaffected. Library callers do not need to synchronize these lists
+manually. Batch, streaming, one-sided, parallel, and turbo use this resolution.
+
+Numeric type transitions for built-in operators live in `Symbol::result_type`
+and `result_type_with_facts`. Evaluation and the structural walker use those
+same transitions; the walker also interprets UDF bodies and records restriction
+events. Unknown constant values can require a conservative class rather than
+assuming a sign from a sampled derivative.
+
+The stop contract is complexity-first even with parity ranking: minimize the
+complexity of a qualifying stop match, break ties with `compare_matches`, then
+rank the bounded second-pass pool with the requested ranking and prepend the
+stop match. Parity cannot widen the complexity bound to choose a more complex
+stop match. This ordering is deliberate and applies to both stop conditions.
+
+An oscillatory equation is not automatically an impostor. For example,
+`cospi(1/(pi-x)) = 1` near the typed target `3.14159` has the real root
+`pi - 1/376848`. The historical reported float `3.141590000000015` is within
+eight ulps of that root, but the root is more than eight ulps from the target;
+it is an approximation, not exact. A 192-bit independent analytic check in
+`tests/numeric_contract.rs` preserves this distinction. Such equations can
+encode many nearby roots and are weak evidence for identifying a rounded
+constant, even though a nearby root is mathematically valid. This does not
+justify admitting an RHS outside cosine's range or a float with no nearby root.
+
+Sine/cosine RHS values outside [-1, 1] are rejected before refinement and pool
+admission, including when refinement is disabled. The Newton entry point uses
+the same range check. A loose residual threshold near an extremum is insufficient
+to establish existence of a root; `tests/numeric_contract.rs` includes an
+out-of-range regression that failed before this guard.

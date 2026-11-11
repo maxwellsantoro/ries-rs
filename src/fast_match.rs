@@ -6,6 +6,8 @@
 
 use crate::eval::{evaluate_with_context, EvalContext};
 use crate::expr::{EvaluatedExpr, Expression};
+use crate::gen::GenConfig;
+use crate::pool::{compare_matches, RankingMode};
 use crate::profile::UserConstant;
 use crate::search::Match;
 use crate::symbol::{NumType, Symbol};
@@ -210,7 +212,9 @@ fn passes_symbol_filters(symbols: &[Symbol], config: &FastMatchConfig<'_>) -> bo
 /// Try to find a fast exact match for the target value
 ///
 /// Returns a Match if found, or None if no simple exact match exists.
-/// This function is designed to be called before expensive generation.
+/// The result is the first exact candidate in a fixed list, not necessarily
+/// the best-ranked equation; use [`find_certified_fast_match`] to replace a
+/// search.
 pub fn find_fast_match(
     target: f64,
     user_constants: &[UserConstant],
@@ -232,7 +236,7 @@ pub fn find_fast_match_with_context(
         if !passes_symbol_filters(symbols, config) {
             return None;
         }
-        let m = make_match(symbols, target, table, context)?;
+        let m = make_match(symbols, target, table, context).filter(|m| m.exact)?;
         (m.rhs.num_type >= config.min_num_type).then_some(m)
     };
 
@@ -270,6 +274,82 @@ pub fn find_fast_match_with_context(
     None
 }
 
+/// Lower bound on the complexity of every equation except `x = <atom>`.
+///
+/// Any equation has an LHS containing `x` and an RHS with at least one atom.
+/// An equation other than `x = <atom>` has at least one more symbol: a unary
+/// operator, or a binary operator with its extra operand. Minimums are taken
+/// over both sides' enabled symbols, so the bound holds for either side.
+pub fn non_atomic_equation_complexity_floor(config: &GenConfig) -> u32 {
+    let table = &config.symbol_table;
+    let rhs = |overridden: &Option<Vec<Symbol>>, base: &[Symbol]| -> Vec<Symbol> {
+        overridden.as_deref().unwrap_or(base).to_vec()
+    };
+    let min_weight = |sets: [&[Symbol]; 2]| {
+        sets.iter()
+            .flat_map(|set| set.iter())
+            .map(|&sym| table.weight(sym))
+            .min()
+    };
+    let rhs_constants = rhs(&config.rhs_constants, &config.constants);
+    let rhs_unary = rhs(&config.rhs_unary_ops, &config.unary_ops);
+    let rhs_binary = rhs(&config.rhs_binary_ops, &config.binary_ops);
+
+    let x = table.weight(Symbol::X);
+    let min_atom = min_weight([&config.constants, &rhs_constants])
+        .unwrap_or(x)
+        .min(x);
+    let unary_step = min_weight([&config.unary_ops, &rhs_unary]);
+    let binary_step =
+        min_weight([&config.binary_ops, &rhs_binary]).map(|w| w.saturating_add(min_atom));
+    let step = match (unary_step, binary_step) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) | (None, Some(a)) => a,
+        (None, None) => u32::MAX,
+    };
+    x.saturating_add(min_atom).saturating_add(step)
+}
+
+/// Find an exact `x = <atom>` match that provably ranks first under the
+/// search's stop contract with `stop_at_exact` (and `stop_below`, if set).
+///
+/// Every enabled RHS atom is tried. Candidates must pass the symbol filters,
+/// the numeric type floor, and `accept` (the caller's full match eligibility).
+/// Among those meeting a stop condition (exact, or error below `stop_below`),
+/// the stop match is the simplest, with ties broken by [`compare_matches`]
+/// under `ranking_mode`. It is returned only when it is exact and its
+/// complexity is below [`non_atomic_equation_complexity_floor`]: then no other
+/// equation shape can be as simple, so the search would lead with the same
+/// match. Otherwise the caller must run the search.
+pub fn find_certified_fast_match(
+    target: f64,
+    context: &EvalContext<'_>,
+    config: &FastMatchConfig<'_>,
+    gen_config: &GenConfig,
+    ranking_mode: RankingMode,
+    stop_below: Option<f64>,
+    accept: impl Fn(&Match) -> bool,
+) -> Option<Match> {
+    let table = &gen_config.symbol_table;
+    let atoms = gen_config
+        .rhs_constants
+        .as_deref()
+        .unwrap_or(&gen_config.constants);
+    let meets_stop = |m: &Match| m.exact || stop_below.is_some_and(|t| m.error.abs() < t);
+    let best = atoms
+        .iter()
+        .filter(|&&sym| sym != Symbol::X && passes_symbol_filters(&[sym], config))
+        .filter_map(|&sym| make_match(&[sym], target, table, context))
+        .filter(|m| m.rhs.num_type >= config.min_num_type && meets_stop(m) && accept(m))
+        .min_by(|a, b| {
+            a.complexity
+                .cmp(&b.complexity)
+                .then_with(|| compare_matches(a, b, ranking_mode))
+        })?;
+    (best.exact && best.complexity < non_atomic_equation_complexity_floor(gen_config))
+        .then_some(best)
+}
+
 /// Create a Match from symbols representing the RHS value
 fn make_match(
     symbols: &[Symbol],
@@ -285,16 +365,13 @@ fn make_match(
     let rhs_eval = evaluate_with_context(&rhs_expr, target, context).ok()?;
 
     let x_value = rhs_eval.value;
-    if crate::search::match_exactness(
+    let exact = crate::search::match_exactness(
         lhs_eval.value,
         rhs_eval.value,
         lhs_eval.derivative,
         x_value,
         target,
-    ) != Some(true)
-    {
-        return None;
-    }
+    )?;
 
     Some(Match {
         lhs: EvaluatedExpr {
@@ -312,7 +389,7 @@ fn make_match(
         x_value,
         error: x_value - target,
         complexity,
-        exact: true,
+        exact,
     })
 }
 

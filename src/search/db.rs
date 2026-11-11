@@ -231,6 +231,7 @@ impl<'a> Iterator for TieredRangeIter<'a> {
 ///
 /// The search radius as an absolute value (not relative to derivative).
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn calculate_adaptive_search_radius(
     derivative: f64,
     complexity: u32,
@@ -238,11 +239,13 @@ pub(super) fn calculate_adaptive_search_radius(
     pool_capacity: usize,
     best_error: f64,
     accept_error: f64,
+    target: f64,
 ) -> f64 {
     let deriv_abs = derivative.abs();
+    let scaled_derivative = deriv_abs * super::target_search_scale(target);
 
-    // Base radius: proportional to derivative
-    let base_radius = BASE_SEARCH_RADIUS_FACTOR * deriv_abs;
+    // Convert a relative x window to equation-value units using the slope.
+    let base_radius = BASE_SEARCH_RADIUS_FACTOR * scaled_derivative;
 
     // Complexity factor: reduce radius for complex expressions
     // normalized_complexity is roughly 0-1 for typical complexity ranges
@@ -277,14 +280,14 @@ pub(super) fn calculate_adaptive_search_radius(
     } else {
         1.0
     };
-    let coarse_error_cap = (accept_error * gate_factor).max(NEWTON_FINAL_TOLERANCE);
+    let coarse_error_cap = (accept_error * gate_factor).max(8.0 * super::ulp_of(target.abs()));
     let gated_radius_cap = deriv_abs * coarse_error_cap;
 
     // Ensure we have a reasonable minimum and cap at maximum
-    let min_radius = 0.1 * deriv_abs; // At least 0.1 * derivative
+    let min_radius = 0.1 * scaled_derivative;
     radius
         .max(min_radius)
-        .min(MAX_SEARCH_RADIUS_FACTOR * deriv_abs)
+        .min(MAX_SEARCH_RADIUS_FACTOR * scaled_derivative)
         .min(gated_radius_cap)
 }
 
@@ -370,26 +373,30 @@ impl ExprDatabase {
     ) -> (Vec<Match>, SearchStats) {
         let mut stats = SearchStats::new();
         let search_start = SearchTimer::start();
-        let mut pool = context.config.pool();
 
         let mut sorted_lhs: Vec<_> = lhs_exprs.iter().collect();
         sorted_lhs.sort_unstable_by(|a, b| compare_expression_order(a, b));
 
-        // Early exit tracking
-        let mut early_exit = false;
-
-        for lhs in sorted_lhs {
-            if !match_one_lhs(
-                self,
-                lhs,
+        // Phase 1 finds the stop bound, if any. Before the bound is known the
+        // pool can admit costlier matches that displace cheaper ones, so
+        // phase 2 ranks the pairs within the bound with a fresh pool.
+        let mut stop = super::StopBound::default();
+        let (mut pool, mut early_exit) = self.match_sorted_lhs(
+            &sorted_lhs,
+            context,
+            &mut stats,
+            &mut stop,
+            parallel_refinement,
+        );
+        if let Some(mut capped) = stop.capped() {
+            (pool, _) = self.match_sorted_lhs(
+                &sorted_lhs,
                 context,
-                &mut pool,
                 &mut stats,
+                &mut capped,
                 parallel_refinement,
-            ) {
-                early_exit = true;
-                break;
-            }
+            );
+            early_exit = true;
         }
 
         // Collect pool stats
@@ -398,7 +405,49 @@ impl ExprDatabase {
         stats.early_exit = early_exit;
 
         // Return sorted matches from pool
-        (pool.into_sorted(), stats)
+        (stop.finish(pool.into_sorted(), context.config), stats)
+    }
+
+    /// Match complexity-sorted LHS expressions into a fresh pool. Returns the
+    /// pool and whether the scan ended early.
+    fn match_sorted_lhs(
+        &self,
+        sorted_lhs: &[&EvaluatedExpr],
+        context: &SearchContext<'_>,
+        stats: &mut SearchStats,
+        stop: &mut super::StopBound,
+        parallel_refinement: bool,
+    ) -> (TopKPool, bool) {
+        let mut pool = context.config.pool();
+        let mut min_rhs_complexity = None;
+        for &lhs in sorted_lhs {
+            // LHS are visited in complexity order, so once the cheapest
+            // possible pair exceeds the stop bound no later LHS can qualify.
+            if stop.is_set() {
+                let min_rhs = *min_rhs_complexity.get_or_insert_with(|| {
+                    self.rhs_sorted
+                        .iter()
+                        .map(|rhs| rhs.expr.complexity())
+                        .min()
+                        .unwrap_or(0)
+                });
+                if stop.excludes(lhs.expr.complexity().saturating_add(min_rhs)) {
+                    return (pool, true);
+                }
+            }
+            if !match_one_lhs(
+                self,
+                lhs,
+                context,
+                &mut pool,
+                stats,
+                stop,
+                parallel_refinement,
+            ) {
+                return (pool, true);
+            }
+        }
+        (pool, false)
     }
 
     /// Refine wide candidate windows in parallel and admit matches in serial order.
@@ -436,14 +485,16 @@ fn refine_candidate(
 /// Match a single LHS expression against the RHS database, inserting any
 /// accepted matches into `pool` and updating `stats`.
 ///
-/// Returns `false` when the complexity ceiling or an explicit early-exit
-/// condition is reached. This is the shared loop for serial and turbo matching.
+/// Returns `false` when the complexity ceiling is reached. A stop match
+/// tightens `stop` but does not end the window: a later candidate in the same
+/// window can be simpler. This is the shared loop for serial and turbo matching.
 fn match_one_lhs(
     db: &ExprDatabase,
     lhs: &EvaluatedExpr,
     context: &SearchContext<'_>,
     pool: &mut TopKPool,
     stats: &mut SearchStats,
+    stop: &mut super::StopBound,
     parallel_refinement: bool,
 ) -> bool {
     let config = context.config;
@@ -468,6 +519,7 @@ fn match_one_lhs(
     // Retain complexity ties for the canonical postfix tie-break.
     let rhs_is_eligible = |rhs: &EvaluatedExpr| {
         config.rhs_symbol_allowed(&rhs.expr)
+            && crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
             && config.filters.allows_side(rhs)
             && config.filters.allows_pair(&lhs.expr, &rhs.expr)
             && exact_ceiling
@@ -503,6 +555,7 @@ fn match_one_lhs(
         config.max_matches,
         pool.best_error,
         pool.accept_error,
+        config.target,
     );
     let low = lhs.value - search_radius;
     let high = lhs.value + search_radius;
@@ -541,7 +594,7 @@ fn match_one_lhs(
     let refined: Option<Vec<Option<Option<NewtonHit>>>> = None;
 
     for (index, rhs) in rhs_slice.iter().enumerate() {
-        if !rhs_is_eligible(rhs) {
+        if !rhs_is_eligible(rhs) || stop.excludes(lhs.expr.complexity() + rhs.expr.complexity()) {
             continue;
         }
 
@@ -596,11 +649,8 @@ fn match_one_lhs(
                 complexity: lhs.expr.complexity() + rhs.expr.complexity(),
                 exact,
             };
-            let stop = super::stop_condition_met(&m, config);
+            stop.observe(&m, config);
             pool.try_insert(m);
-            if stop {
-                return false;
-            }
         }
     }
 
@@ -620,7 +670,7 @@ mod tests {
     #[test]
     fn test_adaptive_radius_is_capped_by_accept_error() {
         let derivative = 10.0;
-        let radius = calculate_adaptive_search_radius(derivative, 10, 0, 16, 1.0, 1e-3);
+        let radius = calculate_adaptive_search_radius(derivative, 10, 0, 16, 1.0, 1e-3, 1.0);
 
         assert!(
             (radius - 0.01).abs() < 1e-12,
@@ -632,13 +682,85 @@ mod tests {
     fn test_adaptive_radius_uses_strict_gate_cap_when_pool_is_full() {
         let derivative = 100.0;
         let accept_error = 0.02;
-        let radius = calculate_adaptive_search_radius(derivative, 10, 16, 16, 1.0, accept_error);
+        let radius =
+            calculate_adaptive_search_radius(derivative, 10, 16, 16, 1.0, accept_error, 1.0);
 
         let expected_cap = derivative * accept_error * STRICT_GATE_FACTOR;
         assert!(
             (radius - expected_cap).abs() < 1e-12,
             "strict-gate fullness should tighten the scan radius cap"
         );
+    }
+
+    #[test]
+    fn tiny_target_radius_scales_with_target_without_an_absolute_floor() {
+        let ordinary = calculate_adaptive_search_radius(2.0, 10, 0, 5000, 1.0, 1.0, 1.0);
+        for target in [1e-15_f64, -1e-15, 1e-300, -1e-300] {
+            let radius =
+                calculate_adaptive_search_radius(2.0, 10, 0, 5000, 1.0, target.abs(), target);
+            assert!((radius / target.abs() - ordinary).abs() < 1e-14);
+            let tight = calculate_adaptive_search_radius(
+                2.0,
+                10,
+                0,
+                5000,
+                1.0,
+                target.abs() * 1e-6,
+                target,
+            );
+            assert!(tight <= 2.0 * target.abs() * 1e-6);
+        }
+        assert_eq!(
+            calculate_adaptive_search_radius(2.0, 10, 0, 5000, 1.0, 1.0, 0.0),
+            ordinary
+        );
+    }
+
+    #[test]
+    #[allow(clippy::approx_constant)] // Exercise the rounded, typed target.
+    fn pi_no_root_approximation_is_rejected_after_newton() {
+        use crate::expr::Expression;
+        let target = 3.14159265;
+        let eval = |postfix| {
+            let expr = Expression::parse(postfix).unwrap();
+            let at = crate::eval::evaluate(&expr, target).unwrap();
+            EvaluatedExpr::new(expr, at.value, at.derivative, at.num_type)
+        };
+        let lhs = eval("px-Cr");
+        let rhs = eval("14/Ts");
+        // sec(pi*(pi-x)) >= 1 near pi, while tanpi(1/4)^2 is below 1.
+        assert!(rhs.value < 1.0);
+        let config = SearchConfig {
+            target,
+            max_matches: 16,
+            max_error: 0.1,
+            ..Default::default()
+        };
+        let context = config.context();
+        let delta = -(lhs.value - rhs.value) / lhs.derivative;
+        let hit =
+            refine_candidate(&lhs, &rhs, delta, &context).expect("Newton returns a plateau hit");
+        assert!(hit.real, "loose residual test accepts the rounded plateau");
+        assert!(!super::super::solved_x_within_ulps(hit.x, target));
+        assert_eq!(
+            super::super::match_exactness(lhs.value, rhs.value, lhs.derivative, hit.x, target),
+            None
+        );
+        let mut db = ExprDatabase::new();
+        db.insert_rhs(vec![rhs]);
+        let mut pool = config.pool();
+        let mut stats = SearchStats::default();
+        assert!(match_one_lhs(
+            &db,
+            &lhs,
+            &context,
+            &mut pool,
+            &mut stats,
+            &mut crate::search::StopBound::default(),
+            false
+        ));
+        assert_eq!(stats.newton_success, 1, "exercise post-Newton admission");
+        assert!(pool.into_sorted().is_empty());
     }
 
     #[cfg(feature = "parallel")]

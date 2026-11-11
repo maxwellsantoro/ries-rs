@@ -15,7 +15,13 @@ pub enum Seft {
     C,
 }
 
-/// Number type classification for algebraic properties
+/// Structural numeric classification for algebraic restrictions.
+///
+/// For constants this bounds the numeric class. For expressions containing `x`,
+/// it describes the operations on a polynomial indeterminate: `x` and `x^2`
+/// can be integer-polynomial expressions even at noninteger sample values.
+/// Variable exponents and root indices have no such algebraic guarantee.
+/// `Transcendental` is the conservative fallback, not a proof of transcendence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum NumType {
@@ -40,6 +46,34 @@ impl NumType {
     #[inline]
     pub fn combine(self, other: Self) -> Self {
         std::cmp::min(self, other)
+    }
+
+    /// Classify a power structurally, rather than from a sampled exponent.
+    /// `Integer` for a variable means polynomial dependence, not an integer sample.
+    pub(crate) fn power(self, exponent: Self, variable_exponent: bool, value: Option<f64>) -> Self {
+        if variable_exponent {
+            return Self::Transcendental;
+        }
+        if exponent == Self::Integer {
+            if self == Self::Integer && !value.is_some_and(|v| v >= 0.0) {
+                Self::Rational
+            } else {
+                self
+            }
+        } else if exponent >= Self::Rational && self >= Self::Algebraic {
+            Self::Algebraic
+        } else {
+            Self::Transcendental
+        }
+    }
+
+    /// Only a constant rational index guarantees an algebraic root.
+    pub(crate) fn root(self, radicand: Self, variable_index: bool) -> Self {
+        if !variable_index && self >= Self::Rational {
+            radicand.combine(Self::Algebraic)
+        } else {
+            Self::Transcendental
+        }
     }
 
     /// Check if this type is at least as strong as the given type
@@ -358,6 +392,24 @@ impl Symbol {
         }
     }
 
+    /// Shared structural transition for evaluation and constraint traversal.
+    /// Values are supplied only for operands proved independent of x; a zero
+    /// sampled derivative is never evidence of independence.
+    pub(crate) fn result_type_with_facts(
+        self,
+        types: &[NumType],
+        depends_on_x: &[bool],
+        constants: &[Option<f64>],
+    ) -> NumType {
+        match self {
+            Self::Pow if types.len() == 2 => {
+                types[0].power(types[1], depends_on_x[1], constants[1])
+            }
+            Self::Root if types.len() == 2 => types[0].root(types[1], depends_on_x[0]),
+            _ => self.result_type(types),
+        }
+    }
+
     /// Get the result type when this operation is applied
     pub fn result_type(self, arg_types: &[NumType]) -> NumType {
         use NumType::*;
@@ -426,20 +478,14 @@ impl Symbol {
             // Square preserves type
             Square => arg_types.iter().copied().fold(Integer, NumType::combine),
 
-            // Nth root: generally algebraic
-            Root => Algebraic,
+            // A rational index gives an algebraic power of an algebraic
+            // radicand. Irrational indices need not preserve algebraicity.
+            Root if arg_types.len() >= 2 => arg_types[0].root(arg_types[1], false),
+            Root => Transcendental,
 
-            // Power: depends on exponent
-            Pow => {
-                // If exponent is integer, result has the same type as the base.
-                // Otherwise (fractional/algebraic/transcendental exponent), generally transcendental.
-                // arg_types = [base_type, exponent_type] in postfix stack order.
-                if arg_types.len() >= 2 && arg_types[1] == Integer {
-                    arg_types[0]
-                } else {
-                    Transcendental
-                }
-            }
+            // Without a known exponent value, integer powers are conservatively rational.
+            Pow if arg_types.len() >= 2 => arg_types[0].power(arg_types[1], false, None),
+            Pow => Transcendental,
 
             // Transcendental functions
             Ln | Exp | SinPi | CosPi | TanPi | Log | LambertW | Atan2 => Transcendental,
@@ -570,6 +616,26 @@ impl Symbol {
     /// Note: For per-run name overrides, use `SymbolTable::name()` instead.
     pub fn display_name(self) -> String {
         self.name().to_string()
+    }
+
+    /// Canonical postfix character for this symbol.
+    ///
+    /// This is the single encoding used by [`crate::expr::Expression::to_postfix`].
+    /// ASCII symbols map to themselves; user constant and user function slots
+    /// (bytes 128-159) map to the code points U+0080..U+009F. Decode with
+    /// [`Symbol::from_postfix_char`], never by reinterpreting UTF-8 bytes.
+    #[inline]
+    pub const fn to_postfix_char(self) -> char {
+        self as u8 as char
+    }
+
+    /// Decode one postfix character: a canonical character from
+    /// [`Symbol::to_postfix_char`] or a printable user-function alias.
+    ///
+    /// Characters above U+00FF are rejected rather than truncated to a byte.
+    #[inline]
+    pub fn from_postfix_char(c: char) -> Option<Self> {
+        u8::try_from(u32::from(c)).ok().and_then(Self::from_byte)
     }
 
     /// Parse a symbol from its byte representation
@@ -739,6 +805,83 @@ impl Symbol {
         use Symbol::*;
         &[Add, Sub, Mul, Div, Pow, Root, Log, Atan2]
     }
+
+    /// Every symbol, including the user constant and user function slots.
+    ///
+    /// `test_all_symbols_is_complete` checks this against every byte that
+    /// [`Symbol::from_byte`] accepts.
+    pub const ALL: [Symbol; 67] = {
+        use Symbol::*;
+        [
+            One,
+            Two,
+            Three,
+            Four,
+            Five,
+            Six,
+            Seven,
+            Eight,
+            Nine,
+            Pi,
+            E,
+            Phi,
+            Gamma,
+            Plastic,
+            Apery,
+            Catalan,
+            X,
+            UserConstant0,
+            UserConstant1,
+            UserConstant2,
+            UserConstant3,
+            UserConstant4,
+            UserConstant5,
+            UserConstant6,
+            UserConstant7,
+            UserConstant8,
+            UserConstant9,
+            UserConstant10,
+            UserConstant11,
+            UserConstant12,
+            UserConstant13,
+            UserConstant14,
+            UserConstant15,
+            UserFunction0,
+            UserFunction1,
+            UserFunction2,
+            UserFunction3,
+            UserFunction4,
+            UserFunction5,
+            UserFunction6,
+            UserFunction7,
+            UserFunction8,
+            UserFunction9,
+            UserFunction10,
+            UserFunction11,
+            UserFunction12,
+            UserFunction13,
+            UserFunction14,
+            UserFunction15,
+            Neg,
+            Recip,
+            Sqrt,
+            Square,
+            Ln,
+            Exp,
+            SinPi,
+            CosPi,
+            TanPi,
+            LambertW,
+            Add,
+            Sub,
+            Mul,
+            Div,
+            Pow,
+            Root,
+            Log,
+            Atan2,
+        ]
+    };
 }
 
 impl fmt::Display for Symbol {
@@ -814,6 +957,30 @@ mod tests {
     }
 
     #[test]
+    fn test_all_symbols_is_complete() {
+        let mut seen = std::collections::HashSet::new();
+        for sym in Symbol::ALL {
+            assert!(seen.insert(sym), "{sym:?} listed twice");
+            assert_eq!(Symbol::from_byte(sym as u8), Some(sym));
+        }
+        for byte in 0..=u8::MAX {
+            if let Some(sym) = Symbol::from_byte(byte) {
+                assert!(seen.contains(&sym), "{sym:?} missing from Symbol::ALL");
+            }
+        }
+    }
+
+    #[test]
+    fn test_postfix_char_roundtrip_for_every_symbol() {
+        for sym in Symbol::ALL {
+            assert_eq!(Symbol::from_postfix_char(sym.to_postfix_char()), Some(sym));
+        }
+        // A wide character must not be truncated onto an ASCII symbol.
+        assert_eq!(Symbol::from_postfix_char('\u{170}'), None); // low byte is 'p'
+        assert_eq!(Symbol::from_postfix_char('\u{A0}'), None);
+    }
+
+    #[test]
     fn test_num_type_ordering() {
         assert!(NumType::Integer > NumType::Rational);
         assert!(NumType::Rational > NumType::Algebraic);
@@ -828,7 +995,26 @@ mod tests {
     }
 
     // result_type arg order: for postfix `a b Pow`, arg_types = [base_type, exponent_type]
-    // Rule: integer exponent preserves the base's type; non-integer exponent → Transcendental.
+    // Rule: an integer exponent can make an integer base rational; other base types are preserved.
+
+    #[test]
+    fn root_result_type_requires_a_rational_index_and_algebraic_radicand() {
+        use NumType::*;
+        assert_eq!(Symbol::Root.result_type(&[Integer, Integer]), Algebraic);
+        assert_eq!(
+            Symbol::Root.result_type(&[Rational, Constructible]),
+            Algebraic
+        );
+        assert_eq!(
+            Symbol::Root.result_type(&[Integer, Transcendental]),
+            Transcendental
+        );
+        assert_eq!(
+            Symbol::Root.result_type(&[Algebraic, Integer]),
+            Transcendental
+        );
+        assert_eq!(Symbol::Root.result_type(&[]), Transcendental);
+    }
 
     #[test]
     fn test_pow_result_type_algebraic_base_integer_exponent() {
@@ -856,12 +1042,12 @@ mod tests {
 
     #[test]
     fn test_pow_result_type_integer_base_integer_exponent() {
-        // 2^3 = 8 → Integer
+        // The exponent may be negative; without values, 2^-2 must be covered.
         let result = Symbol::Pow.result_type(&[NumType::Integer, NumType::Integer]);
         assert_eq!(
             result,
-            NumType::Integer,
-            "Integer^Integer should be Integer"
+            NumType::Rational,
+            "Integer^Integer may be Rational for a negative exponent"
         );
     }
 }

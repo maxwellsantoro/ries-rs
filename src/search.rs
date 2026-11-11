@@ -4,7 +4,7 @@
 
 use crate::eval::EvalContext;
 use crate::expr::{EvaluatedExpr, Expression};
-use crate::pool::{RankingMode, TopKPool};
+use crate::pool::{compare_matches, RankingMode, TopKPool};
 use crate::profile::UserConstant;
 use crate::thresholds::{DEGENERATE_DERIVATIVE, DEGENERATE_TEST_THRESHOLD, NEWTON_FINAL_TOLERANCE};
 use std::collections::HashSet;
@@ -267,6 +267,16 @@ pub(crate) fn solved_x_within_ulps(solved_x: f64, target: f64) -> bool {
     diff <= 8.0 * ulp_of(target.abs())
 }
 
+/// Preserve the historical window for ordinary targets and zero, while keeping
+/// tiny nonzero targets local in relative x units.
+fn target_search_scale(target: f64) -> f64 {
+    if target == 0.0 {
+        1.0
+    } else {
+        target.abs().min(1.0)
+    }
+}
+
 /// Classify a match, discarding a near-target hit that cannot locate a root
 /// at the precision it claims. A rounded residual of zero can span millions
 /// of floats around a stationary point or hold everywhere for an identity.
@@ -277,15 +287,14 @@ pub(crate) fn match_exactness(
     solved_x: f64,
     target: f64,
 ) -> Option<bool> {
-    if !solved_x_within_ulps(solved_x, target) {
-        return Some(false);
-    }
-
-    // One ulp of the RHS must correspond to at most eight ulps of x.
-    // Compare slopes directly to avoid underflow in |f'| * ulp(x).
-    let min_slope = ulp_of(rhs_value.abs()) / (8.0 * ulp_of(target.abs()));
+    let near_target = solved_x_within_ulps(solved_x, target);
+    // The equation must resolve x at least as precisely as the reported error.
+    // This also rejects inexact hits on rounded plateaus near stationary points.
+    // Compare slopes directly to avoid underflow in |f'| * resolution.
+    let resolution = (solved_x - target).abs().max(8.0 * ulp_of(target.abs()));
+    let min_slope = ulp_of(rhs_value.abs()) / resolution;
     (derivative.is_finite() && derivative.abs() >= min_slope && derivative != 0.0)
-        .then(|| sides_agree_within_ulps(lhs_value, rhs_value))
+        .then(|| near_target && sides_agree_within_ulps(lhs_value, rhs_value))
 }
 #[cfg(test)]
 use newton::newton_raphson;
@@ -1015,32 +1024,35 @@ impl SearchConfig {
     }
 
     fn pool(&self) -> TopKPool {
-        TopKPool::new_with_diagnostics(
+        let mut pool = TopKPool::new_with_diagnostics(
             self.max_matches,
             self.max_error,
             self.show_db_adds,
             self.ranking_mode,
         )
-        .with_canonical_dedup(self.filters.canonical)
+        .with_canonical_dedup(self.filters.canonical);
+        pool.accept_error = pool.accept_error.min(target_search_scale(self.target));
+        pool
+    }
+
+    /// One symbol eligibility rule for grammar resolution and match admission.
+    #[inline]
+    pub(crate) fn rhs_symbol_is_allowed(&self, symbol: crate::symbol::Symbol) -> bool {
+        let byte = symbol as u8;
+        self.rhs_allowed_symbols
+            .as_ref()
+            .is_none_or(|set| set.contains(&byte))
+            && self
+                .rhs_excluded_symbols
+                .as_ref()
+                .is_none_or(|set| !set.contains(&byte))
     }
 
     #[inline]
     pub(crate) fn rhs_symbol_allowed(&self, rhs: &crate::expr::Expression) -> bool {
-        let symbols = rhs.symbols();
-
-        if let Some(allowed) = &self.rhs_allowed_symbols {
-            if symbols.iter().any(|s| !allowed.contains(&(*s as u8))) {
-                return false;
-            }
-        }
-
-        if let Some(excluded) = &self.rhs_excluded_symbols {
-            if symbols.iter().any(|s| excluded.contains(&(*s as u8))) {
-                return false;
-            }
-        }
-
-        true
+        rhs.symbols()
+            .iter()
+            .all(|&symbol| self.rhs_symbol_is_allowed(symbol))
     }
 }
 
@@ -1225,6 +1237,9 @@ pub fn search_adaptive_with_parallelism(
         return (Vec::new(), SearchStats::default());
     }
 
+    let resolved = base_config.resolved_for_search(Some(search_config));
+    let base_config = resolved.as_ref();
+
     let gen_start = SearchTimer::start();
     let context = SearchContext::new(search_config);
     // Reuse each side's representative policy when merging successive bounds.
@@ -1399,6 +1414,69 @@ pub fn search_streaming(
     search_streaming_with_config(gen_config, &config)
 }
 
+/// Stop contract shared by every matcher (see docs/SEARCH_MODEL.md).
+///
+/// A match meeting `stop_at_exact` or `stop_below` bounds result complexity
+/// by its own complexity. A matcher first scans until no unvisited pair can be
+/// within the bound (phase 1), then ranks every pair within the bound with a
+/// fresh pool (phase 2, using [`StopBound::capped`]). The result holds those
+/// matches, led by the simplest stop match (ties broken by the requested
+/// ranking). It does not depend on the order in which a matcher visits pairs.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StopBound {
+    best: Option<Match>,
+    /// A fixed bound for phase 2; stop matches are no longer recorded.
+    cap: Option<u32>,
+}
+
+impl StopBound {
+    /// Record `m` if it meets the stop condition.
+    pub(crate) fn observe(&mut self, m: &Match, config: &SearchConfig) {
+        if self.cap.is_some() || !stop_condition_met(m, config) {
+            return;
+        }
+        if self
+            .best
+            .as_ref()
+            .is_none_or(|current| prefer_stop_match(m, current, config.ranking_mode))
+        {
+            self.best = Some(m.clone());
+        }
+    }
+
+    /// The phase-2 bound for a rescan, when phase 1 found a stop match.
+    pub(crate) fn capped(&self) -> Option<Self> {
+        self.best.as_ref().map(|best| Self {
+            best: None,
+            cap: Some(best.complexity),
+        })
+    }
+
+    fn bound(&self) -> Option<u32> {
+        self.cap.or(self.best.as_ref().map(|m| m.complexity))
+    }
+
+    /// Whether a pair of this total complexity is past the bound.
+    #[inline]
+    pub(crate) fn excludes(&self, complexity: u32) -> bool {
+        self.bound().is_some_and(|bound| complexity > bound)
+    }
+
+    pub(crate) fn is_set(&self) -> bool {
+        self.bound().is_some()
+    }
+
+    /// Apply the bound and put the stop match first. The phase-2 pool can
+    /// still reject the stop match on its adaptive error gate.
+    pub(crate) fn finish(self, mut matches: Vec<Match>, config: &SearchConfig) -> Vec<Match> {
+        let Some(best) = self.best else {
+            return matches;
+        };
+        matches.retain(|m| m.complexity <= best.complexity);
+        merge_priority_match(matches, best, config.max_matches, config.filters.canonical)
+    }
+}
+
 fn stop_condition_met(m: &Match, search_config: &SearchConfig) -> bool {
     (search_config.stop_at_exact && m.exact)
         || search_config
@@ -1406,42 +1484,13 @@ fn stop_condition_met(m: &Match, search_config: &SearchConfig) -> bool {
             .is_some_and(|threshold| m.error.abs() < threshold)
 }
 
-fn prefer_streaming_stop_match(candidate: &Match, current: &Match) -> bool {
-    use std::cmp::Ordering;
-
+/// Order stop matches by total complexity (the stop bound), then by the
+/// requested ranking, so every matcher reports the same stop match.
+fn prefer_stop_match(candidate: &Match, current: &Match, ranking_mode: RankingMode) -> bool {
     candidate
-        .lhs
-        .expr
-        .complexity()
-        .cmp(&current.lhs.expr.complexity())
-        .then_with(|| {
-            candidate
-                .rhs
-                .expr
-                .complexity()
-                .cmp(&current.rhs.expr.complexity())
-        })
-        .then_with(|| {
-            candidate
-                .error
-                .abs()
-                .partial_cmp(&current.error.abs())
-                .unwrap_or(Ordering::Equal)
-        })
-        .then_with(|| {
-            candidate
-                .lhs
-                .expr
-                .to_postfix()
-                .cmp(&current.lhs.expr.to_postfix())
-        })
-        .then_with(|| {
-            candidate
-                .rhs
-                .expr
-                .to_postfix()
-                .cmp(&current.rhs.expr.to_postfix())
-        })
+        .complexity
+        .cmp(&current.complexity)
+        .then_with(|| compare_matches(candidate, current, ranking_mode))
         .is_lt()
 }
 
@@ -1478,6 +1527,9 @@ pub fn search_streaming_with_config(
     if !search_config.target.is_finite() {
         return (Vec::new(), SearchStats::default());
     }
+
+    let resolved = gen_config.resolved_for_search(Some(search_config));
+    let gen_config = resolved.as_ref();
 
     let gen_start = SearchTimer::start();
     let mut stats = SearchStats::new();
@@ -1531,9 +1583,11 @@ pub fn search_streaming_with_config(
     lhs_gen_config.generate_rhs = false;
 
     let search_start = SearchTimer::start();
-    let mut best_stop_match: Option<Match> = None;
-
-    {
+    // Phase 1 records the stop bound; phase 2 rescans within it with a fresh
+    // pool (see `StopBound`). Phase 2 regenerates LHS only up to the bound.
+    let mut stop = StopBound::default();
+    let mut pass_stop = StopBound::default();
+    loop {
         let mut callbacks = StreamingCallbacks {
             on_rhs: &mut |_| true,
             on_lhs: &mut |lhs| {
@@ -1573,13 +1627,17 @@ pub fn search_streaming_with_config(
                     search_config.max_matches,
                     pool.best_error,
                     pool.accept_error,
+                    search_config.target,
                 );
                 let low = lhs.value - search_radius;
                 let high = lhs.value + search_radius;
                 stats.record_candidate_window(lhs, rhs_db.count_in_range(low, high));
 
                 for rhs in rhs_db.iter_tiers_in_range(low, high) {
-                    if !search_config.filters.allows_pair(&lhs.expr, &rhs.expr) {
+                    if !crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
+                        || !search_config.filters.allows_pair(&lhs.expr, &rhs.expr)
+                        || pass_stop.excludes(lhs.expr.complexity() + rhs.expr.complexity())
+                    {
                         continue;
                     }
                     stats.candidates_tested += 1;
@@ -1641,13 +1699,7 @@ pub fn search_streaming_with_config(
                             complexity: lhs.expr.complexity() + rhs.expr.complexity(),
                             exact,
                         };
-                        if stop_condition_met(&m, search_config)
-                            && best_stop_match
-                                .as_ref()
-                                .is_none_or(|current| prefer_streaming_stop_match(&m, current))
-                        {
-                            best_stop_match = Some(m.clone());
-                        }
+                        pass_stop.observe(&m, search_config);
                         pool.try_insert(m);
                     }
                 }
@@ -1660,25 +1712,21 @@ pub fn search_streaming_with_config(
             &context.eval,
             &mut callbacks,
         );
+        let Some(capped) = pass_stop.capped() else {
+            break;
+        };
+        if let Some(bound) = capped.bound() {
+            lhs_gen_config.max_lhs_complexity = lhs_gen_config.max_lhs_complexity.min(bound);
+        }
+        stop = std::mem::replace(&mut pass_stop, capped);
+        pool = search_config.pool();
     }
 
     stats.record_pool(&pool);
     stats.search_time = search_start.elapsed();
     stats.early_exit = false;
 
-    let matches = pool.into_sorted();
-    let matches = if let Some(priority_match) = best_stop_match {
-        merge_priority_match(
-            matches,
-            priority_match,
-            search_config.max_matches,
-            search_config.filters.canonical,
-        )
-    } else {
-        matches
-    };
-
-    (matches, stats)
+    (stop.finish(pool.into_sorted(), search_config), stats)
 }
 
 /// Perform one-sided search: generate RHS expressions only and match `x = RHS`.
@@ -1736,53 +1784,59 @@ pub fn search_one_sided_with_stats_and_config(
         return (Vec::new(), stats);
     }
     generated.rhs.sort_unstable_by(compare_expression_order);
-    for rhs in generated.rhs {
-        if !config.filters.allows_pair(&lhs.expr, &rhs.expr) {
-            continue;
-        }
-        stats.candidates_tested += 1;
-        if config.show_match_checks {
-            eprintln!(
-                "  [match] checking lhs={:.6} rhs={:.6}",
-                lhs.value, rhs.value
-            );
-        }
-
-        let error = rhs.value - config.target;
-        let Some(is_exact) = match_exactness(
-            lhs.value,
-            rhs.value,
-            lhs.derivative,
-            rhs.value,
-            config.target,
-        ) else {
-            continue;
-        };
-        if !pool.would_accept(error.abs(), is_exact) || !config.filters.allows_error(error) {
-            continue;
-        }
-
-        let m = Match {
-            lhs: lhs.clone(),
-            rhs: rhs.clone(),
-            x_value: rhs.value,
-            error,
-            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-            exact: is_exact,
-        };
-
-        pool.try_insert(m);
-
-        if config.stop_at_exact && is_exact {
-            early_exit = true;
-            break;
-        }
-        if let Some(threshold) = config.stop_below {
-            if error.abs() < threshold {
+    // Phase 1 records the stop bound; phase 2 rescans within it with a fresh
+    // pool (see `StopBound`).
+    let mut stop = StopBound::default();
+    let mut pass_stop = StopBound::default();
+    loop {
+        for rhs in &generated.rhs {
+            // RHS are visited in complexity order: past the bound, none qualify.
+            if pass_stop.excludes(lhs.expr.complexity() + rhs.expr.complexity()) {
                 early_exit = true;
                 break;
             }
+            if !config.filters.allows_pair(&lhs.expr, &rhs.expr) {
+                continue;
+            }
+            stats.candidates_tested += 1;
+            if config.show_match_checks {
+                eprintln!(
+                    "  [match] checking lhs={:.6} rhs={:.6}",
+                    lhs.value, rhs.value
+                );
+            }
+
+            let error = rhs.value - config.target;
+            let Some(is_exact) = match_exactness(
+                lhs.value,
+                rhs.value,
+                lhs.derivative,
+                rhs.value,
+                config.target,
+            ) else {
+                continue;
+            };
+            if !pool.would_accept(error.abs(), is_exact) || !config.filters.allows_error(error) {
+                continue;
+            }
+
+            let m = Match {
+                lhs: lhs.clone(),
+                rhs: rhs.clone(),
+                x_value: rhs.value,
+                error,
+                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                exact: is_exact,
+            };
+
+            pass_stop.observe(&m, config);
+            pool.try_insert(m);
         }
+        let Some(capped) = pass_stop.capped() else {
+            break;
+        };
+        stop = std::mem::replace(&mut pass_stop, capped);
+        pool = config.pool();
     }
 
     stats.record_pool(&pool);
@@ -1790,7 +1844,7 @@ pub fn search_one_sided_with_stats_and_config(
     stats.search_time = search_start.elapsed();
     stats.early_exit = early_exit;
 
-    (pool.into_sorted(), stats)
+    (stop.finish(pool.into_sorted(), config), stats)
 }
 
 /// Perform a search whose generation phase uses Rayon.
@@ -1865,6 +1919,9 @@ pub fn search_parallel_with_stats_and_config(
     if !config.target.is_finite() {
         return (Vec::new(), SearchStats::default());
     }
+
+    let resolved = gen_config.resolved_for_search(Some(config));
+    let gen_config = resolved.as_ref();
 
     // Parallel generation does not preserve the sequential expression order.
     // A first-hit stop would therefore select a different match even though

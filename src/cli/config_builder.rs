@@ -93,7 +93,8 @@ pub fn build_gen_config(
             let mut result = filtered.to_vec();
             if let Some(enabled) = enable_rhs {
                 for &symbol in symbols {
-                    if (enabled == "all" || enabled.bytes().any(|b| b == symbol as u8))
+                    if (enabled == "all"
+                        || super::args::symbol_set_codes(enabled).any(|b| b == symbol as u8))
                         && !result.contains(&symbol)
                     {
                         result.push(symbol);

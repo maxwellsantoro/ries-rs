@@ -189,6 +189,39 @@ fn bench_statistics_collection(c: &mut Criterion) {
     group.finish();
 }
 
+// Keep stop-policy performance visible without weakening its correctness proof.
+fn bench_stop_contract(c: &mut Criterion) {
+    use ries_rs::pool::RankingMode;
+    use ries_rs::search::search_with_stats_and_config;
+    let mut group = c.benchmark_group("stop_contract");
+    group.sample_size(10);
+    let gen = GenConfig {
+        max_lhs_complexity: 46,
+        max_rhs_complexity: 46,
+        ..Default::default()
+    };
+    for (name, target) in [
+        ("pi", std::f64::consts::PI),
+        ("half", 0.5),
+        ("two_point_five", 2.5),
+    ] {
+        for (mode, stop_below) in [("exact", None), ("classic", Some(1e-10))] {
+            let config = SearchConfig {
+                target,
+                max_matches: 16,
+                stop_at_exact: true,
+                stop_below,
+                ranking_mode: RankingMode::Parity,
+                ..Default::default()
+            };
+            group.bench_function(format!("{mode}/{name}"), |b| {
+                b.iter(|| search_with_stats_and_config(black_box(&gen), black_box(&config)))
+            });
+        }
+    }
+    group.finish();
+}
+
 #[cfg(feature = "parallel")]
 criterion_group!(
     benches,
@@ -197,6 +230,7 @@ criterion_group!(
     bench_parallel_vs_sequential,
     bench_match_finding,
     bench_statistics_collection,
+    bench_stop_contract,
 );
 
 #[cfg(not(feature = "parallel"))]
@@ -206,6 +240,7 @@ criterion_group!(
     bench_different_targets,
     bench_match_finding,
     bench_statistics_collection,
+    bench_stop_contract,
 );
 
 criterion_main!(benches);

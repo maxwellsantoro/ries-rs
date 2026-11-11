@@ -8,6 +8,9 @@ fn default_report_surfaces_simple_forms_of_rounded_constants() {
     ] {
         let (stdout, _) = run_ries(&[target]);
         assert!(!stdout.contains("('exact' match)"), "{target}\n{stdout}");
+        let best = stdout.split_once("-- Best approximations").unwrap().1;
+        let first = best.lines().find(|line| line.contains("for x")).unwrap();
+        assert!(first.trim().starts_with(expected[0]), "{target}\n{stdout}");
         let elegant = stdout.split_once("-- Elegant/efficient").unwrap().1;
         let equations: Vec<_> = elegant
             .lines()
@@ -114,9 +117,9 @@ fn test_classic_defaults_to_parity_ranking() {
 
 #[test]
 fn test_complexity_ranking_overrides_classic_default() {
-    // 3.14159 (near pi) produces diverse matches at -l 2 that rank differently
-    // under parity vs complexity ordering.
-    let target = "3.14159";
+    // Near 1.2, matches within the classic stop bound share an error, so the
+    // ranking tie-break decides their order: parity puts `x = apery` last.
+    let target = "1.2";
     let args_base = [
         target,
         "--classic",
@@ -163,5 +166,153 @@ fn test_ranking_flags_conflict() {
         stderr.contains("cannot be used with") || stderr.contains("conflicts with"),
         "expected clap conflict error for ranking flags\n{}",
         stderr
+    );
+}
+
+#[test]
+fn zero_target_prints_a_literal_zero() {
+    for options in [&[][..], &["--report", "false"][..], &["-s"][..]] {
+        let mut args = vec!["0", "--deterministic"];
+        args.extend_from_slice(options);
+        let (stdout, _) = run_ries(&args);
+        let first = parse_first_match_line(&stdout).expect("zero match");
+        assert!(first.starts_with("x = 0 "), "{stdout}");
+        if options.is_empty() {
+            let exact = stdout
+                .split_once("-- Exact matches")
+                .unwrap()
+                .1
+                .split_once("-- Elegant/efficient")
+                .unwrap()
+                .0;
+            assert_eq!(
+                parse_match_lines(exact)
+                    .iter()
+                    .filter(|row| row.starts_with("x = 0 "))
+                    .count(),
+                1,
+                "{stdout}"
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "default-level performance regression; run in release mode"
+)]
+fn tiny_targets_keep_newton_work_bounded() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    for target in ["1e-15", "-1e-15", "1e-300"] {
+        // Redirect to files so output cannot fill a pipe while polling the deadline.
+        let path =
+            std::env::temp_dir().join(format!("ries-tiny-{}-{target}.txt", std::process::id()));
+        let output = std::fs::File::create(&path).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_ries-rs"))
+            .args(["--deterministic", "--stats", "--", target])
+            .stdout(output)
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let start = Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if start.elapsed() > Duration::from_secs(30) {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                let _ = std::fs::remove_file(&path);
+                panic!("default search for {target} exceeded 30 seconds");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let stdout = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(status.success(), "{target}: {stdout}");
+        let calls = parse_stat_value(&stdout, "Newton calls:").unwrap();
+        assert!(
+            calls < 25_000_000,
+            "{target}: {calls} Newton calls\n{stdout}"
+        );
+        assert!(
+            parse_first_match_line(&stdout).is_some(),
+            "{target}: {stdout}"
+        );
+    }
+}
+
+fn first_json_equation(args: &[&str]) -> (String, String, u64) {
+    let (stdout, _stderr) = run_ries(args);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON output");
+    let first = &parsed["results"][0];
+    (
+        first["lhs_postfix"]
+            .as_str()
+            .expect("lhs_postfix")
+            .to_string(),
+        first["rhs_postfix"]
+            .as_str()
+            .expect("rhs_postfix")
+            .to_string(),
+        first["complexity"].as_u64().expect("complexity"),
+    )
+}
+
+#[test]
+fn fast_path_follows_complexity_ranking_over_expensive_user_constant() {
+    let base = [
+        "3.141592653589793",
+        "--classic",
+        "--complexity-ranking",
+        "--user-constant",
+        "40:c:expensive pi:3.141592653589793",
+        "-l",
+        "1",
+        "--json",
+    ];
+    let expected = ("x".to_string(), "p".to_string(), 29);
+    assert_eq!(first_json_equation(&base), expected);
+    let mut streaming = base.to_vec();
+    streaming.push("--streaming");
+    assert_eq!(first_json_equation(&streaming), expected);
+}
+
+#[test]
+fn classic_stop_returns_the_simplest_exact_equation() {
+    // `x = 1/2` spelled `2r` (35) is simpler than `1 2 /` (43); `x = phi^2`
+    // (42) is simpler than `x = phi+1` (47). Neither is a certified fast match.
+    for (target, rhs, complexity) in [("0.5", "2r", 35), ("2.618033988749895", "fs", 42)] {
+        for ranking in ["--parity-ranking", "--complexity-ranking"] {
+            assert_eq!(
+                first_json_equation(&[target, "--classic", ranking, "--json"]),
+                ("x".to_string(), rhs.to_string(), complexity),
+                "{target} {ranking}"
+            );
+        }
+    }
+}
+
+#[test]
+fn root_pruning_keeps_two_index_root_without_sqrt() {
+    let (stdout, _stderr) = run_ries(&[
+        "1.4142135623730951",
+        "-S",
+        "x2v",
+        "-a",
+        "-l",
+        "2",
+        "--deterministic",
+        "--json",
+    ]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON output");
+    let results = parsed["results"].as_array().expect("results array");
+    assert!(
+        results
+            .iter()
+            .any(|r| r["lhs_postfix"] == "x" && r["rhs_postfix"] == "22v"),
+        "x = 2nd root of 2 should survive pruning when sqrt is unavailable\n{stdout}"
     );
 }

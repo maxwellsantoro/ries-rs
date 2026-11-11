@@ -253,8 +253,15 @@ pub struct ExpressionConstraintOptions {
     pub max_trig_cycles: Option<u32>,
     /// Inherited numeric types for user-defined constants 0-15
     pub user_constant_types: [NumType; 16],
-    /// Inherited numeric types for user-defined functions 0-15
+    /// Fixed result types for user-defined functions 0-15 whose body is not
+    /// available in `user_function_constraints`. Such a function is opaque:
+    /// its body is not checked against the restrictions.
     pub user_function_types: [NumType; 16],
+    /// Body-derived behavior of user-defined functions 0-15. When present,
+    /// it takes precedence over `user_function_types`: the result type
+    /// follows the argument, and the body is checked against the restrictions.
+    /// Build entries with [`UserFunctionConstraints::from_function`].
+    pub user_function_constraints: [Option<UserFunctionConstraints>; 16],
 }
 
 impl Default for ExpressionConstraintOptions {
@@ -265,8 +272,279 @@ impl Default for ExpressionConstraintOptions {
             max_trig_cycles: None,
             user_constant_types: [NumType::Transcendental; 16],
             user_function_types: [NumType::Transcendental; 16],
+            user_function_constraints: [None; 16],
         }
     }
+}
+
+const NUM_TYPES: [NumType; 7] = [
+    NumType::Transcendental,
+    NumType::Liouvillian,
+    NumType::Elementary,
+    NumType::Algebraic,
+    NumType::Constructible,
+    NumType::Rational,
+    NumType::Integer,
+];
+
+/// Abstract value tracked by the constraint walker for one stack entry.
+#[derive(Clone, Copy, Debug)]
+struct ConstraintValue {
+    has_x: bool,
+    num_type: NumType,
+    // Known arithmetic constants let positive integer powers retain their
+    // integer classification without assuming unknown exponents are positive.
+    constant_value: Option<f64>,
+}
+
+/// Restriction-relevant events seen while walking an expression. Recording
+/// events, rather than rejecting immediately, lets user function bodies be
+/// summarized once and checked under any set of options.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ConstraintTrace {
+    trig_ops: u32,
+    irrational_trig_arg: bool,
+    irrational_exponent: bool,
+}
+
+impl ConstraintTrace {
+    fn merge(&mut self, other: Self) {
+        self.trig_ops = self.trig_ops.saturating_add(other.trig_ops);
+        self.irrational_trig_arg |= other.irrational_trig_arg;
+        self.irrational_exponent |= other.irrational_exponent;
+    }
+
+    fn allowed_by(self, opts: &ExpressionConstraintOptions) -> bool {
+        !(opts.rational_trig_args && self.irrational_trig_arg)
+            && !(opts.rational_exponents && self.irrational_exponent)
+            && opts
+                .max_trig_cycles
+                .is_none_or(|max_cycles| self.trig_ops <= max_cycles)
+    }
+}
+
+/// Result of applying a user function body to one class of argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct UdfOutcome {
+    num_type: NumType,
+    trace: ConstraintTrace,
+}
+
+/// Constraint behavior of one user-defined function, derived from its body.
+///
+/// A user function's numeric class depends on its argument: `sq(2)` is an
+/// integer while `sq(pi)` is not, so no single fixed type describes it. This
+/// summary records, for every argument class and x-dependence, the class of
+/// the result and the restriction-relevant operations inside the body. The
+/// walker uses the same transfer rules for bodies as for expressions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UserFunctionConstraints {
+    /// Indexed by `[arg depends on x][arg NumType]`; `None` when the body
+    /// cannot be evaluated structurally (the evaluator rejects it too).
+    outcomes: [[Option<UdfOutcome>; 7]; 2],
+}
+
+impl UserFunctionConstraints {
+    /// Summarize `function`'s body. `user_constant_types` classifies any user
+    /// constants the body references.
+    pub fn from_function(function: &UserFunction, user_constant_types: &[NumType; 16]) -> Self {
+        let mut outcomes = [[None; 7]; 2];
+        for (has_x, row) in outcomes.iter_mut().enumerate() {
+            for (slot, &num_type) in row.iter_mut().zip(NUM_TYPES.iter()) {
+                *slot = Self::apply_body(
+                    function,
+                    ConstraintValue {
+                        has_x: has_x == 1,
+                        num_type,
+                        constant_value: None,
+                    },
+                    user_constant_types,
+                );
+            }
+        }
+        Self { outcomes }
+    }
+
+    fn apply_body(
+        function: &UserFunction,
+        arg: ConstraintValue,
+        user_constant_types: &[NumType; 16],
+    ) -> Option<UdfOutcome> {
+        use crate::udf::UdfOp;
+        // Bodies are walked without nested function bodies: the evaluator
+        // does not let user functions call one another.
+        let opts = ExpressionConstraintOptions {
+            user_constant_types: *user_constant_types,
+            ..Default::default()
+        };
+        let mut stack = vec![arg];
+        let mut trace = ConstraintTrace::default();
+        for op in &function.body {
+            match *op {
+                UdfOp::Symbol(Symbol::X) => return None,
+                UdfOp::Symbol(sym) if sym.user_function_index().is_some() => return None,
+                UdfOp::Symbol(sym) => constraint_step(&mut stack, sym, &opts, &mut trace)?,
+                UdfOp::Dup => stack.push(*stack.last()?),
+                UdfOp::Swap => {
+                    let len = stack.len();
+                    if len < 2 {
+                        return None;
+                    }
+                    stack.swap(len - 1, len - 2);
+                }
+            }
+        }
+        match stack.as_slice() {
+            [result] => Some(UdfOutcome {
+                num_type: result.num_type,
+                trace,
+            }),
+            _ => None,
+        }
+    }
+
+    fn outcome(&self, arg: ConstraintValue) -> Option<UdfOutcome> {
+        self.outcomes[usize::from(arg.has_x)][arg.num_type as usize]
+    }
+}
+
+/// Apply one symbol to the abstract stack. This is the single set of
+/// structural transfer rules for expressions and user function bodies.
+fn constraint_step(
+    stack: &mut Vec<ConstraintValue>,
+    sym: Symbol,
+    opts: &ExpressionConstraintOptions,
+    trace: &mut ConstraintTrace,
+) -> Option<()> {
+    match sym.seft() {
+        Seft::A => {
+            let num_type = if let Some(idx) = sym.user_constant_index() {
+                opts.user_constant_types[idx as usize]
+            } else if sym == Symbol::X {
+                NumType::Integer // polynomial indeterminate, not a sampled integer
+            } else {
+                sym.inherent_type()
+            };
+            stack.push(ConstraintValue {
+                has_x: sym == Symbol::X,
+                num_type,
+                constant_value: match sym {
+                    Symbol::One
+                    | Symbol::Two
+                    | Symbol::Three
+                    | Symbol::Four
+                    | Symbol::Five
+                    | Symbol::Six
+                    | Symbol::Seven
+                    | Symbol::Eight
+                    | Symbol::Nine => Some(f64::from(sym as u8 - b'0')),
+                    _ => None,
+                },
+            });
+        }
+        Seft::B => {
+            let arg = stack.pop()?;
+
+            if matches!(sym, Symbol::SinPi | Symbol::CosPi | Symbol::TanPi) {
+                trace.trig_ops = trace.trig_ops.saturating_add(1);
+                if arg.has_x || arg.num_type < NumType::Rational {
+                    trace.irrational_trig_arg = true;
+                }
+            }
+
+            let num_type = if let Some(idx) = sym.user_function_index() {
+                let idx = idx as usize;
+                match opts.user_function_constraints[idx] {
+                    Some(summary) => {
+                        let outcome = summary.outcome(arg)?;
+                        trace.merge(outcome.trace);
+                        outcome.num_type
+                    }
+                    None => opts.user_function_types[idx],
+                }
+            } else {
+                sym.result_type(&[arg.num_type])
+            };
+
+            let constant_value = arg.constant_value.and_then(|value| {
+                let result = match sym {
+                    Symbol::Neg => -value,
+                    Symbol::Square => value * value,
+                    Symbol::Recip => 1.0 / value,
+                    Symbol::Sqrt => value.sqrt(),
+                    _ => return None,
+                };
+                result.is_finite().then_some(result)
+            });
+            stack.push(ConstraintValue {
+                has_x: arg.has_x,
+                num_type,
+                constant_value,
+            });
+        }
+        Seft::C => {
+            let rhs = stack.pop()?;
+            let lhs = stack.pop()?;
+
+            if sym == Symbol::Pow && (rhs.has_x || rhs.num_type < NumType::Rational) {
+                trace.irrational_exponent = true;
+            }
+
+            let num_type = sym.result_type_with_facts(
+                &[lhs.num_type, rhs.num_type],
+                &[lhs.has_x, rhs.has_x],
+                &[lhs.constant_value, rhs.constant_value],
+            );
+
+            let constant_value = lhs
+                .constant_value
+                .zip(rhs.constant_value)
+                .and_then(|(a, b)| {
+                    let result = match sym {
+                        Symbol::Add => a + b,
+                        Symbol::Sub => a - b,
+                        Symbol::Mul => a * b,
+                        Symbol::Div => a / b,
+                        Symbol::Pow => a.powf(b),
+                        _ => return None,
+                    };
+                    result.is_finite().then_some(result)
+                });
+            stack.push(ConstraintValue {
+                has_x: lhs.has_x || rhs.has_x,
+                num_type,
+                constant_value,
+            });
+        }
+    }
+    Some(())
+}
+
+/// Walk `expression` structurally, returning its numeric class and trace,
+/// or `None` for a malformed expression or unusable user function body.
+fn constraint_walk(
+    expression: &Expression,
+    opts: &ExpressionConstraintOptions,
+) -> Option<(NumType, ConstraintTrace)> {
+    let mut stack: Vec<ConstraintValue> = Vec::with_capacity(expression.len());
+    let mut trace = ConstraintTrace::default();
+    for &sym in expression.symbols() {
+        constraint_step(&mut stack, sym, opts, &mut trace)?;
+    }
+    match stack.as_slice() {
+        [result] => Some((result.num_type, trace)),
+        _ => None,
+    }
+}
+
+/// Structural numeric class of `expression` under `opts`, as used by the
+/// constraint checks. Exposed to the crate for differential tests.
+#[cfg(test)]
+pub(crate) fn constraint_num_type(
+    expression: &Expression,
+    opts: &ExpressionConstraintOptions,
+) -> Option<NumType> {
+    constraint_walk(expression, opts).map(|(num_type, _)| num_type)
 }
 
 /// Check if an expression respects the configured structural and numeric constraints.
@@ -277,140 +555,32 @@ pub fn expression_respects_constraints(
     expression: &Expression,
     opts: ExpressionConstraintOptions,
 ) -> bool {
-    #[derive(Clone, Copy)]
-    struct ConstraintValue {
-        has_x: bool,
-        num_type: NumType,
-    }
+    constraint_walk(expression, &opts).is_some_and(|(_, trace)| trace.allowed_by(&opts))
+}
 
-    let mut stack: Vec<ConstraintValue> = Vec::with_capacity(expression.len());
-    let mut trig_ops: u32 = 0;
-
-    for &sym in expression.symbols() {
-        match sym.seft() {
-            Seft::A => {
-                let num_type = if let Some(idx) = sym.user_constant_index() {
-                    opts.user_constant_types[idx as usize]
-                } else {
-                    sym.inherent_type()
-                };
-                stack.push(ConstraintValue {
-                    has_x: sym == Symbol::X,
-                    num_type,
-                });
-            }
-            Seft::B => {
-                let Some(arg) = stack.pop() else {
-                    return false;
-                };
-
-                if matches!(sym, Symbol::SinPi | Symbol::CosPi | Symbol::TanPi) {
-                    trig_ops = trig_ops.saturating_add(1);
-                    if opts.rational_trig_args && (arg.has_x || arg.num_type < NumType::Rational) {
-                        return false;
-                    }
-                }
-
-                let num_type = match sym {
-                    Symbol::Neg | Symbol::Square => arg.num_type,
-                    Symbol::Recip => {
-                        if arg.num_type >= NumType::Rational {
-                            NumType::Rational
-                        } else {
-                            arg.num_type
-                        }
-                    }
-                    Symbol::Sqrt => {
-                        if arg.num_type >= NumType::Rational {
-                            NumType::Algebraic
-                        } else {
-                            arg.num_type
-                        }
-                    }
-                    Symbol::UserFunction0
-                    | Symbol::UserFunction1
-                    | Symbol::UserFunction2
-                    | Symbol::UserFunction3
-                    | Symbol::UserFunction4
-                    | Symbol::UserFunction5
-                    | Symbol::UserFunction6
-                    | Symbol::UserFunction7
-                    | Symbol::UserFunction8
-                    | Symbol::UserFunction9
-                    | Symbol::UserFunction10
-                    | Symbol::UserFunction11
-                    | Symbol::UserFunction12
-                    | Symbol::UserFunction13
-                    | Symbol::UserFunction14
-                    | Symbol::UserFunction15 => {
-                        let idx = sym.user_function_index().unwrap_or(0) as usize;
-                        opts.user_function_types[idx]
-                    }
-                    _ => NumType::Transcendental,
-                };
-
-                stack.push(ConstraintValue {
-                    has_x: arg.has_x,
-                    num_type,
-                });
-            }
-            Seft::C => {
-                let Some(rhs) = stack.pop() else {
-                    return false;
-                };
-                let Some(lhs) = stack.pop() else {
-                    return false;
-                };
-
-                if opts.rational_exponents
-                    && sym == Symbol::Pow
-                    && (rhs.has_x || rhs.num_type < NumType::Rational)
-                {
-                    return false;
-                }
-
-                let num_type = match sym {
-                    Symbol::Add | Symbol::Sub | Symbol::Mul => lhs.num_type.combine(rhs.num_type),
-                    Symbol::Div => {
-                        let combined = lhs.num_type.combine(rhs.num_type);
-                        if combined == NumType::Integer {
-                            NumType::Rational
-                        } else {
-                            combined
-                        }
-                    }
-                    Symbol::Pow => {
-                        if rhs.has_x {
-                            NumType::Transcendental
-                        } else if rhs.num_type == NumType::Integer {
-                            lhs.num_type
-                        } else if lhs.num_type >= NumType::Rational
-                            && rhs.num_type >= NumType::Rational
-                        {
-                            NumType::Algebraic
-                        } else {
-                            NumType::Transcendental
-                        }
-                    }
-                    Symbol::Root => NumType::Algebraic,
-                    Symbol::Log | Symbol::Atan2 => NumType::Transcendental,
-                    _ => NumType::Transcendental,
-                };
-
-                stack.push(ConstraintValue {
-                    has_x: lhs.has_x || rhs.has_x,
-                    num_type,
-                });
-            }
+impl GenConfig {
+    /// Resolve RHS search filters before pruning or choosing representatives.
+    /// The LHS grammar and caller-owned configuration remain unchanged.
+    pub(crate) fn resolved_for_search<'a>(
+        &'a self,
+        search: Option<&SearchConfig>,
+    ) -> Cow<'a, Self> {
+        let Some(search) = search else {
+            return Cow::Borrowed(self);
+        };
+        let allowed = |symbol: &Symbol| search.rhs_symbol_is_allowed(*symbol);
+        let constants = self.rhs_constants.as_deref().unwrap_or(&self.constants);
+        let unary = self.rhs_unary_ops.as_deref().unwrap_or(&self.unary_ops);
+        let binary = self.rhs_binary_ops.as_deref().unwrap_or(&self.binary_ops);
+        if constants.iter().chain(unary).chain(binary).all(allowed) {
+            return Cow::Borrowed(self);
         }
+        let mut resolved = self.clone();
+        resolved.rhs_constants = Some(constants.iter().copied().filter(allowed).collect());
+        resolved.rhs_unary_ops = Some(unary.iter().copied().filter(allowed).collect());
+        resolved.rhs_binary_ops = Some(binary.iter().copied().filter(allowed).collect());
+        Cow::Owned(resolved)
     }
-
-    if stack.len() != 1 {
-        return false;
-    }
-
-    opts.max_trig_cycles
-        .is_none_or(|max_cycles| trig_ops <= max_cycles)
 }
 
 impl Default for GenConfig {
@@ -609,9 +779,18 @@ impl<'a> RhsRepresentatives<'a> {
 fn prefer_rhs(candidate: &Expression, current: &Expression, search: Option<&SearchConfig>) -> bool {
     // For a fixed LHS and RHS value, exactness and error are identical.
     let complexity = candidate.complexity().cmp(&current.complexity());
+    let parity = || legacy_parity_score_expr(candidate).cmp(&legacy_parity_score_expr(current));
+    // A stop condition bounds results by the complexity of the simplest stop
+    // match (`StopBound`). Keeping a costlier spelling of a value would raise
+    // that bound; any costlier spelling is past the bound anyway.
+    let stop_bounded =
+        search.is_some_and(|config| config.stop_at_exact || config.stop_below.is_some());
     match search.map(|config| config.ranking_mode) {
-        Some(RankingMode::Parity) => legacy_parity_score_expr(candidate)
-            .cmp(&legacy_parity_score_expr(current))
+        Some(RankingMode::Parity) if stop_bounded => complexity
+            .then_with(parity)
+            .then_with(|| candidate.symbols().cmp(current.symbols()))
+            .is_lt(),
+        Some(RankingMode::Parity) => parity()
             .then(complexity)
             .then_with(|| candidate.symbols().cmp(current.symbols()))
             .is_lt(),
@@ -704,6 +883,8 @@ pub(crate) fn generate_all_with_rhs_policy(
     eval_context: &EvalContext<'_>,
     search: Option<&SearchConfig>,
 ) -> GeneratedExprs {
+    let resolved = config.resolved_for_search(search);
+    let config = resolved.as_ref();
     let mut lhs_raw = Vec::new();
     let mut rhs_raw = Vec::new();
 
@@ -820,6 +1001,8 @@ pub(crate) fn generate_bounded_with_rhs_policy(
     preserve_lhs: bool,
     search: Option<&SearchConfig>,
 ) -> Option<GeneratedExprs> {
+    let resolved = config.resolved_for_search(search);
+    let config = resolved.as_ref();
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -1247,7 +1430,7 @@ fn generate_recursive_streaming(
             }
 
             // Apply pruning rules
-            if should_prune_unary(current, sym) {
+            if should_prune_unary(config, current, sym) {
                 continue;
             }
 
@@ -1279,7 +1462,7 @@ fn generate_recursive_streaming(
             }
 
             // Apply pruning rules
-            if should_prune_binary(current, sym) {
+            if should_prune_binary(config, current, sym) {
                 continue;
             }
 
@@ -1430,7 +1613,7 @@ fn generate_recursive(
             }
 
             // Apply pruning rules
-            if should_prune_unary(current, sym) {
+            if should_prune_unary(config, current, sym) {
                 continue;
             }
 
@@ -1460,7 +1643,7 @@ fn generate_recursive(
             }
 
             // Apply pruning rules
-            if should_prune_binary(current, sym) {
+            if should_prune_binary(config, current, sym) {
                 continue;
             }
 
@@ -1496,133 +1679,256 @@ fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u32 {
     ((stack_depth - 1) as u32) * min_binary_weight
 }
 
-/// Pruning rules for unary operators to avoid redundant expressions
-fn should_prune_unary(expr: &Expression, sym: Symbol) -> bool {
-    let symbols = expr.symbols();
-    if symbols.is_empty() {
-        return false;
+// =============================================================================
+// PRUNING
+// =============================================================================
+//
+// Every pruning rule belongs to exactly one class:
+//
+// - Identity: the pruned expression is degenerate (`a/a`, `1^b`, `log_1`) or
+//   equals another expression built from a subset of its own symbols at no
+//   greater complexity (`--a`, `ln(e^a)`, `-(a-b)` vs `b-a`, `2+3` vs `3+2`).
+//   Always safe.
+// - Rewrite: the expression has a preferred spelling that uses a symbol it
+//   does not contain (`2nd root` vs `sqrt`, `a+a` vs `2*a`). Such a rule may
+//   fire only when the replacement is enabled on the side being generated, is
+//   not heavier under the active weights, fits the per-symbol count limit,
+//   and is not itself pruned. `pruning_never_loses_reachable_values` checks
+//   identities and rewrites against generation without them.
+// - Heuristic: a deliberate, lossy search-space reduction inherited from
+//   RIES-style generation (`exp(exp(a))`, `1/ln(a)`, `sinpi(sinpi(a))`). These
+//   may remove values; they are documented in docs/SEARCH_MODEL.md.
+
+/// Which pruning classes are active. Tests disable identities and rewrites to
+/// compare generation with and without them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+enum PruneMode {
+    All,
+    HeuristicsOnly,
+}
+
+#[cfg(test)]
+thread_local! {
+    static PRUNE_MODE: std::cell::Cell<PruneMode> = const { std::cell::Cell::new(PruneMode::All) };
+}
+
+#[inline]
+fn prune_mode() -> PruneMode {
+    #[cfg(test)]
+    {
+        PRUNE_MODE.with(|mode| mode.get())
     }
+    #[cfg(not(test))]
+    {
+        PruneMode::All
+    }
+}
 
-    let last = symbols[symbols.len() - 1];
+#[inline]
+fn symbol_enabled(config: &GenConfig, sym: Symbol) -> bool {
+    match sym.seft() {
+        Seft::A => config.constants.contains(&sym),
+        Seft::B => config.unary_ops.contains(&sym),
+        Seft::C => config.binary_ops.contains(&sym),
+    }
+}
 
+/// Whether `replacement`, swapped in for symbols of total weight
+/// `replaced_weight` in `current`, would be generated in its place.
+#[inline]
+fn replacement_admissible(
+    config: &GenConfig,
+    current: &Expression,
+    replacement: Symbol,
+    replaced_weight: u32,
+) -> bool {
+    symbol_enabled(config, replacement)
+        && config.symbol_table.weight(replacement) <= replaced_weight
+        && !exceeds_symbol_limit(config, current, replacement)
+}
+
+/// Pruning rules for unary operators to avoid redundant expressions
+fn should_prune_unary(config: &GenConfig, expr: &Expression, sym: Symbol) -> bool {
+    let Some(&last) = expr.symbols().last() else {
+        return false;
+    };
+    let mode = prune_mode();
+    (mode == PruneMode::All && is_unary_identity(config, expr, last, sym))
+        || is_unary_heuristic(config, last, sym)
+}
+
+/// Unary identities: applying `sym` after `last` returns an operand or a
+/// same-symbol spelling with no greater complexity.
+fn is_unary_identity(config: &GenConfig, expr: &Expression, last: Symbol, sym: Symbol) -> bool {
     use Symbol::*;
-
     match (last, sym) {
-        // Double negation: --a = a
-        (Neg, Neg) => true,
-        // Double reciprocal: 1/(1/a) = a
-        (Recip, Recip) => true,
-        // sqrt(a^2) = |a| (we don't handle absolute value)
-        (Square, Sqrt) => true,
-        // (sqrt(a))^2 = a
-        (Sqrt, Square) => true,
-        // ln(e^a) = a
-        (Exp, Ln) => true,
-        // e^(ln(a)) = a
-        (Ln, Exp) => true,
-
-        // Additional pruning rules for cleaner output:
-        // 1/sqrt(a) and 1/a^2 are rare, prefer a^-0.5 or a^-2 notation
-        (Sqrt, Recip) => true,
-        (Square, Recip) => true,
-        // 1/ln(a) is rarely useful
-        (Ln, Recip) => true,
-        // Double square: (a^2)^2 = a^4, use power directly
-        (Square, Square) => true,
-        // Double sqrt: sqrt(sqrt(a)) = a^0.25, use power directly
-        (Sqrt, Sqrt) => true,
-        // Negation after subtraction is redundant with addition
-        // e.g., -(a-b) = b-a which we could express directly
+        // --a = a, 1/(1/a) = a
+        (Neg, Neg) | (Recip, Recip) => true,
+        // (sqrt a)^2 = a, ln(e^a) = a, e^(ln a) = a
+        (Sqrt, Square) | (Exp, Ln) | (Ln, Exp) => true,
+        // 1/sqrt(a) = sqrt(1/a) and 1/a^2 = (1/a)^2 use the same symbols.
+        // The respelling starts with `a r`, which must not itself be pruned
+        // (1/ln(a) is a heuristic prune, so 1/sqrt(ln a) is kept as is).
+        (Sqrt, Recip) | (Square, Recip) => {
+            let operand = expr_tail(&expr.symbols()[..expr.len() - 1], 0);
+            !should_prune_unary(config, &operand, Recip)
+        }
+        // -(a-b) = b-a
         (Sub, Neg) => true,
+        _ => false,
+    }
+}
 
-        // ===== ENHANCED PRUNING RULES =====
-        // Trig reduction: asin(sin(pi*x)/pi) = x, similar for acos
-        // These are rarely useful and add many redundant expressions
-        (SinPi, SinPi) => true,
-        (CosPi, CosPi) => true,
-        // asin after sinpi is identity (mod periodicity)
-        // acos after cospi is identity (mod periodicity)
-        // These patterns are captured by double application above
-
-        // Exp grows too fast - double exp is almost never useful
-        (Exp, Exp) => true,
-
-        // LambertW after exp: W(e^a) = a, so W(e^x) = x
-        (Exp, LambertW) => true,
-
-        // LambertW on small values often doesn't converge usefully
-        // W of reciprocal is rarely needed
-        (Recip, LambertW) => true,
-
+/// Deliberately lossy unary pruning (see the module notes above).
+fn is_unary_heuristic(config: &GenConfig, last: Symbol, sym: Symbol) -> bool {
+    use Symbol::*;
+    match (last, sym) {
+        // sqrt(a^2) = |a|; absolute value is not modeled.
+        (Square, Sqrt) => true,
+        // 1/ln(a) is rarely useful.
+        (Ln, Recip) => true,
+        // (a^2)^2 and sqrt(sqrt(a)): prefer a power or fourth root. Only
+        // pruned when that spelling exists, so a^4 stays representable.
+        (Square, Square) => symbol_enabled(config, Pow) && symbol_enabled(config, Four),
+        (Sqrt, Sqrt) => symbol_enabled(config, Root) && symbol_enabled(config, Four),
+        // Repeated trig and double exponentials are almost never useful.
+        (SinPi, SinPi) | (CosPi, CosPi) | (Exp, Exp) => true,
+        // W(e^a) and W(1/a) are rarely useful. Note W(e^a) is not a in
+        // general: W(y e^y) = y.
+        (Exp, LambertW) | (Recip, LambertW) => true,
         _ => false,
     }
 }
 
 /// Pruning rules for binary operators
-fn should_prune_binary(expr: &Expression, sym: Symbol) -> bool {
+fn should_prune_binary(config: &GenConfig, expr: &Expression, sym: Symbol) -> bool {
+    prune_mode() == PruneMode::All
+        && (is_binary_identity(expr, sym) || is_binary_rewrite(config, expr, sym))
+}
+
+/// Binary identities and degenerate forms. Operands are complete
+/// subexpressions: the token before the final token can be inside the right
+/// operand.
+fn is_binary_identity(expr: &Expression, sym: Symbol) -> bool {
     let symbols = expr.symbols();
     if symbols.len() < 2 {
         return false;
     }
 
     let last = symbols[symbols.len() - 1];
-    let prev = symbols[symbols.len() - 2];
+    let rhs_start = subexpr_start(symbols, symbols.len());
+    let lhs_atom = rhs_start.and_then(|end| {
+        subexpr_start(symbols, end)
+            .filter(|&start| start + 1 == end)
+            .map(|start| symbols[start])
+    });
+    let rhs_atom = rhs_start
+        .filter(|&start| start + 1 == symbols.len())
+        .map(|start| symbols[start]);
 
     use Symbol::*;
 
     match sym {
-        // a - a = 0 (if both operands are identical)
+        // a - a = 0, x - x = 0
         Sub if is_same_subexpr(symbols, 2) => true,
-        // x - x = 0 (trivial - always 0)
-        Sub if last == X && prev == X => true,
+        Sub if lhs_atom == Some(X) && rhs_atom == Some(X) => true,
 
-        // a / a = 1 (degenerate if a contains x)
+        // a / a = 1, x / x = 1, a / 1 = a
         Div if is_same_subexpr(symbols, 2) => true,
-        // x / x = 1 (trivial identity)
-        Div if last == X && prev == X => true,
-        // Division by 1: a/1 = a (useless)
+        Div if lhs_atom == Some(X) && rhs_atom == Some(X) => true,
         Div if last == One => true,
 
-        // Prefer a*2 over a+a
-        Add if is_same_subexpr(symbols, 2) => true,
-        // x + (-x) = 0 - check for negated x
-        Add if last == Neg
-            && symbols.len() >= 3
-            && symbols[symbols.len() - 2] == X
-            && prev == X =>
+        // x + (-x) = 0
+        Add if lhs_atom == Some(X)
+            && rhs_start.is_some_and(|start| symbols[start..] == [X, Neg]) =>
         {
             true
         }
 
-        // 1^b = 1 (degenerate - always equals 1 regardless of b)
-        // This catches 1^x, 1^(anything)
-        Pow if prev == One => true,
-        // a^1 = a (useless)
+        // 1^b = 1, a^1 = a
+        Pow if lhs_atom == Some(One) => true,
         Pow if last == One => true,
 
         // x * 1 = x, 1 * x = x
-        Mul if last == One || prev == One => true,
+        Mul if rhs_atom == Some(One) || lhs_atom == Some(One) => true,
 
-        // a"/1 = a^(1/1) = a (1st root is identity)
-        // But more importantly: 1"/x = 1^(1/x) = 1 (degenerate)
-        Root if prev == One => true,
-        // x"/1 means 1^(1/x) = 1 (degenerate)
-        Root if last == One => true,
-        // 2nd root is just sqrt, prefer using sqrt
-        Root if last == Two => true,
+        // In `a b v`, a is the index and b is the radicand: first roots are
+        // identities and roots of 1 are constant.
+        Root => {
+            let Some(radicand_start) = rhs_start else {
+                return false;
+            };
+            let index_is_one = radicand_start >= 1
+                && symbols[radicand_start - 1] == One
+                && subexpr_start(symbols, radicand_start) == Some(radicand_start - 1);
+            last == One || index_is_one
+        }
 
-        // log_x(x) = 1 (trivial identity)
-        Log if last == X && prev == X => true,
-        // log_1(anything) is undefined/infinite, log_a(1) = 0
-        Log if prev == One || last == One => true,
-        // log_e(a) = ln(a) - prefer ln notation
-        Log if prev == E => true,
+        // log_x(x) = 1, log_1(b) is undefined, log_a(1) = 0
+        Log if lhs_atom == Some(X) && rhs_atom == Some(X) => true,
+        Log if lhs_atom == Some(One) || rhs_atom == Some(One) => true,
 
         // Ordering: prefer 2+3 over 3+2 for commutative ops
-        Add | Mul if prev > last && is_constant(last) && is_constant(prev) => true,
+        Add | Mul
+            if lhs_atom
+                .zip(rhs_atom)
+                .is_some_and(|(lhs, rhs)| lhs > rhs && is_constant(lhs) && is_constant(rhs)) =>
+        {
+            true
+        }
 
         _ => false,
     }
+}
+
+/// Binary rewrites toward a dedicated symbol. Each fires only when that
+/// symbol would generate the same value in its place.
+fn is_binary_rewrite(config: &GenConfig, expr: &Expression, sym: Symbol) -> bool {
+    use Symbol::*;
+    let symbols = expr.symbols();
+    let Some(rhs_start) = subexpr_start(symbols, symbols.len()) else {
+        return false;
+    };
+    let Some(lhs_start) = subexpr_start(symbols, rhs_start) else {
+        return false;
+    };
+    let weight = |sym| config.symbol_table.weight(sym);
+    let lhs_atom = (lhs_start + 1 == rhs_start).then(|| symbols[lhs_start]);
+
+    match sym {
+        // `2 b v` is sqrt(b): prefer `b q`.
+        Root if lhs_atom == Some(Two) => {
+            replacement_admissible(config, expr, Sqrt, weight(Two) + weight(Root))
+                && !should_prune_unary(config, &expr_tail(symbols, rhs_start), Sqrt)
+        }
+        // log_e(b) is ln(b): prefer `b l`.
+        Log if lhs_atom == Some(E) => {
+            replacement_admissible(config, expr, Ln, weight(E) + weight(Log))
+                && !should_prune_unary(config, &expr_tail(symbols, rhs_start), Ln)
+        }
+        // a + a is 2*a: prefer `2 a *` (or `a 2 *` when a is an atom ordered
+        // before 2). Both the 2 and the * must be admissible.
+        Add if is_same_subexpr(symbols, 2) => {
+            let operand_weight: u32 = symbols[rhs_start..].iter().map(|&s| weight(s)).sum();
+            symbol_enabled(config, Two)
+                && symbol_enabled(config, Mul)
+                && weight(Two) + weight(Mul) <= operand_weight + weight(Add)
+                && !exceeds_symbol_limit(config, expr, Two)
+                && !exceeds_symbol_limit(config, expr, Mul)
+        }
+        _ => false,
+    }
+}
+
+/// The trailing operand starting at `start`, as its own expression, so a
+/// rewrite can ask whether its replacement would itself be pruned.
+fn expr_tail(symbols: &[Symbol], start: usize) -> Expression {
+    let mut tail = Expression::new();
+    for &sym in &symbols[start..] {
+        tail.push(sym);
+    }
+    tail
 }
 
 /// Check whether the top two stack subexpressions are identical.
@@ -1647,23 +1953,6 @@ fn is_same_subexpr(symbols: &[Symbol], n: usize) -> bool {
         return false;
     }
 
-    /// Walk left from `end - 1` until one complete subexpression has been
-    /// consumed, returning its start index (or `None` on underflow).
-    fn subexpr_start(symbols: &[Symbol], end: usize) -> Option<usize> {
-        let mut needed: i32 = 1;
-        for i in (0..end).rev() {
-            needed += match symbols[i].seft() {
-                Seft::A => -1,
-                Seft::B => 0,
-                Seft::C => 1,
-            };
-            if needed == 0 {
-                return Some(i);
-            }
-        }
-        None
-    }
-
     let end = symbols.len();
     let Some(top_start) = subexpr_start(symbols, end) else {
         return false;
@@ -1675,6 +1964,23 @@ fn is_same_subexpr(symbols: &[Symbol], n: usize) -> bool {
     // Slice equality already compares lengths, so unequal-length operands
     // short-circuit to `false`.
     symbols[prev_start..top_start] == symbols[top_start..end]
+}
+
+/// Walk left from `end - 1` until one complete subexpression has been
+/// consumed, returning its start index (or `None` on underflow).
+fn subexpr_start(symbols: &[Symbol], end: usize) -> Option<usize> {
+    let mut needed: i32 = 1;
+    for i in (0..end).rev() {
+        needed += match symbols[i].seft() {
+            Seft::A => -1,
+            Seft::B => 0,
+            Seft::C => 1,
+        };
+        if needed == 0 {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// Check if a symbol is a constant (no x)
@@ -1709,6 +2015,8 @@ pub(crate) fn generate_parallel_with_rhs_policy(
     eval_context: &EvalContext<'_>,
     search: Option<&SearchConfig>,
 ) -> GeneratedExprs {
+    let resolved = config.resolved_for_search(search);
+    let config = resolved.as_ref();
     use rayon::prelude::*;
 
     // Parallel path currently assumes shared LHS/RHS symbol sets.
@@ -1816,7 +2124,7 @@ pub(crate) fn generate_parallel_with_rhs_policy(
             let sym2_weight = config.symbol_table.weight(sym2);
             if expr1.complexity() + sym2_weight <= max_complexity
                 && !exceeds_symbol_limit(config, &expr1, sym2)
-                && !should_prune_unary(&expr1, sym2)
+                && !should_prune_unary(config, &expr1, sym2)
             {
                 let mut expr2 = expr1.clone();
                 expr2.push_with_table(sym2, &config.symbol_table);
@@ -1866,6 +2174,340 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     use proptest::prelude::*;
 
+    fn udf(spec: &str) -> UserFunction {
+        UserFunction::parse(spec).unwrap()
+    }
+
+    fn options_with_functions(
+        functions: &[UserFunction],
+        constants: &[UserConstant],
+    ) -> ExpressionConstraintOptions {
+        let mut opts = ExpressionConstraintOptions::default();
+        for (slot, constant) in opts.user_constant_types.iter_mut().zip(constants) {
+            *slot = constant.num_type;
+        }
+        for (idx, function) in functions.iter().enumerate() {
+            opts.user_function_constraints[idx] = Some(UserFunctionConstraints::from_function(
+                function,
+                &opts.user_constant_types,
+            ));
+        }
+        opts
+    }
+
+    #[test]
+    fn arithmetic_user_function_follows_argument_type() {
+        use Symbol::{Pi, Pow, SinPi, Two, UserFunction0 as Sq};
+        let opts = ExpressionConstraintOptions {
+            rational_trig_args: true,
+            rational_exponents: true,
+            ..options_with_functions(&[udf("1:sq:square:s")], &[])
+        };
+        let respects = |symbols: &[Symbol]| {
+            expression_respects_constraints(&Expression::from_symbols(symbols), opts)
+        };
+        assert!(respects(&[Two, Sq, SinPi])); // sinpi(sq(2)) = sinpi(4)
+        assert!(!respects(&[Pi, Sq, SinPi])); // sinpi(pi^2)
+        assert!(respects(&[Two, Two, Sq, Pow])); // 2^sq(2)
+        assert!(!respects(&[Two, Pi, Sq, Pow])); // 2^(pi^2)
+        assert_eq!(
+            constraint_num_type(&Expression::from_symbols(&[Two, Sq]), &opts),
+            Some(NumType::Integer)
+        );
+    }
+
+    #[test]
+    fn user_function_bodies_obey_restrictions() {
+        use Symbol::{Pi, Two, UserFunction0 as Sp};
+        let base = options_with_functions(&[udf("1:sp:sinpi:S")], &[]);
+        let check = |symbols: &[Symbol], opts: ExpressionConstraintOptions| {
+            expression_respects_constraints(&Expression::from_symbols(symbols), opts)
+        };
+        let rational_trig = ExpressionConstraintOptions {
+            rational_trig_args: true,
+            ..base
+        };
+        assert!(check(&[Two, Sp], rational_trig));
+        assert!(!check(&[Pi, Sp], rational_trig)); // sinpi(pi) inside the body
+        let no_trig = ExpressionConstraintOptions {
+            max_trig_cycles: Some(0),
+            ..base
+        };
+        assert!(!check(&[Two, Sp], no_trig));
+        // Without a body summary the function stays opaque, as before.
+        let opaque = ExpressionConstraintOptions {
+            rational_trig_args: true,
+            ..Default::default()
+        };
+        assert!(check(&[Pi, Sp], opaque));
+    }
+
+    /// Minimum complexity at which each distinct value is generated. LHS keys
+    /// include the derivative. Degenerate values excluded by identity
+    /// pruning are skipped: constant LHS sides (derivative 0) cannot locate
+    /// x, and RHS 0 and 1 come from `a-a`, `a/a`, `1^b`, and `log_a(1)`;
+    /// the equations `A - B = 0` and `A / B = 1` are costlier spellings of
+    /// `A = B`.
+    fn reachable_values(config: &GenConfig, mode: PruneMode) -> HashMap<String, (u32, String)> {
+        PRUNE_MODE.with(|m| m.set(mode));
+        let generated = generate_all(config, 1.2345);
+        PRUNE_MODE.with(|m| m.set(PruneMode::All));
+        let mut out: HashMap<String, (u32, String)> = HashMap::new();
+        let mut record = |key: String, expr: &Expression| {
+            let candidate = (expr.complexity(), expr.to_postfix());
+            let entry = out.entry(key).or_insert_with(|| candidate.clone());
+            if candidate < *entry {
+                *entry = candidate;
+            }
+        };
+        for lhs in &generated.lhs {
+            if lhs.derivative.abs() > 1e-12 {
+                record(
+                    format!("L{:.9e}/{:.9e}", lhs.value, lhs.derivative),
+                    &lhs.expr,
+                );
+            }
+        }
+        for rhs in &generated.rhs {
+            if rhs.value.abs() > 1e-12 && (rhs.value - 1.0).abs() > 1e-12 {
+                record(format!("R{:.9e}", rhs.value), &rhs.expr);
+            }
+        }
+        out
+    }
+
+    /// Differential oracle for pruning: identities and rewrites may only drop
+    /// an expression whose value is still generated at no greater complexity.
+    #[test]
+    fn pruning_never_loses_reachable_values() {
+        use Symbol::*;
+        let base = |constants: &[Symbol], unary: &[Symbol], binary: &[Symbol]| GenConfig {
+            max_lhs_complexity: 52,
+            max_rhs_complexity: 52,
+            max_length: 6,
+            constants: constants.to_vec(),
+            unary_ops: unary.to_vec(),
+            binary_ops: binary.to_vec(),
+            ..GenConfig::default()
+        };
+        let reweighted = |mut config: GenConfig, weights: &[(Symbol, u32)]| {
+            let profile = Profile {
+                symbol_weights: weights.iter().copied().collect(),
+                ..Profile::default()
+            };
+            config.symbol_table = Arc::new(SymbolTable::from_profile(&profile));
+            config
+        };
+        let full_constants = [One, Two, Three, Pi, E, X];
+        let full_unary = [Neg, Recip, Sqrt, Square, Ln, Exp];
+        let full_binary = [Add, Sub, Mul, Div, Pow, Root, Log];
+        let configs = [
+            (
+                "default symbols",
+                base(&full_constants, &full_unary, &full_binary),
+            ),
+            ("-S x2v", base(&[Two, X], &[], &[Root])),
+            (
+                "no sqrt",
+                base(
+                    &[One, Two, E, X],
+                    &[Neg, Square, Ln],
+                    &[Add, Mul, Pow, Root, Log],
+                ),
+            ),
+            (
+                "no ln",
+                base(&[Two, E, Pi, X], &[Sqrt, Recip], &[Add, Log, Div]),
+            ),
+            (
+                "no two",
+                base(&[One, Three, E, X], &[Sqrt], &[Add, Mul, Root]),
+            ),
+            (
+                "no mul",
+                base(&[Two, Three, Pi, X], &[Sqrt, Neg], &[Add, Sub, Root]),
+            ),
+            (
+                "heavy replacements",
+                reweighted(
+                    base(&full_constants, &full_unary, &full_binary),
+                    &[(Sqrt, 40), (Ln, 40), (Mul, 30)],
+                ),
+            ),
+            ("count limits", {
+                let mut config = base(&full_constants, &full_unary, &full_binary);
+                config.symbol_max_counts = HashMap::from([(Sqrt, 1), (Ln, 1), (Mul, 1)]);
+                config
+            }),
+        ];
+        for (name, config) in configs {
+            let reference = reachable_values(&config, PruneMode::HeuristicsOnly);
+            let pruned = reachable_values(&config, PruneMode::All);
+            let mut lost: Vec<_> = reference
+                .iter()
+                .filter(|(key, (complexity, _))| {
+                    pruned.get(*key).is_none_or(|(c, _)| c > complexity)
+                })
+                .map(|(_, expr)| expr)
+                .collect();
+            lost.sort();
+            assert!(
+                lost.is_empty(),
+                "{name}: pruning lost {} of {} values, e.g. {:?}",
+                lost.len(),
+                reference.len(),
+                &lost[..lost.len().min(12)]
+            );
+        }
+    }
+
+    #[test]
+    fn root_and_log_rewrites_require_an_admissible_replacement() {
+        use Symbol::*;
+        let config = |constants: Vec<Symbol>, unary: Vec<Symbol>, binary: Vec<Symbol>| GenConfig {
+            constants,
+            unary_ops: unary,
+            binary_ops: binary,
+            ..GenConfig::default()
+        };
+        let two_root = Expression::from_symbols(&[Two, Two]);
+        let log_e = Expression::from_symbols(&[E, Two]);
+        let with_sqrt_ln = config(vec![Two, E, X], vec![Sqrt, Ln], vec![Root, Log]);
+        assert!(should_prune_binary(&with_sqrt_ln, &two_root, Root));
+        assert!(should_prune_binary(&with_sqrt_ln, &log_e, Log));
+        let without = config(vec![Two, E, X], vec![], vec![Root, Log]);
+        assert!(!should_prune_binary(&without, &two_root, Root));
+        assert!(!should_prune_binary(&without, &log_e, Log));
+        let mut limited = with_sqrt_ln.clone();
+        limited.symbol_max_counts = HashMap::from([(Sqrt, 1)]);
+        let sqrt_used = Expression::from_symbols(&[Two, Two, Sqrt]);
+        assert!(!should_prune_binary(&limited, &sqrt_used, Root));
+        let profile = Profile {
+            symbol_weights: HashMap::from([(Sqrt, 60)]),
+            ..Profile::default()
+        };
+        let heavy = GenConfig {
+            symbol_table: Arc::new(SymbolTable::from_profile(&profile)),
+            ..with_sqrt_ln
+        };
+        assert!(!should_prune_binary(&heavy, &two_root, Root));
+    }
+
+    /// Every well-formed expression up to `max_len` over `alphabet`.
+    fn all_expressions(alphabet: &[Symbol], max_len: usize) -> Vec<Vec<Symbol>> {
+        fn extend(
+            alphabet: &[Symbol],
+            max_len: usize,
+            current: &mut Vec<Symbol>,
+            depth: usize,
+            out: &mut Vec<Vec<Symbol>>,
+        ) {
+            if depth == 1 {
+                out.push(current.clone());
+            }
+            if current.len() == max_len {
+                return;
+            }
+            for &sym in alphabet {
+                let next_depth = match sym.seft() {
+                    Seft::A => depth + 1,
+                    Seft::B if depth >= 1 => depth,
+                    Seft::C if depth >= 2 => depth - 1,
+                    _ => continue,
+                };
+                // Stack depth must be reducible within the remaining length.
+                if next_depth > max_len - current.len() {
+                    continue;
+                }
+                current.push(sym);
+                extend(alphabet, max_len, current, next_depth, out);
+                current.pop();
+            }
+        }
+        let mut out = Vec::new();
+        extend(alphabet, max_len, &mut Vec::new(), 0, &mut out);
+        out
+    }
+
+    /// Differential oracle: the structural constraint walker and the numeric
+    /// evaluator classify expressions independently, and must agree. The
+    /// only permitted difference is that the walker does not know the value of
+    /// a non-literal integer exponent, so it may be weaker for powers.
+    #[test]
+    fn constraint_walker_type_matches_evaluator() {
+        use Symbol::*;
+        let functions = [
+            udf("1:sq:square:s"),
+            udf("1:inc:plus one:1+"),
+            udf("1:sh:sinh:E|r-2/"),
+            udf("1:dq:dup mul:|*"),
+        ];
+        let constants: Vec<UserConstant> = [
+            (2.5, NumType::Rational),
+            (std::f64::consts::SQRT_2, NumType::Algebraic),
+            (1.3, NumType::Transcendental),
+            (3.0, NumType::Integer),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (value, num_type))| UserConstant {
+            weight: 16,
+            name: format!("c{i}"),
+            description: String::new(),
+            value,
+            num_type,
+        })
+        .collect();
+        let opts = options_with_functions(&functions, &constants);
+        let context = EvalContext::from_slices(&constants, &functions);
+        let alphabet = [
+            One,
+            Two,
+            Pi,
+            Phi,
+            X,
+            UserConstant0,
+            UserConstant1,
+            UserConstant2,
+            UserConstant3,
+            Neg,
+            Recip,
+            Sqrt,
+            Square,
+            Ln,
+            SinPi,
+            UserFunction0,
+            UserFunction1,
+            UserFunction2,
+            UserFunction3,
+            Add,
+            Sub,
+            Mul,
+            Div,
+            Pow,
+            Root,
+        ];
+        let mut compared = 0;
+        for symbols in all_expressions(&alphabet, 4) {
+            let expr = Expression::from_symbols(&symbols);
+            let Ok(evaluated) = crate::eval::evaluate_with_context(&expr, 0.7, &context) else {
+                continue;
+            };
+            let walked = constraint_num_type(&expr, &opts).expect("well-formed expression");
+            if symbols.contains(&Pow) {
+                assert!(
+                    walked <= evaluated.num_type,
+                    "{symbols:?}: walker {walked:?} > eval {:?}",
+                    evaluated.num_type
+                );
+            } else {
+                assert_eq!(walked, evaluated.num_type, "{symbols:?}");
+            }
+            compared += 1;
+        }
+        assert!(compared > 10_000, "only {compared} expressions compared");
+    }
+
     /// Create a fast test config with limited complexity and operators
     fn fast_test_config() -> GenConfig {
         GenConfig {
@@ -1900,6 +2542,50 @@ mod tests {
 
     fn expr_from_postfix(s: &str) -> Expression {
         Expression::parse(s).expect("valid expression")
+    }
+
+    #[test]
+    fn root_pruning_uses_complete_index_operand() {
+        for (postfix, pruned) in [
+            ("32v", false),   // cube root of 2
+            ("3x2+v", false), // radicand ends in 2
+            ("3x1+v", false), // penultimate symbol is not the index
+            ("x1+3v", false), // index ends in 1 but is not literal 1
+            ("23v", true),    // square root
+            ("2x1+v", true),  // square root of a compound radicand
+            ("1xv", true),    // first root
+            ("31v", true),    // root of 1
+        ] {
+            let mut operands = Expression::parse(postfix).unwrap();
+            operands.pop();
+            assert_eq!(
+                should_prune_binary(&GenConfig::default(), &operands, Symbol::Root),
+                pruned,
+                "{postfix}"
+            );
+        }
+    }
+
+    #[test]
+    fn power_constraints_distinguish_negative_and_positive_integer_exponents() {
+        let options = ExpressionConstraintOptions {
+            rational_trig_args: true,
+            ..Default::default()
+        };
+        // A negative integer power is rational, so using it as the exponent
+        // of 2 is generally algebraic rather than rational.
+        assert!(!expression_respects_constraints(
+            &expr_from_postfix("222n^^S"),
+            options
+        ));
+        assert!(expression_respects_constraints(
+            &expr_from_postfix("223^^S"),
+            options
+        ));
+        assert!(expression_respects_constraints(
+            &expr_from_postfix("22n^S"),
+            options
+        ));
     }
 
     fn stub_eval_expr(postfix: &str, value: f64, derivative: f64) -> EvaluatedExpr {
@@ -2233,6 +2919,68 @@ mod tests {
             prop_assert_eq!(quantize_value(base + 0.51 / QUANTIZE_SCALE), bucket + 1);
             prop_assert_eq!(quantize_value(base - 0.51 / QUANTIZE_SCALE), bucket - 1);
         }
+    }
+
+    #[test]
+    fn binary_identity_pruning_respects_complete_operands() {
+        for (postfix, op) in [
+            ("x1W", Symbol::Pow),
+            ("x1W", Symbol::Mul),
+            ("x1W", Symbol::Log),
+            ("xeW", Symbol::Log),
+            ("2x1+", Symbol::Add),
+        ] {
+            let mut expr = expr_from_postfix(&format!("{postfix}{}", op as u8 as char));
+            expr.pop();
+            assert!(
+                !should_prune_binary(&GenConfig::default(), &expr, op),
+                "{postfix}"
+            );
+        }
+        for (postfix, op) in [
+            ("1xW", Symbol::Pow),
+            ("1xW", Symbol::Mul),
+            ("exW", Symbol::Log),
+            ("21", Symbol::Add),
+        ] {
+            let mut expr = expr_from_postfix(&format!("{postfix}{}", op as u8 as char));
+            expr.pop();
+            assert!(
+                should_prune_binary(&GenConfig::default(), &expr, op),
+                "{postfix}"
+            );
+        }
+        let config = GenConfig {
+            max_lhs_complexity: 100,
+            max_rhs_complexity: 100,
+            max_length: 4,
+            constants: vec![Symbol::One, Symbol::Two, Symbol::X],
+            unary_ops: vec![Symbol::LambertW],
+            binary_ops: vec![Symbol::Pow],
+            ..Default::default()
+        };
+        assert!(generate_all(&config, 3.0)
+            .lhs
+            .iter()
+            .any(|e| e.expr.to_postfix() == "x1W^"));
+    }
+
+    #[test]
+    fn algebraic_generation_excludes_transcendental_roots() {
+        let config = GenConfig {
+            max_lhs_complexity: 60,
+            max_rhs_complexity: 60,
+            max_length: 3,
+            constants: vec![Symbol::Three, Symbol::Pi, Symbol::Two],
+            unary_ops: vec![],
+            binary_ops: vec![Symbol::Root],
+            min_num_type: NumType::Algebraic,
+            generate_lhs: false,
+            ..Default::default()
+        };
+        let generated = generate_all(&config, 1.0);
+        assert!(!generated.rhs.iter().any(|e| e.expr.to_postfix() == "3pv"));
+        assert!(generated.rhs.iter().any(|e| e.expr.to_postfix() == "32v"));
     }
 
     #[test]

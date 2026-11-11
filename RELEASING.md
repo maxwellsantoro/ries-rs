@@ -2,6 +2,19 @@
 
 Release-process notes and templates for `ries-rs`.
 
+## Next release: 3.0.0
+
+The current unreleased batch must ship as 3.0.0. The public
+`ExpressionConstraintOptions::user_function_constraints` field breaks exhaustive
+Rust struct literals, and the corrected stop contract changes first results.
+Callers should add `..Default::default()` where appropriate, or explicitly supply
+body summaries using `UserFunctionConstraints::from_function` when restrictions
+must inspect user functions. Do not publish this batch under a 2.x version.
+
+During release preparation, update all versioned surfaces listed below together,
+including both lockfiles and release notes. The working-tree version stays 2.1.0
+until that coordinated step; this decision does not authorize tagging or publishing.
+
 ## Maintainer Checklist
 
 ### Preflight (Local)

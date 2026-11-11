@@ -34,6 +34,7 @@ impl DisplayFormat {
         trig_scale: f64,
     ) -> String {
         match self {
+            Self::Infix(_) if exact_zero_constant(expression, trig_scale) => "0".to_owned(),
             Self::Infix(format) => {
                 let infix = expression.to_infix_with_context(format, table, trig_scale);
                 if explicit_multiply {
@@ -60,6 +61,57 @@ impl DisplayFormat {
                 .join(" "),
         }
     }
+}
+
+/// Collapse certified constant zeros for readable infix output. Only integer
+/// trig arguments and ln(1) qualify; a rounded or underflowed value is not proof.
+fn exact_zero_constant(expression: &Expression, trig_scale: f64) -> bool {
+    if expression.contains_x()
+        || expression.has_decimal_literals()
+        || expression
+            .symbols()
+            .iter()
+            .any(|s| s.user_constant_index().is_some() || s.user_function_index().is_some())
+    {
+        return false;
+    }
+    let mut argument = expression.clone();
+    while argument.symbols().last() == Some(&Symbol::Neg) {
+        argument.pop();
+    }
+    let Some(op) = argument.pop() else {
+        return false;
+    };
+    if !matches!(op, Symbol::SinPi | Symbol::TanPi | Symbol::Ln) {
+        return false;
+    }
+    if op == Symbol::Ln {
+        return argument.symbols() == [Symbol::One];
+    }
+    if trig_scale != crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE
+        || !argument.symbols().iter().all(|symbol| {
+            matches!(
+                symbol,
+                Symbol::One
+                    | Symbol::Two
+                    | Symbol::Three
+                    | Symbol::Four
+                    | Symbol::Five
+                    | Symbol::Six
+                    | Symbol::Seven
+                    | Symbol::Eight
+                    | Symbol::Nine
+                    | Symbol::Add
+                    | Symbol::Sub
+                    | Symbol::Mul
+                    | Symbol::Neg
+                    | Symbol::Square
+            )
+        })
+    {
+        return false;
+    }
+    crate::eval::evaluate(&argument, 0.0).is_ok_and(|at| at.value.fract() == 0.0)
 }
 
 /// Apply explicit '*' multiplication operators to infix output.
@@ -168,6 +220,8 @@ pub struct ReportConfig {
     pub categories: Vec<Category>,
     /// Error cap for "interesting" category
     pub interesting_error_cap: f64,
+    /// Errors at or below this precision tie in the Best category.
+    pub best_error_floor: f64,
 }
 
 impl Default for ReportConfig {
@@ -182,6 +236,7 @@ impl Default for ReportConfig {
                 Category::Stable,
             ],
             interesting_error_cap: 1e-6,
+            best_error_floor: 0.0,
         }
     }
 }
@@ -208,6 +263,12 @@ impl ReportConfig {
     /// Set top-K
     pub fn with_top_k(mut self, k: usize) -> Self {
         self.top_k = k;
+        self
+    }
+
+    /// Prefer simplicity once an approximation matches the target's typed precision.
+    pub fn with_target_precision(mut self, target: f64, target_text: Option<&str>) -> Self {
+        self.best_error_floor = crate::search::significant_digits_tolerance(target, target_text);
         self
     }
 
@@ -348,6 +409,11 @@ fn displayed_equation_key(m: &Match) -> (String, String, bool) {
     };
     let (lhs, lhs_negative) = side(&m.lhs.expr);
     let (rhs, rhs_negative) = side(&m.rhs.expr);
+    if m.rhs.value == 0.0
+        && exact_zero_constant(&m.rhs.expr, crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE)
+    {
+        return (lhs, "0".to_owned(), false);
+    }
     (lhs, rhs, lhs_negative ^ rhs_negative)
 }
 
@@ -384,7 +450,23 @@ fn category_compare(
                         .cmp(&(b.m.lhs.expr.len() + b.m.rhs.expr.len()))
                 })
         }
-        Category::Best => compare_matches(&a.m, &b.m, RankingMode::Complexity),
+        Category::Best => {
+            let a_resolved = a.metrics.error <= config.best_error_floor;
+            let b_resolved = b.metrics.error <= config.best_error_floor;
+            b_resolved.cmp(&a_resolved).then_with(|| {
+                if a_resolved && b_resolved {
+                    a.metrics
+                        .complexity
+                        .cmp(&b.metrics.complexity)
+                        .then_with(|| a.metrics.ugliness.total_cmp(&b.metrics.ugliness))
+                        .then_with(|| {
+                            displayed_equation_key(&a.m).cmp(&displayed_equation_key(&b.m))
+                        })
+                } else {
+                    compare_matches(&a.m, &b.m, RankingMode::Complexity)
+                }
+            })
+        }
         Category::Elegant => {
             // Sort by elegant score (lower first)
             a.metrics
@@ -479,6 +561,78 @@ mod tests {
             error,
             complexity: lhs_expr.complexity() + rhs_expr.complexity(),
             exact: error.abs() < crate::thresholds::EXACT_MATCH_TOLERANCE,
+        }
+    }
+
+    #[test]
+    #[allow(clippy::approx_constant)] // Exercise the rounded, typed target.
+    fn best_prefers_simple_equations_within_typed_precision() {
+        let mut simple = make_match("x", "p", 3.589793e-9);
+        let mut overfit = make_match("px-l", "78^", 2.3e-11);
+        simple.exact = false;
+        overfit.exact = false;
+        let config = ReportConfig {
+            categories: vec![Category::Best],
+            ..Default::default()
+        }
+        .with_target_precision(3.14159265, Some("3.14159265"));
+        let best_rhs = |config: &ReportConfig| {
+            Report::generate(vec![overfit.clone(), simple.clone()], 3.14159265, config).categories
+                [0]
+            .1[0]
+                .m
+                .rhs
+                .expr
+                .to_postfix()
+        };
+        assert_eq!(best_rhs(&config), "p");
+        // Extra typed zeros demand a finer approximation.
+        let precise = config
+            .clone()
+            .with_target_precision(3.14159265, Some("3.1415926500"));
+        assert_eq!(best_rhs(&precise), "78^");
+        let legacy = ReportConfig {
+            best_error_floor: 0.0,
+            ..config
+        };
+        assert_eq!(best_rhs(&legacy), "78^");
+    }
+
+    #[test]
+    fn infix_renders_certified_constant_zeros() {
+        let infix = DisplayFormat::Infix(OutputFormat::Default);
+        for postfix in ["1S", "2T", "1Sn", "1l"] {
+            let expression = Expression::parse(postfix).unwrap();
+            assert_eq!(
+                infix.format_expression(
+                    &expression,
+                    false,
+                    None,
+                    crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE
+                ),
+                "0"
+            );
+            assert_eq!(
+                DisplayFormat::PostfixCompact.format_expression(
+                    &expression,
+                    false,
+                    None,
+                    crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE
+                ),
+                postfix
+            );
+        }
+        for (postfix, scale) in [
+            ("1S", 1.0),
+            ("xS", crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE),
+            ("12/S", crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE),
+            ("99^nES", crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE),
+            ("299^n^S", crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE),
+        ] {
+            assert_ne!(
+                infix.format_expression(&Expression::parse(postfix).unwrap(), false, None, scale),
+                "0"
+            );
         }
     }
 

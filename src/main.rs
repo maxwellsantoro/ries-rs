@@ -391,7 +391,8 @@ fn main() {
     let use_parallel = !args.deterministic && args.parallel;
     let use_turbo = !args.deterministic && args.turbo;
 
-    // A quick result must satisfy the same limits as an ordinary match.
+    // A quick result must satisfy the same limits as an ordinary match, and is
+    // used only when it provably ranks first (see find_certified_fast_match).
     let fast_match = if stop_at_exact && !use_streaming && search_config.max_matches > 0 {
         let excluded = std::collections::HashSet::new();
         let fast_config = FastMatchConfig {
@@ -402,18 +403,20 @@ fn main() {
             allowed_symbols: search_config.rhs_allowed_symbols.as_ref(),
             min_num_type: min_type,
         };
-        ries_rs::find_fast_match_with_context(
+        ries_rs::find_certified_fast_match(
             target,
             &eval_context,
             &fast_config,
-            &gen_config.symbol_table,
+            &gen_config,
+            ranking_mode,
+            search_config.stop_below,
+            |m| {
+                m.error.abs() <= search_config.max_error
+                    && gen_config.allows_evaluated_side(&m.lhs)
+                    && gen_config.allows_evaluated_side(&m.rhs)
+                    && search_config.filters.allows_match(m)
+            },
         )
-        .filter(|m| {
-            m.error.abs() <= search_config.max_error
-                && gen_config.allows_evaluated_side(&m.lhs)
-                && gen_config.allows_evaluated_side(&m.rhs)
-                && search_config.filters.allows_match(m)
-        })
     } else {
         None
     };
@@ -634,6 +637,10 @@ fn main() {
             eprintln!("Warning: --show-work/-Ds is currently only available with --report false.");
         }
         let mut report_config = ReportConfig::default()
+            .with_target_precision(
+                target,
+                explicit_target_literal.or(target_literal.as_deref()),
+            )
             .with_top_k(args.top_k)
             .with_target(target);
 

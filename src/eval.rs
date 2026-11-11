@@ -19,7 +19,7 @@ pub struct EvalResult {
     pub value: f64,
     /// Derivative with respect to x
     pub derivative: f64,
-    /// Numeric type of the result
+    /// Structural numeric class (see [`NumType`]), independent of the sampled value.
     pub num_type: NumType,
 }
 
@@ -174,29 +174,28 @@ impl<'a> EvalContext<'a> {
     }
 }
 
-/// Stack entry for evaluation with derivative tracking
+/// Stack entry for evaluation with derivative and structural dependence tracking.
+/// A zero slope at one sample does not make an expression constant.
 #[derive(Debug, Clone, Copy)]
 struct StackEntry {
     val: f64,
     deriv: f64,
     num_type: NumType,
+    depends_on_x: bool,
 }
 
 impl StackEntry {
-    fn new(val: f64, deriv: f64, num_type: NumType) -> Self {
+    fn new(val: f64, deriv: f64, num_type: NumType, depends_on_x: bool) -> Self {
         Self {
             val,
             deriv,
             num_type,
+            depends_on_x,
         }
     }
 
     fn constant(val: f64, num_type: NumType) -> Self {
-        Self {
-            val,
-            deriv: 0.0,
-            num_type,
-        }
+        Self::new(val, 0.0, num_type, false)
     }
 }
 
@@ -467,6 +466,16 @@ fn evaluate_decimal_literal_expression(
     })
 }
 
+/// Reject RHS values outside a proven range of the outermost operator.
+/// This is deliberately conservative: unknown ranges impose no restriction.
+/// Residual tolerances must never turn an impossible sine/cosine level into a root.
+pub(crate) fn value_in_expression_range(expr: &Expression, value: f64) -> bool {
+    match expr.symbols().last() {
+        Some(Symbol::SinPi | Symbol::CosPi) => (-1.0..=1.0).contains(&value),
+        _ => true,
+    }
+}
+
 /// Evaluate an expression at a given value of x.
 ///
 /// Convenience wrapper that allocates a new workspace. For hot loops,
@@ -665,7 +674,7 @@ fn eval_constant_with_user(
             constants::CATALAN,
             NumType::Transcendental,
         )),
-        X => Ok(StackEntry::new(x, 1.0, NumType::Integer)), // x can be any value, including integer
+        X => Ok(StackEntry::new(x, 1.0, NumType::Integer, true)), // x can be any value, including integer
         // User constants - look up value from the user_constants slice
         UserConstant0 | UserConstant1 | UserConstant2 | UserConstant3 | UserConstant4
         | UserConstant5 | UserConstant6 | UserConstant7 | UserConstant8 | UserConstant9
@@ -905,20 +914,21 @@ fn eval_unary(
 
     let (val, deriv, num_type) = match sym {
         // Negation: -a, d(-a)/dx = -da/dx
-        Neg => (-a.val, -a.deriv, a.num_type),
+        Neg => (-a.val, -a.deriv, sym.result_type(&[a.num_type])),
 
         // Reciprocal: 1/a, d(1/a)/dx = -da/dx / a²
         Recip => {
-            if a.val.abs() < f64::MIN_POSITIVE {
+            if a.val == 0.0 {
                 return Err(EvalError::DivisionByZero);
             }
             let val = 1.0 / a.val;
-            let deriv = -a.deriv / (a.val * a.val);
-            let num_type = if a.num_type == NumType::Integer {
-                NumType::Rational
+            let square = a.val * a.val;
+            let deriv = if square.is_normal() {
+                -a.deriv / square
             } else {
-                a.num_type
+                (-a.deriv / a.val) / a.val
             };
+            let num_type = sym.result_type(&[a.num_type]);
             (val, deriv, num_type)
         }
 
@@ -933,11 +943,7 @@ fn eval_unary(
             } else {
                 0.0
             };
-            let num_type = if a.num_type >= NumType::Constructible {
-                NumType::Constructible
-            } else {
-                a.num_type
-            };
+            let num_type = sym.result_type(&[a.num_type]);
             (val, deriv, num_type)
         }
 
@@ -945,7 +951,7 @@ fn eval_unary(
         Square => {
             let val = a.val * a.val;
             let deriv = 2.0 * a.val * a.deriv;
-            (val, deriv, a.num_type)
+            (val, deriv, sym.result_type(&[a.num_type]))
         }
 
         // Natural log: ln(a), d(ln(a))/dx = da/dx / a
@@ -1092,7 +1098,7 @@ fn eval_unary(
         _ => return Err(EvalError::Invalid),
     };
 
-    Ok(StackEntry::new(val, deriv, num_type))
+    Ok(StackEntry::new(val, deriv, num_type, a.depends_on_x))
 }
 
 /// Evaluate a binary operator with derivative
@@ -1104,7 +1110,7 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
         Add => {
             let val = a.val + b.val;
             let deriv = a.deriv + b.deriv;
-            let num_type = a.num_type.combine(b.num_type);
+            let num_type = sym.result_type(&[a.num_type, b.num_type]);
             (val, deriv, num_type)
         }
 
@@ -1112,7 +1118,7 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
         Sub => {
             let val = a.val - b.val;
             let deriv = a.deriv - b.deriv;
-            let num_type = a.num_type.combine(b.num_type);
+            let num_type = sym.result_type(&[a.num_type, b.num_type]);
             (val, deriv, num_type)
         }
 
@@ -1120,21 +1126,18 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
         Mul => {
             let val = a.val * b.val;
             let deriv = a.val * b.deriv + b.val * a.deriv;
-            let num_type = a.num_type.combine(b.num_type);
+            let num_type = sym.result_type(&[a.num_type, b.num_type]);
             (val, deriv, num_type)
         }
 
         // Division: a / b, d(a/b)/dx = (b*da/dx - a*db/dx) / b²
         Div => {
-            if b.val.abs() < f64::MIN_POSITIVE {
+            if b.val == 0.0 {
                 return Err(EvalError::DivisionByZero);
             }
             let val = a.val / b.val;
             let deriv = (a.deriv - val * b.deriv) / b.val;
-            let mut num_type = a.num_type.combine(b.num_type);
-            if num_type == NumType::Integer {
-                num_type = NumType::Rational;
-            }
+            let num_type = sym.result_type(&[a.num_type, b.num_type]);
             (val, deriv, num_type)
         }
 
@@ -1148,8 +1151,29 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
                 return Err(EvalError::Overflow);
             }
             // Guard for near-zero base to avoid numerical issues
-            let deriv = if a.val > f64::MIN_POSITIVE {
-                val * (b.val * a.deriv / a.val + a.val.ln() * b.deriv)
+            let deriv = if a.val > 0.0 {
+                let ordinary = val * (b.val * a.deriv / a.val + a.val.ln() * b.deriv);
+                if ordinary.is_finite() && (ordinary != 0.0 || val != 0.0 && a.val.is_normal()) {
+                    ordinary
+                } else {
+                    // The value can underflow before its slope, and da/a can
+                    // overflow for a subnormal base. Recover the base term
+                    // independently in log magnitude only on the extreme path.
+                    let base_term = if a.deriv == 0.0 || b.val == 0.0 {
+                        0.0
+                    } else {
+                        let magnitude =
+                            ((b.val - 1.0) * a.val.ln() + b.val.abs().ln() + a.deriv.abs().ln())
+                                .exp();
+                        magnitude * b.val.signum() * a.deriv.signum()
+                    };
+                    let exponent_term = if b.deriv == 0.0 {
+                        0.0
+                    } else {
+                        (val * a.val.ln()) * b.deriv
+                    };
+                    base_term + exponent_term
+                }
             } else if a.val == 0.0 && b.val > 0.0 {
                 if b.val == 1.0 {
                     a.deriv
@@ -1172,17 +1196,20 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
                     val * b.val * a.deriv / a.val
                 }
             };
-            let num_type = if b.num_type == NumType::Integer {
-                a.num_type
-            } else {
-                NumType::Transcendental
-            };
+            let num_type = sym.result_type_with_facts(
+                &[a.num_type, b.num_type],
+                &[a.depends_on_x, b.depends_on_x],
+                &[
+                    (!a.depends_on_x).then_some(a.val),
+                    (!b.depends_on_x).then_some(b.val),
+                ],
+            );
             (val, deriv, num_type)
         }
 
         // a-th root of b: b^(1/a)
         Root => {
-            if a.val.abs() < f64::MIN_POSITIVE {
+            if a.val == 0.0 {
                 return Err(EvalError::DivisionByZero);
             }
             let exp = 1.0 / a.val;
@@ -1228,8 +1255,34 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
                 // The value exists at this odd index, but varying the index
                 // leaves the real domain arbitrarily close to the point.
                 f64::NAN
-            } else if b.val.abs() > f64::MIN_POSITIVE {
-                val * (b.deriv / (a.val * b.val) - b.val.abs().ln() * a.deriv / (a.val * a.val))
+            } else if b.val != 0.0 {
+                let product = a.val * b.val;
+                let index_square = a.val * a.val;
+                if product.is_normal() && index_square.is_normal() {
+                    val * (b.deriv / product - b.val.abs().ln() * a.deriv / index_square)
+                } else {
+                    // Divide separately so a*b and a*a cannot overflow and erase
+                    // an otherwise representable slope. Constant operands contribute
+                    // exactly zero, even when a logarithmic factor would overflow.
+                    let radicand_term = if b.deriv == 0.0 {
+                        0.0
+                    } else {
+                        let relative_slope = b.deriv / b.val;
+                        if relative_slope.is_finite() {
+                            (val * relative_slope) / a.val
+                        } else {
+                            // A subnormal radicand can overflow db/b even
+                            // though the root's larger magnitude rescales it.
+                            (val * (b.deriv / a.val)) / b.val
+                        }
+                    };
+                    let index_term = if a.deriv == 0.0 {
+                        0.0
+                    } else {
+                        (val * (b.val.abs().ln() / a.val)) * (a.deriv / a.val)
+                    };
+                    radicand_term - index_term
+                }
             } else if b.val == 0.0 && exp == 1.0 {
                 b.deriv
             } else if b.val == 0.0 && exp > 0.0 && exp < 1.0 && b.deriv != 0.0 {
@@ -1237,7 +1290,15 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             } else {
                 0.0
             };
-            (val, deriv, NumType::Algebraic)
+            let num_type = sym.result_type_with_facts(
+                &[a.num_type, b.num_type],
+                &[a.depends_on_x, b.depends_on_x],
+                &[
+                    (!a.depends_on_x).then_some(a.val),
+                    (!b.depends_on_x).then_some(b.val),
+                ],
+            );
+            (val, deriv, num_type)
         }
 
         // Logarithm base a of b: ln(b) / ln(a)
@@ -1249,7 +1310,18 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             let ln_b = b.val.ln();
             let val = ln_b / ln_a;
             // d(log_a(b))/dx = (db/dx/(b*ln(a)) - ln(b)*da/dx/(a*ln(a)²))
-            let deriv = b.deriv / (b.val * ln_a) - ln_b * a.deriv / (a.val * ln_a * ln_a);
+            let radicand_denominator = b.val * ln_a;
+            let base_denominator = a.val * ln_a * ln_a;
+            let base_numerator = ln_b * a.deriv;
+            let deriv = if radicand_denominator.is_normal()
+                && base_denominator.is_normal()
+                && base_numerator.is_finite()
+            {
+                b.deriv / radicand_denominator - base_numerator / base_denominator
+            } else {
+                // Divide before multiplying large logarithms into a denominator.
+                (b.deriv / b.val) / ln_a - (val * (a.deriv / a.val)) / ln_a
+            };
             (val, deriv, NumType::Transcendental)
         }
 
@@ -1258,8 +1330,17 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
             let val = a.val.atan2(b.val);
             // d(atan2(a,b))/dx = (b*da/dx - a*db/dx) / (a² + b²)
             let denom = a.val * a.val + b.val * b.val;
-            let deriv = if denom.abs() > f64::MIN_POSITIVE {
-                (b.val * a.deriv - a.val * b.deriv) / denom
+            let numerator = b.val * a.deriv - a.val * b.deriv;
+            let scale = a.val.abs().max(b.val.abs());
+            let deriv = if denom.is_normal() && numerator.is_finite() {
+                numerator / denom
+            } else if scale > 0.0 {
+                // Normalize when the original coordinates overflow or underflow
+                // in the slope formula, preserving the ordinary evaluation path.
+                let a_scaled = a.val / scale;
+                let b_scaled = b.val / scale;
+                let denom = a_scaled * a_scaled + b_scaled * b_scaled;
+                ((b_scaled * a.deriv - a_scaled * b.deriv) / denom) / scale
             } else {
                 0.0
             };
@@ -1270,7 +1351,12 @@ fn eval_binary(sym: Symbol, a: StackEntry, b: StackEntry) -> Result<StackEntry, 
         _ => return Err(EvalError::Invalid),
     };
 
-    Ok(StackEntry::new(val, deriv, num_type))
+    Ok(StackEntry::new(
+        val,
+        deriv,
+        num_type,
+        a.depends_on_x || b.depends_on_x,
+    ))
 }
 
 /// Compute the Lambert W function (principal branch) using Halley's method
@@ -1460,6 +1546,107 @@ mod tests {
         }
         let quotient = Expression::parse("xx/").unwrap();
         assert_eq!(evaluate(&quotient, 1e-200).unwrap().derivative, 0.0);
+    }
+
+    #[test]
+    fn power_preserves_slopes_when_values_or_intermediates_underflow() {
+        for target in [1e-310_f64, 1e-300, 1e-200, 1.0] {
+            let power = evaluate(&Expression::parse("x2r^").unwrap(), target).unwrap();
+            let root = evaluate(&Expression::parse("xq").unwrap(), target).unwrap();
+            assert!(power.derivative.is_finite() && power.derivative > 0.0);
+            assert!((power.derivative / root.derivative - 1.0).abs() < 2e-13);
+        }
+        let cube = evaluate(&Expression::parse("x3^").unwrap(), 1e-110).unwrap();
+        assert_eq!(cube.value, 0.0);
+        assert!((cube.derivative / 3e-220 - 1.0).abs() < 2e-13);
+        let constant = evaluate(&Expression::parse("11-3^").unwrap(), 1.0).unwrap();
+        assert_eq!(constant.derivative, 0.0);
+    }
+
+    #[test]
+    fn logarithm_preserves_slopes_at_large_bases() {
+        let x = 1e305_f64;
+        let at = evaluate(&Expression::parse("x2L").unwrap(), x).unwrap();
+        let expected = -((2.0_f64.ln() / x.ln()) / x) / x.ln();
+        assert!(at.derivative < 0.0 && at.derivative.is_finite());
+        assert!((at.derivative / expected - 1.0).abs() < 1e-12);
+        let identity = evaluate(&Expression::parse("xxL").unwrap(), x).unwrap();
+        assert_eq!(identity.derivative, 0.0);
+    }
+
+    #[test]
+    fn roots_classify_both_operands_conservatively() {
+        for (postfix, expected) in [
+            ("3pv", NumType::Transcendental),
+            ("p2v", NumType::Transcendental),
+            ("2q2v", NumType::Transcendental),
+            ("32v", NumType::Algebraic),
+        ] {
+            let at = evaluate(&Expression::parse(postfix).unwrap(), 1.0).unwrap();
+            assert_eq!(at.num_type, expected, "{postfix}");
+        }
+    }
+
+    #[test]
+    fn integer_power_type_accounts_for_exponent_sign() {
+        for (postfix, expected, num_type) in [
+            ("22n^", 0.25, NumType::Rational),
+            ("23^", 8.0, NumType::Integer),
+            ("211-^", 1.0, NumType::Integer),
+            ("2n3n^", -0.125, NumType::Rational),
+            ("22/2n^", 1.0, NumType::Rational),
+        ] {
+            let at = evaluate(&Expression::parse(postfix).unwrap(), 0.0).unwrap();
+            assert_eq!(at.value, expected, "{postfix}");
+            assert_eq!(at.num_type, num_type, "{postfix}");
+        }
+    }
+
+    #[test]
+    fn equivalent_reciprocals_and_roots_preserve_extreme_slopes() {
+        for target in [1e155, -1e155] {
+            let reciprocal = evaluate(&Expression::parse("xr").unwrap(), target).unwrap();
+            let quotient = evaluate(&Expression::parse("1x/").unwrap(), target).unwrap();
+            assert_eq!(reciprocal.value, quotient.value);
+            assert_eq!(reciprocal.derivative, quotient.derivative);
+            assert!(reciprocal.derivative < 0.0);
+        }
+        for target in [1e-320, f64::MIN_POSITIVE, 1e-300, 1.0, 1e308] {
+            let root = evaluate(&Expression::parse("2xv").unwrap(), target).unwrap();
+            let sqrt = evaluate(&Expression::parse("xq").unwrap(), target).unwrap();
+            assert!(root.derivative > 0.0 && root.derivative.is_finite());
+            assert!((root.derivative / sqrt.derivative - 1.0).abs() < 1e-14);
+        }
+        let varying_index = evaluate(&Expression::parse("x2v").unwrap(), 1e155).unwrap();
+        let expected = -(2.0_f64.ln() / 1e155) / 1e155;
+        assert!(varying_index.derivative < 0.0);
+        assert!((varying_index.derivative / expected - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn atan2_slopes_are_invariant_under_coordinate_scaling() {
+        let constants = [UserConstant {
+            weight: 1,
+            name: "c".to_owned(),
+            description: String::new(),
+            value: 1.0,
+            num_type: NumType::Rational,
+        }];
+        let mut expression = Expression::new();
+        for symbol in [Symbol::X, Symbol::UserConstant0, Symbol::Atan2] {
+            expression.push(symbol);
+        }
+        for scale in [1e-300, 1e-155, 1.0, 1e155, 1e308] {
+            for sign in [-1.0, 1.0] {
+                let mut constants = constants.clone();
+                constants[0].value = sign * scale;
+                let context = EvalContext::from_slices(&constants, &[]);
+                let at = evaluate_with_context(&expression, scale, &context).unwrap();
+                let expected = sign * 0.5 / scale;
+                assert!(at.derivative.is_finite() && at.derivative != 0.0);
+                assert!((at.derivative / expected - 1.0).abs() < 1e-14);
+            }
+        }
     }
 
     #[test]

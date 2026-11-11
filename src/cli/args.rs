@@ -485,7 +485,7 @@ pub fn parse_symbol_names_from_cli(
             ));
         }
 
-        let Some(symbol) = symbol::Symbol::from_byte(symbol_char as u8) else {
+        let Some(symbol) = symbol::Symbol::from_postfix_char(symbol_char) else {
             return Err(format!("Unknown symbol in --symbol-names: {}", symbol_char));
         };
 
@@ -519,7 +519,7 @@ pub fn parse_symbol_weights_from_cli(
             .parse()
             .map_err(|_| format!("Invalid weight in --symbol-weights: {}", part))?;
 
-        let Some(symbol) = symbol::Symbol::from_byte(symbol_char as u8) else {
+        let Some(symbol) = symbol::Symbol::from_postfix_char(symbol_char) else {
             return Err(format!(
                 "Unknown symbol in --symbol-weights: {}",
                 symbol_char
@@ -570,7 +570,7 @@ pub fn parse_symbol_count_limits(
             return Err(format!("Invalid zero count for symbol '{}'", symbol_char));
         }
 
-        let Some(sym) = symbol::Symbol::from_byte(symbol_char as u8) else {
+        let Some(sym) = symbol::Symbol::from_postfix_char(symbol_char) else {
             return Err(format!(
                 "Unknown symbol '{}' in -O/--op-limits",
                 symbol_char
@@ -580,6 +580,14 @@ pub fn parse_symbol_count_limits(
     }
 
     Ok(limits)
+}
+
+/// Symbol codes named by a `-S`/`-N`/`-E` string, decoded per character.
+///
+/// Iterating `str::bytes` would split a multibyte character into UTF-8 bytes,
+/// and continuation bytes 0x80-0x9F alias user constant and function slots.
+pub(crate) fn symbol_set_codes(spec: &str) -> impl Iterator<Item = u8> + '_ {
+    spec.chars().filter_map(|c| u8::try_from(u32::from(c)).ok())
 }
 
 /// Parse effective allowed/excluded symbol sets with optional re-enable set.
@@ -592,16 +600,16 @@ pub fn parse_symbol_sets(
     Option<std::collections::HashSet<u8>>,
 ) {
     let mut allowed: Option<std::collections::HashSet<u8>> =
-        only_symbols.map(|s| s.bytes().collect());
+        only_symbols.map(|s| symbol_set_codes(s).collect());
     let mut excluded: Option<std::collections::HashSet<u8>> =
-        exclude_symbols.map(|s| s.bytes().collect());
+        exclude_symbols.map(|s| symbol_set_codes(s).collect());
 
     if let Some(enabled) = enable_symbols {
         if enabled == "all" {
             allowed = None;
             excluded = None;
         } else {
-            for b in enabled.bytes() {
+            for b in symbol_set_codes(enabled) {
                 if let Some(excl) = excluded.as_mut() {
                     excl.remove(&b);
                 }
