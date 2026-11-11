@@ -12,8 +12,10 @@ body summaries using `UserFunctionConstraints::from_function` when restrictions
 must inspect user functions. Do not publish this batch under a 2.x version.
 
 During release preparation, update all versioned surfaces listed below together,
-including both lockfiles and release notes. The working-tree version stays 2.1.0
-until that coordinated step; this decision does not authorize tagging or publishing.
+including both lockfiles and release notes. Metadata is staged at 3.0.0 and
+remains unpublished. Set `CITATION.cff` `date-released` to the actual publication
+date when releasing and rerun preflight. Preparation does not authorize tagging
+or publishing.
 
 ## Maintainer Checklist
 
@@ -52,9 +54,11 @@ move together:
 
 ### CI/Workflow Preconditions
 
+- The release workflow calls the full reusable CI workflow at the tagged commit. Every artifact build depends on that successful run through `validate-tag`; publication cannot bypass it. CI includes built browser smoke tests and retained matcher/historical qualification evidence.
+- Before tagging, run `python3 scripts/qualify_search.py --output output/qualification --repeats 3` with a release binary, inspect the missing-equation and certificate results, and follow [QUALIFICATION.md](docs/QUALIFICATION.md). A local dirty-tree baseline is not release qualification.
 - Release automation is tag-driven via `push` tags matching `v*` in `.github/workflows/release.yml`.
 - CI coverage for release-related surfaces is defined in `.github/workflows/ci.yml` (release integrity, Rust checks/tests, WASM tests, Python bindings crate check).
-- The parity check job is optional when `ries-original/ries.c` is not vendored (it skips automatically).
+- The historical root-accuracy smoke job downloads and verifies the pinned original RIES source; download or checksum failure fails CI. It checks root accuracy, not expression or ranking parity.
 - GitHub release publishing now assumes both registry publishing paths are configured:
   - crates.io via repository secret `CARGO_REGISTRY_TOKEN`
   - PyPI via repository secret `PYPI_API_TOKEN`
@@ -183,3 +187,27 @@ has been verified in project metadata.
 - `v2.0.2`: no Zenodo DOI recorded in this repository
 - `v2.0.3`: no Zenodo DOI recorded in this repository
 - `v2.1.0`: no Zenodo DOI recorded in this repository
+
+## Immutable release-candidate review
+
+Commit the candidate before final validation. Record both its commit and Git tree
+SHA, run qualification from a clean checkout, and require each recorded source
+hash to equal `git show <candidate>:<path>`. Retain evidence outside that checkout
+or in a separate evidence commit that explicitly names the source commit; do not
+claim an evidence file can identify its own containing commit.
+
+`python3 scripts/test_release_consumers.py --output /outside/checkout/consumers`
+requires a clean commit and tests the installed CLI built from the Cargo package,
+an installed wheel, an installed npm tarball in Node and in the built browser UI,
+and manifest creation/exact replay including explicit unavailable verification.
+CI runs it at the checked-out SHA and retains a commit/tree-bound receipt. The
+browser smoke suite uses the npm-installed WASM for the built-site path.
+No RC review step tags or publishes. Obtain a fresh independent review of that
+immutable source and inspect hosted CI before authorizing a release.
+
+Consumer validation requires a fresh output directory and distinct explicit Cargo
+target directories for packaging, CLI installation, Python, and WASM. Shared
+same-version outputs are not accepted as artifact provenance. Failed receipts
+are retained; reruns use a new directory.
+
+Update npm root metadata structurally (for example `npm version --no-git-tag-version --ignore-scripts`), never with a global version-string replacement in the lockfile. Consumer validation uses a fresh npm cache so tarball integrity is checked against the committed resolution.

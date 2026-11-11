@@ -291,6 +291,8 @@ pub fn search(target: f64, options: Option<JsValue>) -> Result<Vec<WasmMatch>, J
     let opts = parse_search_options(options)?;
     if let Some(text) = opts.target_text.as_deref() {
         validate_target_text(text, target)?;
+        crate::target::validate_decimal_target(target, text, opts.match_all_digits)
+            .map_err(|error| JsValue::from_str(&error))?;
     }
     if opts.use_pslq {
         return Err(JsValue::from_str(

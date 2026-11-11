@@ -46,6 +46,10 @@ fn main() {
         .get_raw("target")
         .and_then(|mut values| values.next())
         .and_then(|value| value.to_str());
+    let explicit_at_literal = arg_matches
+        .get_raw("at")
+        .and_then(|mut values| values.next())
+        .and_then(|value| value.to_str());
     let args = Args::from_arg_matches(&arg_matches).unwrap_or_else(|err| err.exit());
 
     if args.list_options {
@@ -85,13 +89,11 @@ fn main() {
         );
     }
 
-    // Check precision flag - warn if highprec feature not enabled
-    #[cfg(not(feature = "highprec"))]
-    if !args.no_slow_messages && args.precision.is_some() {
-        eprintln!(
-            "Warning: --precision flag specified but ries-rs was not compiled with 'highprec' feature."
-        );
-        eprintln!("         Recompile with: cargo build --features highprec");
+    if args.precision.is_some() && !cfg!(feature = "highprec") && !args.allow_unverified {
+        exit_with(CliExit::config("Error: --precision requires a highprec build; use --allow-unverified to explicitly accept unavailable verification"));
+    }
+    if args.precision.is_some_and(|bits| bits <= 53) && !args.allow_unverified {
+        exit_with(CliExit::config("Error: --precision must exceed 53 bits; use --allow-unverified to accept unavailable verification"));
     }
 
     let mut trig_argument_scale = eval::DEFAULT_TRIG_ARGUMENT_SCALE;
@@ -129,6 +131,22 @@ fn main() {
         Ok(profile) => profile,
         Err(err) => exit_with(err),
     };
+
+    for (target, literal) in [
+        (
+            resolved_target,
+            explicit_target_literal.or(target_literal.as_deref()),
+        ),
+        (args.at, explicit_at_literal),
+    ] {
+        if let (Some(target), Some(literal)) = (target, literal) {
+            if !target.is_finite() {
+                exit_with(CliExit::config("Error: TARGET must be finite"));
+            }
+            ries_rs::target::validate_decimal_target(target, literal, args.match_all_digits)
+                .unwrap_or_else(|error| exit_with(CliExit::config(error)));
+        }
+    }
 
     match handle_special_modes(&args, resolved_target, &profile, trig_argument_scale) {
         Ok(true) => return,
@@ -447,8 +465,13 @@ fn main() {
         (result.matches, result.stats, result.elapsed)
     };
 
-    // Streaming already orders its results and may put a stop match first.
-    if (args.deterministic || args.turbo) && stats.matcher != Some(search::MatcherPath::Streaming) {
+    // Streaming and stop searches already order their results. In particular,
+    // the designated stop winner must stay ahead of ordinary ranking ties.
+    if (args.deterministic || args.turbo)
+        && stats.matcher != Some(search::MatcherPath::Streaming)
+        && !search_config.stop_at_exact
+        && search_config.stop_below.is_none()
+    {
         matches.sort_by(|a, b| pool::compare_matches(a, b, ranking_mode));
     }
 
@@ -476,6 +499,31 @@ fn main() {
     // Parse the output format once for both text and JSON modes
     let output_format = parse_display_format(&args.format);
 
+    let verification = args.precision.map(|bits| {
+        let results = verify_matches_highprec_with_trig_scale(
+            matches
+                .iter()
+                .take(effective_max_matches)
+                .cloned()
+                .collect(),
+            target,
+            bits,
+            &profile.constants,
+            trig_argument_scale,
+        );
+        (bits, results)
+    });
+
+    if !args.allow_unverified
+        && verification.as_ref().is_some_and(|(_, results)| {
+            results
+                .iter()
+                .any(|r| r.status() == ries_rs::VerificationStatus::Unavailable)
+        })
+    {
+        exit_with(CliExit::config("Error: high-precision verification unavailable for one or more results; use --allow-unverified to accept an explicit unavailable status"));
+    }
+
     if let Some(path) = &args.emit_manifest {
         let manifest = build_manifest(
             &args,
@@ -485,6 +533,7 @@ fn main() {
             effective_max_matches,
             &stats,
             &matches,
+            explicit_target_literal.or(target_literal.as_deref()),
         );
         let json = manifest.to_json().unwrap_or_else(|err| {
             eprintln!("Error serializing manifest: {err}");
@@ -498,24 +547,6 @@ fn main() {
             eprintln!("Manifest written to {}", path.display());
         }
     }
-
-    let verification = args
-        .precision
-        .filter(|_| cfg!(feature = "highprec"))
-        .map(|bits| {
-            let results = verify_matches_highprec_with_trig_scale(
-                matches
-                    .iter()
-                    .take(effective_max_matches)
-                    .cloned()
-                    .collect(),
-                target,
-                bits,
-                &profile.constants,
-                trig_argument_scale,
-            );
-            (bits, results)
-        });
 
     if args.json {
         let shown_count = matches.len().min(effective_max_matches);
@@ -541,6 +572,10 @@ fn main() {
             elapsed,
             args.solve && !args.no_solve,
         );
+
+        json_output.target_literal = explicit_target_literal
+            .or(target_literal.as_deref())
+            .map(str::to_owned);
 
         if let Some((bits, results)) = &verification {
             json_output.high_precision_verification =

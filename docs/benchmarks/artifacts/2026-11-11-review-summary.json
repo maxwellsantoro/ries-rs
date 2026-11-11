@@ -1,0 +1,496 @@
+{
+  "schema": "ries-review-baseline-summary-v1",
+  "scope": "Uncommitted local 3.0.0 candidate; no publication or exact tagged-commit qualification claimed. Isolated corpus run started after the agent build/test jobs finished; no system-wide load isolation.",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1\n",
+  "binary_version": "ries-rs 3.0.0",
+  "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+  "binary_sha256": "bebbb54423dc4506c728bf17ab6f48ee68b6383cb030c03435d21b83c18eb33f",
+  "corpus_runs": 120,
+  "historical_cases": 4,
+  "passed": true,
+  "source_snapshot_missing": [],
+  "archive": "2026-11-11-review-candidate.tar.gz",
+  "archive_sha256": "768e3b13c7d86bf4258b3b0ac531c6b07895d7180d87ed9f0937cc2f3e1a035b",
+  "summaries": [
+    {
+      "case": "integer",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "fast_match"
+      ],
+      "median_wall_ms": 5.019541014917195,
+      "median_peak_rss_bytes": 3162112,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 3,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "integer",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 5.045083002187312,
+      "median_peak_rss_bytes": 3211264,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 3,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "integer",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "fast_match"
+      ],
+      "median_wall_ms": 5.236583005171269,
+      "median_peak_rss_bytes": 3194880,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 3,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "integer",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "fast_match"
+      ],
+      "median_wall_ms": 4.4853749859612435,
+      "median_peak_rss_bytes": 3178496,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 3,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "half-integer",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 4.022375011118129,
+      "median_peak_rss_bytes": 3293184,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 6,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "half-integer",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 4.15300001623109,
+      "median_peak_rss_bytes": 3194880,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 6,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "half-integer",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 4.09729199600406,
+      "median_peak_rss_bytes": 3276800,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 6,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "half-integer",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 4.552792001049966,
+      "median_peak_rss_bytes": 3276800,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 6,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "five-halves",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 4.006041999673471,
+      "median_peak_rss_bytes": 3293184,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 6,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "five-halves",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 3.848958993330598,
+      "median_peak_rss_bytes": 3227648,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 6,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "five-halves",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 3.9950829814188182,
+      "median_peak_rss_bytes": 3260416,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 6,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "five-halves",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 3.892165987053886,
+      "median_peak_rss_bytes": 3293184,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 6,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "quadratic",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 3.9947500044945627,
+      "median_peak_rss_bytes": 3293184,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 3,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "quadratic",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 3.9621669857297093,
+      "median_peak_rss_bytes": 3211264,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 3,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "quadratic",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 3.9206669898703694,
+      "median_peak_rss_bytes": 3293184,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 3,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "quadratic",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 3.9211660041473806,
+      "median_peak_rss_bytes": 3276800,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 3,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "restricted-full-pool",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 4.073082993272692,
+      "median_peak_rss_bytes": 3293184,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 24,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "restricted-full-pool",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 3.905124991433695,
+      "median_peak_rss_bytes": 3260416,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 24,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "restricted-full-pool",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "parallel"
+      ],
+      "median_wall_ms": 4.041209002025425,
+      "median_peak_rss_bytes": 3620864,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 24,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "restricted-full-pool",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "turbo"
+      ],
+      "median_wall_ms": 4.1292079840786755,
+      "median_peak_rss_bytes": 3620864,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 24,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "custom-weights",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 3.8674579991493374,
+      "median_peak_rss_bytes": 3260416,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 12,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "custom-weights",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 4.337166988989338,
+      "median_peak_rss_bytes": 3194880,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 12,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "custom-weights",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "parallel"
+      ],
+      "median_wall_ms": 4.226916003972292,
+      "median_peak_rss_bytes": 3604480,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 12,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "custom-weights",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "turbo"
+      ],
+      "median_wall_ms": 4.071917006513104,
+      "median_peak_rss_bytes": 3620864,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 12,
+      "unavailable_certifications": 0
+    },
+    {
+      "case": "pi",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "fast_match"
+      ],
+      "median_wall_ms": 3.9747499977238476,
+      "median_peak_rss_bytes": 3178496,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 3
+    },
+    {
+      "case": "pi",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 4.150708002271131,
+      "median_peak_rss_bytes": 3293184,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 3
+    },
+    {
+      "case": "pi",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "fast_match"
+      ],
+      "median_wall_ms": 3.9687080134171993,
+      "median_peak_rss_bytes": 3162112,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 3
+    },
+    {
+      "case": "pi",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "fast_match"
+      ],
+      "median_wall_ms": 3.795041993726045,
+      "median_peak_rss_bytes": 3162112,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 3
+    },
+    {
+      "case": "threshold-tie",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 3.9473329961765558,
+      "median_peak_rss_bytes": 3457024,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 6
+    },
+    {
+      "case": "threshold-tie",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 4.361166997114196,
+      "median_peak_rss_bytes": 3358720,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 6
+    },
+    {
+      "case": "threshold-tie",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 4.138541989959776,
+      "median_peak_rss_bytes": 3506176,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 6
+    },
+    {
+      "case": "threshold-tie",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 4.095333017176017,
+      "median_peak_rss_bytes": 3522560,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 6
+    },
+    {
+      "case": "full-grammar",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "serial"
+      ],
+      "median_wall_ms": 161.26837499905378,
+      "median_peak_rss_bytes": 31703040,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 24
+    },
+    {
+      "case": "full-grammar",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 233.90937500516884,
+      "median_peak_rss_bytes": 15613952,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 24
+    },
+    {
+      "case": "full-grammar",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "parallel"
+      ],
+      "median_wall_ms": 167.4421249772422,
+      "median_peak_rss_bytes": 51757056,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 24
+    },
+    {
+      "case": "full-grammar",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "turbo"
+      ],
+      "median_wall_ms": 121.52345798676834,
+      "median_peak_rss_bytes": 32358400,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 24
+    },
+    {
+      "case": "full-grammar-level3",
+      "requested_mode": "serial",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 4106.31116697914,
+      "median_peak_rss_bytes": 227360768,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 24
+    },
+    {
+      "case": "full-grammar-level3",
+      "requested_mode": "streaming",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 3779.3102499854285,
+      "median_peak_rss_bytes": 184582144,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 24
+    },
+    {
+      "case": "full-grammar-level3",
+      "requested_mode": "parallel",
+      "effective_matchers": [
+        "streaming"
+      ],
+      "median_wall_ms": 4148.042291984893,
+      "median_peak_rss_bytes": 184582144,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 24
+    },
+    {
+      "case": "full-grammar-level3",
+      "requested_mode": "turbo",
+      "effective_matchers": [
+        "turbo"
+      ],
+      "median_wall_ms": 1929.063125018729,
+      "median_peak_rss_bytes": 496418816,
+      "missing_known_answer_runs": 0,
+      "independently_bounded_results": 0,
+      "unavailable_certifications": 24
+    }
+  ]
+}

@@ -9,8 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Release decision: these changes target **3.0.0**, not a 2.x release, because
 `ExpressionConstraintOptions` gains a required field and the stop contract
-changes observable ordering. Versioned package metadata remains at 2.1.0 until
-the coordinated release preparation in `RELEASING.md`.
+changes observable ordering. Package metadata is staged at 3.0.0; this batch
+remains unpublished until the coordinated release in `RELEASING.md`.
+
+### Fixed
+- Reject PSLQ with match-all-digits instead of silently substituting residual tolerance for a root-distance contract.
+- Validate decimal targets before PSLQ/special-mode dispatch.
+- Preserve original target spelling in manifests and replay arguments; exact replay now requires identical root/error bits, with explicit opt-in tolerance.
+- Bound experimental certificate arithmetic before expensive integer operations.
+- Reject precision-sensitive decimal targets whose conversion loses more than the last-digit tolerance; reject nonzero decimal underflow in CLI/WASM.
+- Report actual adaptive bounds separately from requested bounds and reject ignored mode/memory combinations.
+- Fail unavailable explicit verification requests unless `--allow-unverified` is supplied; retain unavailable JSON on explicit fallback.
+- Give the Python extension a distinct Cargo artifact identity while preserving `import ries_rs`; document the actual comparator.
+- Preserve the engine's designated stop winner through deterministic and turbo CLI postprocessing.
+- Report unavailable high-precision verification with `is_verified = false`.
+- Reject unsupported nested user-function calls during definition parsing.
+- Group chained exponents in browser LaTeX output to preserve associativity and avoid KaTeX double-superscript errors.
+- Synchronize complexity weights, level examples, and historical accuracy CI documentation with the implementation.
+
+### Added
+- Opt-in `--strict-config` validation, replay preservation, and original target literals in CLI JSON.
+- Candidate-window histograms, a fixed cross-matcher qualification corpus, and a restricted historical equation differential with retained CI evidence.
+- Experimental exact rational polynomial root certificates and a Linux address-space/time supervisor.
+- Built browser CI coverage, mobile smoke coverage, compiled Tailwind CSS, and a full-CI release gate at the tagged commit.
 
 ### Changed
 - Search now preserves structurally distinct left-hand sides by default. The

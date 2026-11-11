@@ -213,7 +213,10 @@ fn build_gen_config(
 /// Returns
 /// -------
 /// list[PyMatch]
-///     List of matches sorted by error
+///     List of matches: exact results first; inexact results by eight-ULP
+///     error buckets, then complexity and canonical postfix tie-breaks.
+///     The Python API uses complexity ranking; parity ranking is not exposed here. See
+///     docs/SEARCH_MODEL.md for the ranking contract.
 ///
 /// Examples
 /// --------

@@ -94,8 +94,11 @@ Notes:
 
 - The Python API exposes `search::level_to_complexity` (`40 + 2*L` on each side),
   not the CLI's `-l/--level` mapping (`35 + 10*L`).
-- The Python API currently uses complexity-first ranking and does not expose the
-  CLI's broader flag surface.
+- Results use the complexity ranking comparator: exact matches precede inexact
+  matches, inexact errors use eight-ULP buckets, then complexity and canonical
+  postfix tie-breaks apply. Parity ranking is not exposed here. See
+  [SEARCH_MODEL.md](SEARCH_MODEL.md) for the full ordering contract.
+- The Python API does not expose the CLI's broader flag surface.
 - `target` must be finite; `NaN` and `Infinity` raise `ValueError`.
 
 The native search releases the Python GIL so other Python threads can run.
@@ -193,3 +196,8 @@ print(json.dumps(payload, indent=2))
 - The Python API currently exposes a smaller configuration surface than the CLI,
   so use the CLI when you need deterministic mode, JSON manifests, or parity
   flags.
+
+The extension's Cargo library target is `ries_rs_py`, distinct from the core
+crate's `ries_rs` target. Maturin's `module-name = "ries_rs"` preserves the public
+Python import and initialization symbol while avoiding shared-directory output
+filename collisions.

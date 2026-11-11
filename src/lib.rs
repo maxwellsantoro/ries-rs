@@ -181,3 +181,6 @@ pub use stability::{
     format_stability_report, format_stability_report_with, StabilityAnalyzer, StabilityClass,
     StabilityConfig, StabilityResult,
 };
+
+/// Exact decimal checks at the floating-point target boundary.
+pub mod target;

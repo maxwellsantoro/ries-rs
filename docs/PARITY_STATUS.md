@@ -7,15 +7,17 @@
 
 ## Current Summary
 
-- No known release-blocking parity gaps are currently tracked.
+- Historical compatibility is covered by finite checks; it is not a claim of full search, expression, or ranking equivalence.
 - `--classic` defaults to parity-style ranking; `--complexity-ranking` remains
   available when you want simpler-first ordering instead.
 - Core search flow, classic-style output, and most compatibility flags are
   covered by regression tests.
 - Exact output ordering and some complexity details can still differ from older
   implementations because the engine is Rust-native.
-- Remaining parity work is incremental quality work, not a known blocker for
-  the published release surfaces.
+- CI runs a printed root-accuracy smoke test and a separate restricted polynomial
+  differential. The differential records normalized equation identities and costs
+  and independently bounds roots for four known-answer cases. Full historical
+  top-k ranking remains outside these checks. See [QUALIFICATION.md](QUALIFICATION.md).
 
 ## References
 

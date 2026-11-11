@@ -16,6 +16,7 @@ import os
 import shlex
 import subprocess
 import sys
+import struct
 import tempfile
 from typing import Dict, Any, List
 
@@ -28,7 +29,17 @@ def parse_args():
         default="cargo run --release --",
         help="Path or command to the ries-rs binary (default: 'cargo run --release --')"
     )
-    return parser.parse_args()
+    parser.add_argument("--comparison", choices=("exact", "tolerant"), default="exact",
+                        help="exact requires identical f64 bits (default)")
+    parser.add_argument("--abs-tolerance", type=float,
+                        help="explicit absolute tolerance, required with --comparison=tolerant")
+    args = parser.parse_args()
+    if args.comparison == "tolerant":
+        if args.abs_tolerance is None or not math.isfinite(args.abs_tolerance) or args.abs_tolerance < 0:
+            parser.error("tolerant comparison requires a finite nonnegative --abs-tolerance")
+    elif args.abs_tolerance is not None:
+        parser.error("--abs-tolerance requires --comparison=tolerant")
+    return args
 
 
 # Each token has exactly one option; values use --name=value. Never accept file
@@ -44,7 +55,7 @@ integer ie re liouvillian-subexpressions parallel turbo deterministic streaming 
 adaptive classic parity-ranking complexity-ranking no-stable stability-check
 stability-thorough stop-at-exact one-sided no-refinement any-exponents
 any-subexpressions any-trig-args canon-simplify explicit-multiply match-all-digits
-no-canon-simplify numeric-anagram rational-exponents rational-trig-args""".split())
+no-canon-simplify numeric-anagram rational-exponents rational-trig-args strict-config allow-unverified""".split())
 
 
 def build_command_args(config: Dict[str, Any]) -> List[str]:
@@ -62,8 +73,10 @@ def build_command_args(config: Dict[str, Any]) -> List[str]:
             target = float(recorded[0])
         except ValueError as exc:
             raise ValueError("invalid replay target") from exc
-        if not math.isfinite(target) or target != config["target"]:
+        if not math.isfinite(target) or struct.pack(">d", target) != struct.pack(">d", config["target"]):
             raise ValueError("replay target does not match manifest")
+        if config.get("target_literal") is not None and recorded[0] != config["target_literal"]:
+            raise ValueError("replay target spelling does not match original decimal literal")
         for token in recorded[1:]:
             if not token.startswith("--"):
                 raise ValueError("invalid replay option")
@@ -107,8 +120,12 @@ def build_command_args(config: Dict[str, Any]) -> List[str]:
     return result
 
 
-def check_parity(original_results: List[Dict], replayed_results: List[Dict]) -> bool:
-    """Compare the primary match properties for reproduction success."""
+def check_parity(original_results: List[Dict], replayed_results: List[Dict], *, comparison="exact", abs_tolerance=None) -> bool:
+    """Exact f64 replay by default; tolerant comparison is explicit and reported."""
+    if comparison not in ("exact", "tolerant"):
+        raise ValueError("unknown comparison mode")
+    if comparison == "tolerant" and (abs_tolerance is None or not math.isfinite(abs_tolerance) or abs_tolerance < 0):
+        raise ValueError("tolerant comparison requires a finite nonnegative tolerance")
     if len(original_results) != len(replayed_results):
         print(f"Match count mismatch! Original: {len(original_results)}, Replayed: {len(replayed_results)}")
         return False
@@ -127,7 +144,11 @@ def check_parity(original_results: List[Dict], replayed_results: List[Dict]) -> 
                 print(f"Index {i} differs in {key}.")
                 success = False
         for key in ("x_value", "error"):
-            if key in orig and not math.isclose(orig[key], repl[key], rel_tol=0, abs_tol=1e-12):
+            if key not in orig:
+                continue
+            same = (struct.pack(">d", orig[key]) == struct.pack(">d", repl[key])
+                    if comparison == "exact" else math.isclose(orig[key], repl[key], rel_tol=0, abs_tol=abs_tolerance))
+            if not same:
                 print(f"Index {i} differs in {key}.")
                 success = False
 
@@ -160,6 +181,9 @@ def main():
 
     print(f"Replaying manifest generated on {manifest.get('timestamp', 'Unknown')}")
     print(f"Target: {config['target']}, Level: {config['level']}")
+    print(f"Comparison: {args.comparison}" + (f", absolute tolerance={args.abs_tolerance:g}" if args.comparison == "tolerant" else ", identical f64 bit patterns"))
+    if config.get("target_literal") is None:
+        print("Original decimal spelling unavailable in this legacy manifest; only recorded numerical results can be compared.")
 
     # Create temporary file for the new manifest
     fd, temp_path = tempfile.mkstemp(suffix=".json")
@@ -198,7 +222,7 @@ def main():
             new_manifest = json.load(f)
 
         # Detect legacy settings that the compact summary cannot reproduce.
-        keys = ("target", "level", "max_lhs_complexity", "max_rhs_complexity",
+        keys = ("target", "target_literal", "level", "max_lhs_complexity", "max_rhs_complexity",
                 "deterministic", "parallel", "max_error", "max_matches", "ranking_mode",
                 "lhs_value_dedup", "matcher")
         for key in keys:
@@ -215,7 +239,8 @@ def main():
 
         is_parity = check_parity(
             manifest.get("results", []), 
-            new_manifest.get("results", [])
+            new_manifest.get("results", []),
+            comparison=args.comparison, abs_tolerance=args.abs_tolerance,
         )
 
         if is_parity:

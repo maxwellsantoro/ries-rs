@@ -134,6 +134,14 @@ Example output:
                      1/x = 1/pi                     ('exact' match) {43}
 ```
 
+An **“exact” match is a numerical classification**, not a symbolic proof that
+the intended mathematical constant satisfies the equation. Search uses the
+parsed `f64` target. Optional high-precision reevaluation corroborates that
+numerical result; it cannot recover decimal digits lost during parsing.
+Completeness depends on the grammar, budgets, numerical gates, and pruning.
+The [qualification tools](docs/QUALIFICATION.md) provide independent known-answer
+checks and an experimental exact rational root-certificate workflow.
+
 For a rounded input such as `ries-rs 3.14159265`, the report's Best
 approximations category prefers simpler equations once they match the precision
 you typed, so `x = pi` comes before more elaborate fits. Extra trailing zeros
@@ -302,7 +310,7 @@ If you use `ries-rs` in academic work, cite the project version you used.
   author       = {Santoro, Maxwell},
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
-  version      = {2.1.0},
+  version      = {3.0.0},
   url          = {https://maxwellsantoro.com/projects/ries-rs},
   license      = {MIT},
   note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}
@@ -315,7 +323,7 @@ Zenodo concept DOI for the project and its archived releases:
 The latest verified version DOI is for `v1.1.1`:
 `10.5281/zenodo.19101925`
 
-No version DOI is recorded for `v2.1.0` until its Zenodo archive has completed.
+No version DOI is recorded for `v3.0.0` until its Zenodo archive has completed.
 
 Use the concept DOI when you want a stable project-level reference that resolves
 to the latest archived release. Use the version DOI when you need to cite the
@@ -344,3 +352,40 @@ MIT License. See [`LICENSE`](LICENSE).
 - [`clsn/ries` fork](https://github.com/clsn/ries)
 - Stoutemyer, D.R. (2024). "Computing with No Machine Constants, Only
   Constructive Axioms". arXiv:2402.03304
+
+## Strict configuration and resource-sensitive runs
+
+Use `--strict-config` in reproducible experiments to fail with exit code 2 on
+invalid custom constants/functions, malformed symbol weights/names, unknown symbol
+set codes, invalid memory hints, or unavailable precision options. The default
+compatibility mode retains warnings for malformed custom definitions. Replay
+manifests preserve the strict flag; CLI JSON also preserves the original target
+literal separately from its `f64` value.
+
+`--max-memory` selects a strategy and does not enforce an RSS ceiling.
+The [Linux resource supervisor](docs/QUALIFICATION.md#enforced-resource-limits-on-linux)
+adds an OS-enforced address-space budget and timeout. An aborted run is incomplete.
+
+When `--match-all-digits` is set, the original decimal must survive conversion to
+`f64` within half its last typed decimal place. Inputs such as
+`1.000000000000000000000000000001` are rejected instead of searching for exactly
+1. Nonzero decimals that underflow to zero (for example `1e-400`) are rejected
+in every decimal-input search mode. Exact representable values with many trailing
+zeros remain valid. This validation does not change the engine to arbitrary precision.
+
+A requested `--precision` now fails if verification is unavailable. Use
+`--allow-unverified` explicitly to continue and obtain per-result `unavailable`
+status in JSON. This covers missing feature support, at most 53 bits, and
+unsupported high-precision operators.
+
+Adaptive searches grow their own budgets: JSON `max_lhs_complexity` and
+`max_rhs_complexity` report the actual final bounds, while
+`requested_max_lhs_complexity` and `requested_max_rhs_complexity` retain the level
+mapping. Manifests record actual bounds and requested bounds in replay metadata.
+Adaptive and one-sided modes reject streaming, turbo, and memory-hint flags that
+they cannot honor; memory hints still do not impose a hard RSS ceiling.
+
+`--pslq --match-all-digits` is explicitly unsupported and returns a configuration
+error before results. Decimal validation still applies to PSLQ targets, but a
+PSLQ residual tolerance is not a general root-distance guarantee. Use ordinary
+numerical search for the match-all-digits result contract.

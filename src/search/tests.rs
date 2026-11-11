@@ -2600,3 +2600,29 @@ fn tiny_target_pool_starts_with_a_relative_acceptance_window() {
     };
     assert_eq!(config.pool().accept_error, 1e-20);
 }
+
+#[test]
+fn window_distribution_retains_empty_and_extreme_windows() {
+    let lhs = EvaluatedExpr::new(
+        crate::expr::Expression::parse("x").unwrap(),
+        2.0,
+        1.0,
+        crate::symbol::NumType::Rational,
+    );
+    let mut stats = SearchStats::default();
+    for width in [0, 1, 2, 3, 4, 65535, 65536, 1_000_000] {
+        stats.record_candidate_window(&lhs, width);
+    }
+    assert_eq!(&stats.candidate_window_histogram[..4], &[1, 1, 2, 1]);
+    assert_eq!(stats.candidate_window_histogram[16], 1);
+    assert_eq!(stats.candidate_window_histogram[17], 2);
+    assert_eq!(stats.candidate_window_histogram.iter().sum::<usize>(), 8);
+    assert_eq!(stats.candidate_window_max, 1_000_000);
+    #[cfg(feature = "parallel")]
+    {
+        let other = stats.clone();
+        stats.merge_search_counters(&other);
+        assert_eq!(stats.candidate_window_histogram.iter().sum::<usize>(), 16);
+        assert_eq!(stats.candidate_window_max, 1_000_000);
+    }
+}
