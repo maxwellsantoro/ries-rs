@@ -139,12 +139,18 @@ pub use solver::{
 };
 
 // Fast exact match detection
-pub use fast_match::{find_fast_match, find_fast_match_with_context, FastMatchConfig};
+pub use fast_match::{
+    find_certified_fast_match, find_fast_match, find_fast_match_with_context,
+    non_atomic_equation_complexity_floor, FastMatchConfig,
+};
 
 // Common types
 pub use eval::{EvalContext, EvalError, EvalResult, DEFAULT_TRIG_ARGUMENT_SCALE};
 pub use expr::{Expression, OutputFormat};
-pub use gen::{expression_respects_constraints, ExpressionConstraintOptions, GenConfig};
+pub use gen::{
+    expression_respects_constraints, ExpressionConstraintOptions, GenConfig,
+    UserFunctionConstraints,
+};
 pub use profile::{Profile, UserConstant};
 pub use search::{Match, SearchConfig, SearchContext, SearchStats};
 pub use symbol::{NumType, Symbol};

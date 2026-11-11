@@ -385,13 +385,18 @@ fn test_json_deterministic_golden_output_order_for_2_5_level0_classic() {
         .iter()
         .filter_map(|r| r["equation"].as_str())
         .collect();
-    assert_eq!(equations, vec!["x = 5/2", "x = e^catalan"]);
+    // The stop bound is the simplest exact equation (complexity 49, cheaper
+    // than `x = 5/2` at 50); results are the matches within it.
+    assert_eq!(
+        equations,
+        vec!["2 x = 5", "x*2 = 5", "x = e^catalan", "ln(x) = catalan"]
+    );
 
     let complexities: Vec<u64> = results
         .iter()
         .filter_map(|r| r["complexity"].as_u64())
         .collect();
-    assert_eq!(complexities, vec![50, 48]);
+    assert_eq!(complexities, vec![49, 49, 48, 48]);
 }
 
 #[test]
@@ -493,7 +498,7 @@ fn test_complexity_ranking_keeps_ceiling_ties_with_zero_weight_rhs() {
 #[test]
 fn test_json_deterministic_parity_vs_complexity_diverge_for_same_target() {
     let base_args = [
-        "3.14159",
+        "1.2",
         "--json",
         "--deterministic",
         "--classic",
@@ -1999,4 +2004,55 @@ fn manifest_replay_supports_basic_legacy_settings_and_negative_targets() {
         );
     }
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn cube_root_of_two_survives_generation_in_each_matcher() {
+    for mode in [
+        "--one-sided",
+        "--deterministic",
+        "--streaming",
+        "--parallel",
+    ] {
+        let result = json_search(&["1.2599210498948732", "-l", "0", "-S", "x23v", mode]);
+        let matches = result["results"].as_array().unwrap();
+        assert!(
+            matches.iter().any(|m| {
+                m["lhs_postfix"] == "x" && m["rhs_postfix"] == "32v" && m["exact"] == true
+            }),
+            "{mode}: {result}"
+        );
+    }
+}
+
+#[test]
+fn integer_filter_excludes_negative_integer_powers() {
+    let run = |filter| {
+        json_search(&[
+            "1",
+            filter,
+            "-S",
+            "x21n^",
+            "--one-sided",
+            "-l",
+            "1",
+            "--max-match-distance",
+            "2",
+        ])
+    };
+    let rational = run("-r");
+    assert!(rational["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["rhs_postfix"] == "22n^"));
+    let integer = run("-i");
+    let matches = integer["results"].as_array().unwrap();
+    assert!(!matches.is_empty());
+    assert!(
+        matches
+            .iter()
+            .all(|m| m["x_value"].as_f64().unwrap().fract() == 0.0),
+        "{integer}"
+    );
 }

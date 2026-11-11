@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Release decision: these changes target **3.0.0**, not a 2.x release, because
+`ExpressionConstraintOptions` gains a required field and the stop contract
+changes observable ordering. Versioned package metadata remains at 2.1.0 until
+the coordinated release preparation in `RELEASING.md`.
+
 ### Changed
 - Search now preserves structurally distinct left-hand sides by default. The
   same search can return a different first equation, ordered result list, or
@@ -16,11 +21,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI JSON and run manifests record the actual matcher, the requested LHS
   deduplication setting, and whether it was applied. The JSON `streaming` field
   now reflects the matcher used, including automatic fallback.
+- `stop_at_exact` and `stop_below` (including `--classic`) follow one stop
+  contract in every matcher. The simplest qualifying match bounds result
+  complexity; results are the matches within that bound, ranked with a fresh
+  pool and led by that match. Batch matching used to return the first
+  qualifying match it scanned: for pi, `x = (-sqrt(pi))^2` (54) instead of
+  `x = pi` (29). Classic output can differ. For example, 2.5 now returns
+  `2 x = 5` (49) before `x = 5/2` (50).
+- The CLI uses a fast match only when it provably ranks first: an exact
+  `x = <atom>` below `non_atomic_equation_complexity_floor` that is the simplest
+  atom meeting either stop condition (`stop_below` included), chosen from every
+  enabled atom with `compare_matches`. Other targets run the search, which
+  finds simpler equations such as `x = 1/2` spelled `2r` (35), not `1 2 /`
+  (43). Classic searches that used to take the fast path can take longer.
+- **Breaking:** `ExpressionConstraintOptions` has a new field,
+  `user_function_constraints`. Struct literals without `..Default::default()`
+  must add it.
+
+### Added
+- `UserFunctionConstraints`, `find_certified_fast_match`,
+  `non_atomic_equation_complexity_floor`, `Symbol::ALL`,
+  `Symbol::to_postfix_char`, and `Symbol::from_postfix_char`.
 
 ### Fixed
+- Library RHS symbol filters are resolved before generation and rewrite pruning,
+  so a filtered-out `sqrt` cannot suppress an admissible second-root spelling.
+- Sine/cosine matches reject RHS values outside [-1, 1] before residual or Newton
+  acceptance; a loose residual near an oscillatory maximum cannot create a root.
+
 - RHS deduplication keeps distinct floating-point values, even when close
   values used to share a bucket. For bit-identical values, search selects a
   representative using the requested ranking after applying RHS symbol filters.
+  Under a stop condition it keeps the simplest spelling, so the stop bound
+  reflects it.
+- Postfix output for user constants and functions parses back.
+  `Expression::parse` decodes characters, not UTF-8 bytes. Symbol options no
+  longer truncate a character above U+00FF onto an ASCII symbol (U+0170 was
+  read as `p`), and `-S`/`-N` no longer split multibyte characters into bytes
+  that alias user symbol slots.
+- Rewrite pruning (`2 b v` as `sqrt(b)`, `log_e` as `ln`, `a+a` as `2*a`) fires
+  only when the replacement is enabled on that side, no heavier, within its
+  count limit, and not itself pruned. `-S x2v` now finds `x = 22v` for sqrt(2).
+  `1/sqrt(ln a)` and `1/(ln a)^2` are no longer lost to a chain with the
+  `1/ln(a)` heuristic.
+- `(a^2)^2` and `sqrt(sqrt(a))` are pruned only when `^` or `v` and `4` are
+  enabled, so restricted symbol sets can still express fourth powers and roots.
+- Structural constraints classify user functions from their bodies, so
+  `sinpi(sq(2))` passes `--rational-trig-args`, and a function whose body applies
+  `sinpi` counts toward `--max-trig-cycles` and obeys the trig restriction.
 
 ## [2.1.0] - 2026-11-03
 

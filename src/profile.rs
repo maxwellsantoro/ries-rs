@@ -435,7 +435,7 @@ fn parse_symbol_names(profile: &mut Profile, line: &str) -> Result<(), String> {
                 .ok_or("Empty symbol in --symbol-names")?;
             let name = inner[colon_pos + 1..].to_string();
 
-            if let Some(symbol) = Symbol::from_byte(symbol_char as u8) {
+            if let Some(symbol) = Symbol::from_postfix_char(symbol_char) {
                 profile.symbol_names.insert(symbol, name);
             }
         }
@@ -464,7 +464,7 @@ fn parse_symbol_weights(profile: &mut Profile, line: &str) -> Result<(), String>
                 .parse()
                 .map_err(|_| format!("Invalid weight in --symbol-weights: {}", inner))?;
 
-            if let Some(symbol) = Symbol::from_byte(symbol_char as u8) {
+            if let Some(symbol) = Symbol::from_postfix_char(symbol_char) {
                 profile.symbol_weights.insert(symbol, weight);
             }
         }

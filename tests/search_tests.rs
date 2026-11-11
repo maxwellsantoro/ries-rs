@@ -710,20 +710,27 @@ fn test_streaming_stop_priority_changes_results_without_ending_the_scan() {
                 ..config.clone()
             };
             let (priority, stats) = search_streaming_with_config(&gen, &with_stop);
-            let (_, batch_stats) = search_with_stats_and_config(&gen, &with_stop);
+            let (batch, batch_stats) = search_with_stats_and_config(&gen, &with_stop);
             assert!(batch_stats.early_exit);
             assert!(!stats.early_exit);
-            assert_eq!(stats.lhs_count, scanned.lhs_count);
-            assert_eq!(stats.candidates_tested, scanned.candidates_tested);
-            assert_eq!(stats.newton_calls, scanned.newton_calls);
+            // Phase 1 scans every generated LHS; phase 2 rescans within the bound.
+            assert!(stats.lhs_count > scanned.lhs_count);
 
+            // The simplest stop match leads, even though parity ranking alone
+            // prefers a costlier equation, and every result is within its bound.
             assert_eq!(priority[0].lhs.expr.to_postfix(), "x");
             assert_eq!(priority[0].rhs.expr.to_postfix(), "2");
             assert!(compare_matches(&ranked[0], &priority[0], RankingMode::Parity).is_lt());
-            let has_ranked_winner = priority
+            assert!(priority
                 .iter()
-                .any(|m| m.lhs.expr == ranked[0].lhs.expr && m.rhs.expr == ranked[0].rhs.expr);
-            assert_eq!(has_ranked_winner, max_matches > 1);
+                .all(|m| m.complexity <= priority[0].complexity));
+            let summary = |matches: &[ries_rs::search::Match]| -> Vec<_> {
+                matches
+                    .iter()
+                    .map(|m| (m.lhs.expr.to_postfix(), m.rhs.expr.to_postfix()))
+                    .collect()
+            };
+            assert_eq!(summary(&priority), summary(&batch));
         }
     }
 }

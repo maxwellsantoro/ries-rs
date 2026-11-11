@@ -190,3 +190,17 @@ cargo run --release --features highprec -- 2.5 --precision 256
 # Reduce max matches
 ./target/release/ries-rs 2.5 -l2 --max-matches 10
 ```
+
+## Stop-policy regression fixtures
+
+Run `CARGO_PROFILE_RELEASE_PANIC=unwind cargo bench --bench search -- stop_contract` to measure the bounded
+second-pass search for pi, 0.5, and 2.5 with exact-only and classic stopping.
+These fixtures use API complexity 46, parity ranking, and a pool of 16. They
+measure full search even when the CLI could certify an atom fast path. Record
+build, CPU, and timings when comparing changes; do not replace the stop oracle
+or relax certification to obtain a faster benchmark result. Correctness is
+checked independently by the analytic enumeration in `tests/stop_contract.rs`.
+
+The panic override aligns the release binary with Cargo's unwinding benchmark
+harness. Without it, this crate's `rlib`/`cdylib` outputs can collide when Cargo
+builds both the binary and benchmark with different panic strategies.

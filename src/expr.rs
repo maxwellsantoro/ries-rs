@@ -234,8 +234,8 @@ impl Expression {
     /// will later panic during formatting.
     pub fn parse(s: &str) -> Option<Self> {
         let mut symbols = SmallVec::new();
-        for b in s.bytes() {
-            symbols.push(Symbol::from_byte(b)?);
+        for c in s.chars() {
+            symbols.push(Symbol::from_postfix_char(c)?);
         }
         if !Self::is_valid_postfix(&symbols) {
             return None;
@@ -477,7 +477,7 @@ impl Expression {
 
     /// Get the postfix string representation
     pub fn to_postfix(&self) -> String {
-        self.symbols().iter().map(|s| *s as u8 as char).collect()
+        self.symbols().iter().map(|s| s.to_postfix_char()).collect()
     }
 
     /// Convert to infix notation for display
@@ -1134,6 +1134,30 @@ mod tests {
         assert!(expr <= symbols + std::mem::size_of::<usize>());
         #[cfg(target_pointer_width = "64")]
         assert_eq!(expr, 40);
+    }
+
+    #[test]
+    fn custom_symbol_postfix_roundtrips() {
+        for symbols in [
+            vec![Symbol::UserConstant0],
+            vec![Symbol::Two, Symbol::UserFunction0],
+            vec![
+                Symbol::UserConstant15,
+                Symbol::UserFunction15,
+                Symbol::X,
+                Symbol::Add,
+            ],
+        ] {
+            let postfix = Expression::from_symbols(&symbols).to_postfix();
+            let parsed = Expression::parse(&postfix).expect("canonical postfix parses");
+            assert_eq!(parsed.symbols(), symbols.as_slice(), "{postfix:?}");
+        }
+        // Printable aliases still parse; wide characters are not truncated.
+        assert_eq!(
+            Expression::parse("2H").unwrap().symbols(),
+            &[Symbol::Two, Symbol::UserFunction0]
+        );
+        assert!(Expression::parse("\u{170}").is_none());
     }
 
     #[test]

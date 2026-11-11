@@ -134,6 +134,12 @@ Example output:
                      1/x = 1/pi                     ('exact' match) {43}
 ```
 
+For a rounded input such as `ries-rs 3.14159265`, the report's Best
+approximations category prefers simpler equations once they match the precision
+you typed, so `x = pi` comes before more elaborate fits. Extra trailing zeros
+request finer precision. The displayed errors retain their computed values;
+this preference does not mark rounded inputs as exact.
+
 Classic-style output:
 
 ```bash

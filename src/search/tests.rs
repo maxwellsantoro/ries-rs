@@ -2540,3 +2540,63 @@ fn test_search_adaptive_rejects_non_finite_target() {
 fn test_adaptive_target_count_exponent_does_not_overflow() {
     assert_eq!(super::adaptive_target_count(u32::MAX), usize::MAX);
 }
+
+#[test]
+fn inexact_matches_must_resolve_their_claimed_error() {
+    let target = 3.0_f64;
+    let root = 3.0 + 1e-6;
+    let rhs = 1.0_f64;
+    let min_slope = super::ulp_of(rhs) / (root - target);
+    assert_eq!(
+        super::match_exactness(rhs, rhs, min_slope, root, target),
+        Some(false)
+    );
+    assert_eq!(
+        super::match_exactness(rhs, rhs, -min_slope, root, target),
+        Some(false)
+    );
+    for slope in [min_slope.next_down(), 0.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(super::match_exactness(rhs, rhs, slope, root, target), None);
+    }
+    // A well-conditioned approximation is retained, without calling it exact.
+    assert_eq!(
+        super::match_exactness(
+            target,
+            std::f64::consts::PI,
+            1.0,
+            std::f64::consts::PI,
+            target
+        ),
+        Some(false)
+    );
+}
+
+#[test]
+fn tiny_target_pool_starts_with_a_relative_acceptance_window() {
+    for target in [1e-15, -1e-15, 1e-300, -1e-300] {
+        let config = SearchConfig {
+            target,
+            ..Default::default()
+        };
+        let pool = config.pool();
+        assert_eq!(pool.accept_error, target.abs());
+        assert!(!pool.would_accept(2.0 * target.abs(), false));
+    }
+    for target in [0.0, -0.0, 1.0, 3.0] {
+        assert_eq!(
+            SearchConfig {
+                target,
+                ..Default::default()
+            }
+            .pool()
+            .accept_error,
+            1.0
+        );
+    }
+    let config = SearchConfig {
+        target: 1e-15,
+        max_error: 1e-20,
+        ..Default::default()
+    };
+    assert_eq!(config.pool().accept_error, 1e-20);
+}

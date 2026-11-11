@@ -1,6 +1,6 @@
 //! Search constraints and stability analysis for the CLI.
 
-use ries_rs::gen::{ExpressionConstraintOptions, GenConfig};
+use ries_rs::gen::{ExpressionConstraintOptions, GenConfig, UserFunctionConstraints};
 use ries_rs::profile::Profile;
 use ries_rs::search::{Match, SearchConfig};
 use ries_rs::symbol::NumType;
@@ -39,12 +39,25 @@ pub fn expression_constraints_from_args(
     args: ExpressionConstraintArgs,
 ) -> (ExpressionConstraintOptions, bool) {
     let (user_constant_types, user_function_types) = user_type_arrays(profile);
+    // Classify user functions from their bodies so that, e.g., `sq(2)` is an
+    // integer while `sq(pi)` is not.
+    let mut user_function_constraints = [None; 16];
+    for (slot, function) in user_function_constraints
+        .iter_mut()
+        .zip(profile.functions.iter())
+    {
+        *slot = Some(UserFunctionConstraints::from_function(
+            function,
+            &user_constant_types,
+        ));
+    }
     let options = ExpressionConstraintOptions {
         rational_exponents: args.rational_exponents && !args.any_exponents,
         rational_trig_args: args.rational_trig_args && !args.any_trig_args,
         max_trig_cycles: args.max_trig_cycles,
         user_constant_types,
         user_function_types,
+        user_function_constraints,
     };
     let active = options.rational_exponents
         || options.rational_trig_args

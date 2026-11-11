@@ -8,6 +8,7 @@
 use proptest::prelude::*;
 use ries_rs::eval::{evaluate, EvalError};
 use ries_rs::expr::Expression;
+use ries_rs::symbol::{Seft, Symbol};
 
 /// Helper to check if two floats are approximately equal
 fn approx_eq(a: f64, b: f64, tolerance: f64) -> bool {
@@ -252,18 +253,58 @@ proptest! {
 // Expression Parsing Round-Trip
 // =============================================================================
 
-proptest! {
-    /// Test that expressions can be parsed and converted back to postfix
-    #[test]
-    fn parse_postfix_roundtrip(expr_str in "[1-9xqsp][1-9xqsp+*-]*") {
-        if let Some(expr) = Expression::parse(&expr_str) {
-            // Should be able to get postfix back
-            let postfix = expr.to_postfix();
-            // Re-parse should give same result
-            if let Some(reparsed) = Expression::parse(&postfix) {
-                prop_assert_eq!(expr.to_postfix(), reparsed.to_postfix());
+/// Turn arbitrary symbol picks into well-formed postfix: an operator without
+/// enough operands becomes an atom, and leftover operands are joined with `+`.
+fn well_formed_postfix(picks: &[Symbol]) -> Vec<Symbol> {
+    let mut symbols = Vec::with_capacity(picks.len() + 2);
+    let mut depth = 0usize;
+    for &sym in picks {
+        let needed = match sym.seft() {
+            Seft::A => 0,
+            Seft::B => 1,
+            Seft::C => 2,
+        };
+        if depth < needed {
+            symbols.push(Symbol::One);
+            depth += 1;
+            if depth < needed {
+                continue;
             }
         }
+        symbols.push(sym);
+        depth = depth + 1 - needed;
+    }
+    if depth == 0 {
+        symbols.push(Symbol::X);
+        depth = 1;
+    }
+    for _ in 1..depth {
+        symbols.push(Symbol::Add);
+    }
+    symbols
+}
+
+proptest! {
+    /// Every symbol, including user constant and function slots, survives
+    /// `to_postfix` -> `parse`, directly and through a JSON string.
+    #[test]
+    fn parse_postfix_roundtrip(
+        picks in prop::collection::vec(prop::sample::select(Symbol::ALL.to_vec()), 1..12)
+    ) {
+        let symbols = well_formed_postfix(&picks);
+        let postfix: String = symbols.iter().map(|s| s.to_postfix_char()).collect();
+        let parsed = Expression::parse(&postfix);
+        prop_assert!(parsed.is_some(), "failed to parse {:?}", symbols);
+        let parsed = parsed.unwrap();
+        prop_assert_eq!(parsed.symbols(), symbols.as_slice());
+        prop_assert_eq!(parsed.to_postfix(), postfix.clone());
+
+        let json = serde_json::to_string(&postfix).unwrap();
+        let decoded: String = serde_json::from_str(&json).unwrap();
+        let reparsed = Expression::parse(&decoded);
+        prop_assert!(reparsed.is_some());
+        let reparsed = reparsed.unwrap();
+        prop_assert_eq!(reparsed.symbols(), symbols.as_slice());
     }
 }
 

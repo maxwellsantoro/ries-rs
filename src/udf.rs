@@ -212,20 +212,14 @@ fn calculate_stack_effect(ops: &[UdfOp]) -> i32 {
     effect
 }
 
-/// Infer the numeric type of a function based on its operations
-fn infer_num_type(ops: &[UdfOp]) -> NumType {
-    for op in ops {
-        if let UdfOp::Symbol(sym) = op {
-            // If any operation produces transcendental results, the function is transcendental
-            // Use result_type with an empty arg_types to check
-            let result = sym.result_type(&[]);
-            if matches!(result, NumType::Transcendental) {
-                return NumType::Transcendental;
-            }
-        }
-    }
-
-    // Default to transcendental for safety
+/// The fixed numeric type recorded on a parsed function.
+///
+/// A function's class depends on its argument (`sq(2)` is an integer, `sq(pi)`
+/// is not), so no single fixed type is both sound and precise. The fixed type is
+/// the conservative fallback for callers that treat the function as opaque.
+/// Structural constraints derive argument-dependent behavior from the body with
+/// [`crate::gen::UserFunctionConstraints`]; evaluation executes the body.
+fn infer_num_type(_ops: &[UdfOp]) -> NumType {
     NumType::Transcendental
 }
 
