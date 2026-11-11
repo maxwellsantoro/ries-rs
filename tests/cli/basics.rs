@@ -1439,7 +1439,7 @@ fn numeric_anagram_keeps_rhs_representatives_for_each_digit_multiset() {
             "-l",
             "1",
             "-S",
-            "x1+",
+            "x1+*",
             "--S-RHS",
             "12+",
             "--min-equate-value",
@@ -1449,7 +1449,7 @@ fn numeric_anagram_keeps_rhs_representatives_for_each_digit_multiset() {
             "1",
             "--numeric-anagram",
             mode,
-            "0",
+            "1",
         ]);
         assert_eq!(output["results_returned"], 1);
         assert_eq!(output["results"][0]["rhs_postfix"], "11+");
@@ -1683,10 +1683,10 @@ fn reports_use_search_symbol_names_and_trig_scale() {
     assert!(report.contains("x = TWO"));
 
     for (format, expected) in [
-        ("default", "cos(x) = 1"),
-        ("pretty", "cos(x) = 1"),
-        ("sympy", "cos(x) = 1"),
-        ("mathematica", "Cos[x] = 1"),
+        ("default", "1+sin(x) = 1"),
+        ("pretty", "1+sin(x) = 1"),
+        ("sympy", "1+sin(x) = 1"),
+        ("mathematica", "1+Sin[x] = 1"),
     ] {
         let output = json_search(&[
             "--deterministic",
@@ -1697,9 +1697,9 @@ fn reports_use_search_symbol_names_and_trig_scale() {
             format,
             "-s",
             "-l",
-            "0",
+            "1",
             "-S",
-            "x1C",
+            "x1S+",
             "6.283185307179586",
         ]);
         assert_eq!(output["trig_argument_scale"], 1.0);
@@ -1787,13 +1787,13 @@ fn precision_preserves_default_trig_and_distinguishes_unavailable_operators() {
         "256",
         "--deterministic",
         "-l",
-        "0",
+        "1",
         "-S",
-        "x12C",
+        "x1SE",
         "10000000000000000",
     ]);
     let row = &trig["high_precision_verification"]["results"][0];
-    assert_eq!(row["lhs_postfix"], "xC");
+    assert_eq!(row["lhs_postfix"], "xSE");
     assert_eq!(row["status"], "verified");
     assert_eq!(row["highprec_error"], 0.0);
 

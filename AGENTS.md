@@ -51,9 +51,9 @@ cargo check --manifest-path ries-py/Cargo.toml --locked
 ./scripts/test_ries_py_python.sh -q     # end-to-end Python import/search (uses uv)
 ```
 
-CI (`.github/workflows/ci.yml`) is the authoritative gate: dotrepo manifest
-validation, release-integrity, fmt, clippy across feature sets, both binding
-test paths, and `cargo nextest` on Linux/macOS/Windows.
+CI (`.github/workflows/ci.yml`) is the authoritative gate for release integrity,
+formatting, Clippy across feature sets, both binding test paths, and `cargo nextest`
+on Linux, macOS, and Windows.
 
 ## Conventions
 

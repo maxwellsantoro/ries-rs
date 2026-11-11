@@ -47,7 +47,7 @@ pub struct Args {
     #[arg(short = 'N', long)]
     pub exclude: Option<String>,
 
-    /// Re-enable symbols disabled by exclude/only options, or enable all if no argument
+    /// Re-enable symbols disabled by -N or -S. With no argument or `all`, re-enable every symbol
     #[arg(short = 'E', long = "enable", num_args = 0..=1, default_missing_value = "all")]
     pub enable: Option<String>,
 
@@ -158,12 +158,12 @@ pub struct Args {
     pub classic: bool,
 
     /// Use original-RIES-like signed weight ranking for match ordering
-    /// (exactness -> error -> legacy parity score -> complexity)
+    /// (exactness -> error bucket -> legacy parity score -> complexity)
     #[arg(long, conflicts_with = "complexity_ranking")]
     pub parity_ranking: bool,
 
     /// Force complexity-first ranking
-    /// (exactness -> error -> complexity)
+    /// (exactness -> error bucket -> complexity)
     #[arg(long, conflicts_with = "parity_ranking")]
     pub complexity_ranking: bool,
 
@@ -598,7 +598,7 @@ pub fn parse_symbol_sets(
 
     if let Some(enabled) = enable_symbols {
         if enabled == "all" {
-            // Special value "all" clears all exclusions
+            allowed = None;
             excluded = None;
         } else {
             for b in enabled.bytes() {
@@ -856,8 +856,14 @@ mod tests {
         assert_eq!(allowed, Some(vec![b'a', b'b', b'c'].into_iter().collect()));
         assert_eq!(excluded, Some(vec![b'd'].into_iter().collect()));
 
-        // Test enable all
-        let (_, excluded) = parse_symbol_sets(None, Some("abc"), Some("all"));
-        assert!(excluded.is_none());
+        assert_eq!(
+            parse_symbol_sets(Some("x12+"), Some("lA"), Some("all")),
+            (None, None)
+        );
+        for (enabled, restored, disabled) in [("l", b'l', b'A'), ("A", b'A', b'l')] {
+            let (allowed, excluded) = parse_symbol_sets(Some("x12+"), Some("lA"), Some(enabled));
+            assert!(allowed.unwrap().contains(&restored));
+            assert_eq!(excluded, Some([disabled].into_iter().collect()));
+        }
     }
 }

@@ -43,6 +43,8 @@ Each symbol has a fixed arity category (`Seft` in code):
 - `C`: binary operator (`2`-input, `1`-output)
 
 The search model is defined over the active symbol set after applying CLI/profile filters (`-S`, `-N`, presets, user constants/functions, etc.).
+Use `-E` or `-E all` to clear both `-S` and `-N`. Pass symbol codes such as
+`-E lA` to restore only `ln` and `atan2` to the active set.
 
 A user-defined function starts with its argument on the postfix stack. Use `|`
 to duplicate that argument. A function body cannot reference the search variable
@@ -160,18 +162,26 @@ The two scales are not the same function, and benchmarks should not treat them a
 
 The canonical comparator is `compare_matches` in `src/pool.rs`.
 
-A row is exact when both of these hold (`match_is_exact`):
+A row is exact when all three conditions hold (`match_exactness`):
 
 - the two sides, both evaluated at the typed target, agree to a few ulps of
   `max(|lhs|, |rhs|)` (`sides_agree_within_ulps`)
-- the solved `x` is within 8 ulps of the typed target (`solved_x_within_ulps`)
+- the solved `x` is within eight ulps of the typed target
+- one ulp of the RHS corresponds to at most eight ulps of the target under
+  the LHS slope, i.e. `ulp(rhs) ≤ 8 · ulp(target) · |f′(target)|`
+
+A stationary LHS cannot locate a root with the linearized search and is
+skipped. For a nonzero slope, a hit within eight ulps of the target is also
+discarded if it fails the slope condition. A rounded residual of zero can
+span many representable values around a trigonometric extremum or arise
+from an identity such as `x*(1/x) = 1`.
 
 Side agreement alone used to call a different root exact when the sides barely
 move (`e^x = 1` at `1e-15`, Newton walks to 0; `cospi(plastic"/x) = 1` near
 `1e-11`). The absolute window `|x_value - target| < EXACT_MATCH_TOLERANCE`
-used to drop a flat identity whose sides already match (`x^(1/3) = (1+9)^2`
-at `1e6`, about 7 ulps of `1e6`, and `x^(1/3) = 4` at `64`, about 2 ulps).
-Eight ulps of `|target|` keeps both. Newton tests the residual against
+used to drop roots whose sides already match (`x^(1/3) = (1+9)^2` at `1e6`,
+about seven ulps of `1e6`, and `x^(1/3) = 4` at `64`, about two ulps).
+Newton tests the residual against
 `1e-10 * max(|f(x)|, |rhs|)`. It also keeps a steep root whose correction is
 at most 8 ulps and whose residual is within `1e-5 * max(|f(x)|, |rhs|)`.
 Exactness is still decided at the original target. Using the actual side
@@ -187,22 +197,17 @@ stays within 8 ulps of 2 out near `6e-8` (`cospi(x^2)`, `pi ± x^2`, and
 `3 ± x^2` with them). A derivative large enough that `|f' * x|` already exceeds
 many ulps of the value cannot be that flush, so ordinary targets do not pay
 for an extra evaluation at 0. Expressions undefined at 0 (`0^phi`, `1/x`) use
-a subnormal stand-in for that limit. A true identity such as `x*(1/x) = 1` or
-`log_x(x^2) = 2` holds at the probes and stays. Exact integers, including every
-`|x| >= 2^52`, are not part of this rule: `cospi(x) = 1` on the evens equals
-`cospi(0)`, and the integer-lattice check still drops `2 + 1/x` once `|x|` is
-that large. Target 0 is excluded too: `x^2` is flat there but the value is genuine.
+a small nonzero stand-in for that limit. The flush check applies only at
+non-integer targets. The integer-lattice probe still drops `2 + 1/x` once
+`|x|` is large enough that the reciprocal vanishes into the sum.
 
 Ordering is:
 
 1. Exactness (exact before non-exact)
-2. Absolute error (`|x_value - target|`, smaller first) — **for non-exact matches
-   only**. Rows flagged exact are treated as equally exact: the sides already
-   agree at the target and the solved x is within 8 ulps, so the remaining
-   x-error is not a quality signal. They collapse to a single error rank and
-   are decided by complexity instead.
-   This keeps the bounded pool from churning on sub-tolerance residuals and
-   matches the original RIES intent of ranking exact forms by simplicity.
+2. Absolute root error bucket, smaller first. Each bucket spans eight ulps
+   of the target. Exact rows share a single error rank. The report's Best
+   Approximations section also uses these buckets with complexity ties.
+   The raw error is preserved for output and tolerance checks.
 3. Ranking-mode tie-break:
    - `complexity`: lower `C_match` first
    - `parity`: lower legacy parity score first, then lower `C_match`
@@ -210,6 +215,11 @@ Ordering is:
 5. Lexicographic postfix order of RHS symbols
 
 This final lexical tie-break is what makes total ordering explicit and stable.
+
+Within each report category, the highest-ranked row represents equations that
+share the same default infix form or differ only by negating both sides.
+Default and pretty infix omit multiplication by literal `1` and use explicit
+`*` after compound factors. Postfix output records the original operations.
 
 Search keeps one admissible RHS representative for each bit-identical value.
 It applies RHS symbol, value, and expression filters before choosing by the
@@ -235,8 +245,10 @@ Value bounds, expression constraints, numeric anagrams, and minimum match
 distance are applied before matches enter the pool or trigger an early stop.
 With canonical simplification enabled, the pool keeps the highest-ranked
 equation for each canonical pair. An explicit maximum match distance bounds
-the reported absolute error, including for exact rows. The CLI caps its pool
-at 1,000,000 entries after applying report-mode sizing.
+the reported absolute error, including for exact rows. The default CLI report
+has room for at least 5,000 candidates so its simplicity-based categories can
+still see equations crowded out by closer approximations. The CLI caps the
+pool at 1,000,000 entries after applying report-mode sizing.
 
 ### Measured cost of the LHS key
 

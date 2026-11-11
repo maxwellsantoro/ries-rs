@@ -8,9 +8,8 @@ use crate::pool::TopKPool;
 
 use crate::thresholds::{
     ADAPTIVE_COMPLEXITY_SCALE, ADAPTIVE_EXACT_MATCH_FACTOR, ADAPTIVE_POOL_FULLNESS_SCALE,
-    BASE_SEARCH_RADIUS_FACTOR, DEGENERATE_TEST_THRESHOLD, MAX_SEARCH_RADIUS_FACTOR,
-    NEWTON_FINAL_TOLERANCE, STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR, TIER_0_MAX,
-    TIER_1_MAX, TIER_2_MAX,
+    BASE_SEARCH_RADIUS_FACTOR, MAX_SEARCH_RADIUS_FACTOR, NEWTON_FINAL_TOLERANCE,
+    STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR, TIER_0_MAX, TIER_1_MAX, TIER_2_MAX,
 };
 
 /// Database for storing expressions sorted by value
@@ -490,58 +489,10 @@ fn match_one_lhs(
         return true;
     }
 
-    // Skip degenerate expressions: contain x but derivative is 0.
-    // These are trivial identities like 1^x=1, x/x=1, log_x(x)=1.
-    if super::should_skip_degenerate_lhs(lhs, config.target, &context.eval) {
+    if lhs.derivative == 0.0 || super::should_skip_degenerate_lhs(lhs, config.target, &context.eval)
+    {
         return true;
     }
-    if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-        // Flat at the target. Record a match only when the residual is
-        // actually zero (a few ulps). A wider window used to stamp near-misses
-        // as exact.
-        let half = super::flat_exact_half_width(lhs.value);
-        let low = lhs.value - half;
-        let high = lhs.value + half;
-
-        stats.lhs_tested += 1;
-        let rhs_slice = db.range(low, high);
-        stats.record_candidate_window(lhs, rhs_slice.len());
-        for rhs in rhs_slice {
-            if !rhs_is_eligible(rhs) {
-                continue;
-            }
-            stats.candidates_tested += 1;
-            if config.show_match_checks {
-                eprintln!(
-                    "  [match] checking lhs={:.6} rhs={:.6}",
-                    lhs.value, rhs.value
-                );
-            }
-            // `residual_is_exact` is the named flat window. Exactness still
-            // requires the sides to agree, and the solved x is the target.
-            if super::residual_is_exact(lhs.value, rhs.value)
-                && super::match_is_exact(lhs.value, rhs.value, config.target, config.target)
-                && pool.would_accept(0.0, true)
-                && config.filters.allows_error(0.0)
-            {
-                let m = Match {
-                    lhs: lhs.clone(),
-                    rhs: rhs.clone(),
-                    x_value: config.target,
-                    error: 0.0,
-                    complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                    exact: true,
-                };
-                let stop = super::stop_condition_met(&m, config);
-                pool.try_insert(m);
-                if stop {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     stats.lhs_tested += 1;
 
     // Search for RHS expressions near this LHS value using the adaptive radius.
@@ -631,7 +582,11 @@ fn match_one_lhs(
             (config.target + x_delta, x_delta)
         };
 
-        let exact = super::match_is_exact(lhs.value, rhs.value, x_value, config.target);
+        let Some(exact) =
+            super::match_exactness(lhs.value, rhs.value, lhs.derivative, x_value, config.target)
+        else {
+            continue;
+        };
         if pool.would_accept(error.abs(), exact) && config.filters.allows_error(error) {
             let m = Match {
                 lhs: lhs.clone(),

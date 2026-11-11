@@ -334,9 +334,11 @@ fn test_s_flag_prints_the_branch_in_report_and_classic_modes() {
 #[test]
 fn test_s_flag_large_period_prints_a_decimal_integer() {
     let (stdout, _) = run_ries(&[
-        "2000002",
+        "2000002.001",
         "--deterministic",
         "--json",
+        "-S",
+        "xC1",
         "-s",
         "-n",
         "8",
@@ -355,14 +357,14 @@ fn test_s_flag_large_period_prints_a_decimal_integer() {
     );
     assert!(
         !stdout.contains("\"solve_for_x\": \"x = atan2"),
-        "a large exact integer must not be displayed as the principal inverse\n{stdout}"
+        "the period shift must not be displayed as the principal inverse\n{stdout}"
     );
 }
 
 #[test]
 fn test_s_flag_uses_mathematica_and_sympy_formatting() {
     let (mathematica, _) = run_ries(&[
-        "2.5",
+        "1.4142135623730951",
         "--deterministic",
         "--report",
         "false",
@@ -373,14 +375,16 @@ fn test_s_flag_uses_mathematica_and_sympy_formatting() {
         "0",
         "--format",
         "mathematica",
+        "-S",
+        "x2s",
     ]);
     assert!(
-        mathematica.contains("ArcTan["),
+        mathematica.contains("x = Sqrt[2]"),
         "mathematica -s should format the solved expression\n{mathematica}"
     );
 
     let (sympy, _) = run_ries(&[
-        "2.5",
+        "4",
         "--deterministic",
         "--report",
         "false",
@@ -391,9 +395,11 @@ fn test_s_flag_uses_mathematica_and_sympy_formatting() {
         "1",
         "--format",
         "sympy",
+        "-S",
+        "x2q",
     ]);
     assert!(
-        sympy.contains("**"),
+        sympy.contains("x = 2**2"),
         "sympy -s should format powers with **\n{sympy}"
     );
 }

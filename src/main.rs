@@ -35,6 +35,12 @@ fn exit_with(err: CliExit) -> ! {
 }
 
 fn main() {
+    #[cfg(unix)]
+    // SAFETY: SIG_DFL restores the OS action for a closed output pipe.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let arg_matches = Args::command().get_matches();
     let explicit_target_literal = arg_matches
         .get_raw("target")
@@ -223,6 +229,7 @@ fn main() {
 
     // Report mode retains extra candidates for its categories.
     const MAX_POOL_SIZE: usize = 1_000_000;
+    const MIN_REPORT_POOL_SIZE: usize = 5_000;
     let use_report = args.report && !args.classic;
     let Some((effective_max_matches, pool_size)) = (|| {
         let displayed = if use_report {
@@ -230,7 +237,11 @@ fn main() {
         } else {
             args.max_matches
         };
-        let capacity = displayed.checked_mul(if use_report { 10 } else { 1 })?;
+        let capacity = if use_report {
+            displayed.checked_mul(10)?.max(MIN_REPORT_POOL_SIZE)
+        } else {
+            displayed
+        };
         (capacity <= MAX_POOL_SIZE).then_some((displayed, capacity))
     })() else {
         eprintln!(

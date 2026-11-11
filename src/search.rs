@@ -158,8 +158,8 @@ fn off_lattice_sample_moves(lhs: &EvaluatedExpr, eval: &EvalContext<'_>) -> bool
 /// closer to 0 (`0.9 x`) still is, and a moderate probe (`0.25`, `0.5`, `±1`)
 /// moves. The closer point keeps a real root that only happens to equal that
 /// limit (`cospi(x^2)` at `sqrt(2)`, `cospi(1/x)` at `0.1`). The far probes
-/// separate underflow from an identity (`x*(1/x)`, `log_x(x^2) = 2` hold
-/// there and stay). `0^phi` and `1/x` are undefined at 0; a subnormal stand-in
+/// distinguish underflow from identities (`x*(1/x)`, `log_x(x^2) = 2` hold
+/// there too). `0^phi` and `1/x` are undefined at 0; a small nonzero stand-in
 /// is the same limit when the expression is defined for a tiny nonzero `x`.
 ///
 /// Exact nonzero integers are excluded. Every `|x| >= 2^52` is an integer, and
@@ -210,7 +210,7 @@ fn value_at_zero_limit(lhs: &EvaluatedExpr, target: f64, eval: &EvalContext<'_>)
     if let Ok(at_zero) = crate::eval::evaluate_search(&lhs.expr, 0.0, eval) {
         return Some(at_zero.value);
     }
-    // 0 is outside the domain. A subnormal is still small enough that a
+    // 0 is outside the domain. A small magnitude can make a
     // positive power of x underflows, and it keeps the sign of the target.
     let stand_in = target.signum() * 1e-300;
     if stand_in == target || !stand_in.is_finite() {
@@ -221,35 +221,12 @@ fn value_at_zero_limit(lhs: &EvaluatedExpr, target: f64, eval: &EvalContext<'_>)
         .map(|result| result.value)
 }
 
-/// Half-width of the window in which a flat LHS may be paired with an RHS.
-///
-/// The residual has to be only a few ulps. A wider window used to stamp
-/// near-misses (`cospi(sqrt(x)) ≈ 0.997`) as exact.
-pub(crate) fn flat_exact_half_width(lhs_value: f64) -> f64 {
-    let scale = lhs_value.abs().max(1.0);
-    (8.0 * f64::EPSILON * scale).max(f64::EPSILON)
-}
-
-/// True when `lhs_value` and `rhs_value` agree to a few ulps of a unit scale.
-///
-/// The scale is at least 1, so this is the flat-match window. Exactness of a
-/// reported row uses [`sides_agree_within_ulps`], which has no floor: a
-/// sub-unit residual can be many ulps of the two sides.
-pub(crate) fn residual_is_exact(lhs_value: f64, rhs_value: f64) -> bool {
-    let diff = (lhs_value - rhs_value).abs();
-    if diff == 0.0 {
-        return true;
-    }
-    let scale = lhs_value.abs().max(rhs_value.abs()).max(1.0);
-    diff <= (8.0 * f64::EPSILON * scale).max(f64::EPSILON)
-}
-
 /// True when the two sides agree to a few ulps of `max(|lhs|, |rhs|)`.
 ///
 /// Both values are the ones at the typed target. Necessary for an exact row,
 /// and not sufficient: Newton can land on a different root of a function whose
-/// sides barely move (`e^x = 1` at `1e-15`). [`match_is_exact`] also requires
-/// the solved `x`.
+/// sides barely move (`e^x = 1` at `1e-15`). [`match_exactness`] also checks
+/// the solved `x` and how precisely the equation locates it.
 pub(crate) fn sides_agree_within_ulps(lhs_value: f64, rhs_value: f64) -> bool {
     let diff = (lhs_value - rhs_value).abs();
     if diff == 0.0 {
@@ -263,7 +240,7 @@ pub(crate) fn sides_agree_within_ulps(lhs_value: f64, rhs_value: f64) -> bool {
 }
 
 /// One ulp of a non-negative magnitude.
-fn ulp_of(mag: f64) -> f64 {
+pub(crate) fn ulp_of(mag: f64) -> f64 {
     if mag <= 0.0 || !mag.is_finite() {
         return f64::from_bits(1);
     }
@@ -290,9 +267,25 @@ pub(crate) fn solved_x_within_ulps(solved_x: f64, target: f64) -> bool {
     diff <= 8.0 * ulp_of(target.abs())
 }
 
-/// Exact when the sides agree at the typed target and the solved `x` is that target.
-pub(crate) fn match_is_exact(lhs_value: f64, rhs_value: f64, solved_x: f64, target: f64) -> bool {
-    sides_agree_within_ulps(lhs_value, rhs_value) && solved_x_within_ulps(solved_x, target)
+/// Classify a match, discarding a near-target hit that cannot locate a root
+/// at the precision it claims. A rounded residual of zero can span millions
+/// of floats around a stationary point or hold everywhere for an identity.
+pub(crate) fn match_exactness(
+    lhs_value: f64,
+    rhs_value: f64,
+    derivative: f64,
+    solved_x: f64,
+    target: f64,
+) -> Option<bool> {
+    if !solved_x_within_ulps(solved_x, target) {
+        return Some(false);
+    }
+
+    // One ulp of the RHS must correspond to at most eight ulps of x.
+    // Compare slopes directly to avoid underflow in |f'| * ulp(x).
+    let min_slope = ulp_of(rhs_value.abs()) / (8.0 * ulp_of(target.abs()));
+    (derivative.is_finite() && derivative.abs() >= min_slope && derivative != 0.0)
+        .then(|| sides_agree_within_ulps(lhs_value, rhs_value))
 }
 #[cfg(test)]
 use newton::newton_raphson;
@@ -687,10 +680,9 @@ pub struct Match {
     /// Reported and ranked as an exact root.
     ///
     /// The two sides, both evaluated at the typed target, agree to a few ulps
-    /// of `max(|lhs|, |rhs|)`, and `x_value` is within 8 ulps of the typed
-    /// target. A Newton hit that only passed the loose local-root test is
-    /// false, and so is a nearby root whose sides do not match at the target
-    /// or whose solved `x` walked off to a different root.
+    /// of `max(|lhs|, |rhs|)` and `x_value` is within eight ulps of the target.
+    /// The LHS slope must also map one ulp of the RHS to at most eight ulps
+    /// of the target.
     pub exact: bool,
 }
 
@@ -1567,62 +1559,11 @@ pub fn search_streaming_with_config(
                     return true;
                 }
 
-                // Skip degenerate expressions
-                if should_skip_degenerate_lhs(lhs, search_config.target, &context.eval) {
+                if lhs.derivative == 0.0
+                    || should_skip_degenerate_lhs(lhs, search_config.target, &context.eval)
+                {
                     return true;
                 }
-                if lhs.derivative.abs() < DEGENERATE_TEST_THRESHOLD {
-                    stats.lhs_tested += 1;
-                    let half = flat_exact_half_width(lhs.value);
-                    stats.record_candidate_window(
-                        lhs,
-                        rhs_db.count_in_range(lhs.value - half, lhs.value + half),
-                    );
-                    for rhs in rhs_db.iter_tiers_in_range(lhs.value - half, lhs.value + half) {
-                        if !search_config.filters.allows_pair(&lhs.expr, &rhs.expr) {
-                            continue;
-                        }
-                        stats.candidates_tested += 1;
-                        if search_config.show_match_checks {
-                            eprintln!(
-                                "  [match] checking lhs={:.6} rhs={:.6}",
-                                lhs.value, rhs.value
-                            );
-                        }
-                        // `residual_is_exact` is the named flat window. Exactness
-                        // still requires the sides to agree, and the solved x
-                        // is the target on this path so the ulp window holds.
-                        if residual_is_exact(lhs.value, rhs.value)
-                            && match_is_exact(
-                                lhs.value,
-                                rhs.value,
-                                search_config.target,
-                                search_config.target,
-                            )
-                            && pool.would_accept(0.0, true)
-                            && search_config.filters.allows_error(0.0)
-                        {
-                            let m = Match {
-                                lhs: lhs.clone(),
-                                rhs: rhs.clone(),
-                                x_value: search_config.target,
-                                error: 0.0,
-                                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                                exact: true,
-                            };
-                            if stop_condition_met(&m, search_config)
-                                && best_stop_match
-                                    .as_ref()
-                                    .is_none_or(|current| prefer_streaming_stop_match(&m, current))
-                            {
-                                best_stop_match = Some(m.clone());
-                            }
-                            pool.try_insert(m);
-                        }
-                    }
-                    return true;
-                }
-
                 stats.lhs_tested += 1;
 
                 let search_radius = calculate_adaptive_search_radius(
@@ -1659,75 +1600,55 @@ pub fn search_streaming_with_config(
                         continue;
                     }
 
-                    if !search_config.refine_with_newton {
-                        let refined_x = search_config.target + x_delta;
-                        let refined_error = x_delta;
-                        let is_exact =
-                            match_is_exact(lhs.value, rhs.value, refined_x, search_config.target);
-
-                        if pool.would_accept(refined_error.abs(), is_exact)
-                            && search_config.filters.allows_error(refined_error)
-                        {
-                            let m = Match {
-                                lhs: lhs.clone(),
-                                rhs: rhs.clone(),
-                                x_value: refined_x,
-                                error: refined_error,
-                                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                                exact: is_exact,
-                            };
-                            if stop_condition_met(&m, search_config)
-                                && best_stop_match
-                                    .as_ref()
-                                    .is_none_or(|current| prefer_streaming_stop_match(&m, current))
-                            {
-                                best_stop_match = Some(m.clone());
-                            }
-                            pool.try_insert(m);
-                        }
-                        continue;
-                    }
-
-                    stats.newton_calls += 1;
                     let initial_guess = search_config.target + x_delta;
-                    if let Some(hit) = newton_raphson_with_constants(
-                        &lhs.expr,
-                        rhs.value,
-                        initial_guess,
-                        search_config.newton_iterations,
-                        &context.eval,
-                        search_config.show_newton,
-                        search_config.derivative_margin,
-                    ) {
-                        if !hit.real {
+                    let (x_value, error) = if search_config.refine_with_newton {
+                        stats.newton_calls += 1;
+                        let Some(hit) = newton_raphson_with_constants(
+                            &lhs.expr,
+                            rhs.value,
+                            initial_guess,
+                            search_config.newton_iterations,
+                            &context.eval,
+                            search_config.show_newton,
+                            search_config.derivative_margin,
+                        )
+                        .filter(|hit| hit.real) else {
                             continue;
-                        }
-                        let refined_x = hit.x;
+                        };
                         stats.newton_success += 1;
-                        let refined_error = refined_x - search_config.target;
-                        let is_exact =
-                            match_is_exact(lhs.value, rhs.value, refined_x, search_config.target);
+                        (hit.x, hit.x - search_config.target)
+                    } else {
+                        (initial_guess, x_delta)
+                    };
+                    let Some(exact) = match_exactness(
+                        lhs.value,
+                        rhs.value,
+                        lhs.derivative,
+                        x_value,
+                        search_config.target,
+                    ) else {
+                        continue;
+                    };
 
-                        if pool.would_accept(refined_error.abs(), is_exact)
-                            && search_config.filters.allows_error(refined_error)
+                    if pool.would_accept(error.abs(), exact)
+                        && search_config.filters.allows_error(error)
+                    {
+                        let m = Match {
+                            lhs: lhs.clone(),
+                            rhs: rhs.clone(),
+                            x_value,
+                            error,
+                            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                            exact,
+                        };
+                        if stop_condition_met(&m, search_config)
+                            && best_stop_match
+                                .as_ref()
+                                .is_none_or(|current| prefer_streaming_stop_match(&m, current))
                         {
-                            let m = Match {
-                                lhs: lhs.clone(),
-                                rhs: rhs.clone(),
-                                x_value: refined_x,
-                                error: refined_error,
-                                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
-                                exact: is_exact,
-                            };
-                            if stop_condition_met(&m, search_config)
-                                && best_stop_match
-                                    .as_ref()
-                                    .is_none_or(|current| prefer_streaming_stop_match(&m, current))
-                            {
-                                best_stop_match = Some(m.clone());
-                            }
-                            pool.try_insert(m);
+                            best_stop_match = Some(m.clone());
                         }
+                        pool.try_insert(m);
                     }
                 }
                 true
@@ -1828,7 +1749,15 @@ pub fn search_one_sided_with_stats_and_config(
         }
 
         let error = rhs.value - config.target;
-        let is_exact = match_is_exact(lhs.value, rhs.value, rhs.value, config.target);
+        let Some(is_exact) = match_exactness(
+            lhs.value,
+            rhs.value,
+            lhs.derivative,
+            rhs.value,
+            config.target,
+        ) else {
+            continue;
+        };
         if !pool.would_accept(error.abs(), is_exact) || !config.filters.allows_error(error) {
             continue;
         }

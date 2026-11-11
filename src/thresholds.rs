@@ -81,9 +81,8 @@ pub const DEGENERATE_TEST_THRESHOLD: f64 = 1e-10;
 
 /// Historical window for flat LHS/RHS pairing.
 ///
-/// Flat matches are now recorded only when the residual is within a few ulps
-/// of the RHS. This wider window stamped near-misses as exact and is no
-/// longer consulted by the matcher. It remains so older notes keep a name.
+/// The matcher now checks whether the slope resolves a near-target hit.
+/// This constant is retained for compatibility with older callers.
 ///
 /// Value: 0.01
 pub const DEGENERATE_RANGE_TOLERANCE: f64 = 0.01;

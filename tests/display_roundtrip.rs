@@ -14,6 +14,24 @@ use ries_rs::search::{search_with_stats_and_config, SearchConfig};
 use ries_rs::symbol::Symbol;
 use ries_rs::{solve_for_x_at, MatchSummary};
 
+#[test]
+fn default_infix_uses_clear_multiplication_and_preserves_value() {
+    for (postfix, expected) in [
+        ("1xs*", "x^2"),
+        ("px+1*", "pi+x"),
+        ("p11/x*+", "pi+1/1*x"),
+        ("2x*", "2 x"),
+    ] {
+        let expr = Expression::parse(postfix).unwrap();
+        let infix = expr.to_infix();
+        assert_eq!(infix, expected);
+        assert_eq!(
+            Parser::eval(&infix, 1.5).unwrap(),
+            evaluate(&expr, 1.5).unwrap().value
+        );
+    }
+}
+
 struct Parser<'a> {
     input: &'a [u8],
     pos: usize,

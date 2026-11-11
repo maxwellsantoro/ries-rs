@@ -11,7 +11,7 @@
 //! during hashing and comparison.
 
 use crate::expr::Expression;
-use crate::search::Match;
+use crate::search::{ulp_of, Match};
 use crate::thresholds::{
     ACCEPT_ERROR_RELAX_CAPACITY_FRACTION, ACCEPT_ERROR_TIGHTEN_FACTOR, BEST_ERROR_TIGHTEN_FACTOR,
     EXACT_MATCH_TOLERANCE, NEWTON_TOLERANCE, STRICT_GATE_CAPACITY_FRACTION, STRICT_GATE_FACTOR,
@@ -22,10 +22,10 @@ use std::collections::{BinaryHeap, HashSet};
 /// Match ranking mode for pool eviction and final ordering.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RankingMode {
-    /// Sort by exactness -> error -> complexity (current default behavior)
+    /// Sort by exactness -> error bucket -> complexity
     #[default]
     Complexity,
-    /// Sort by exactness -> error -> legacy signed parity score -> complexity
+    /// Sort by exactness -> error bucket -> legacy signed parity score -> complexity
     Parity,
 }
 
@@ -121,21 +121,30 @@ fn compare_expr(a: &Expression, b: &Expression) -> Ordering {
         .cmp(b.symbols().iter().map(|s| *s as u8))
 }
 
+/// Errors within the same eight-ulp interval share a rank. Recover the target
+/// from the root and signed error so matches can be ranked without extra state.
+fn match_error_rank(m: &Match) -> u64 {
+    if m.exact {
+        return 0;
+    }
+    let error = m.error.abs();
+    if error.is_nan() {
+        return u64::MAX;
+    }
+    if error.is_infinite() {
+        return error.to_bits();
+    }
+
+    let width = 8.0 * ulp_of((m.x_value - m.error).abs());
+    (error - error % width).to_bits()
+}
+
 /// Compare two matches according to the selected ranking mode.
 pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Ordering {
-    let a_exactness = if a.exact { 0_u8 } else { 1_u8 };
-    let b_exactness = if b.exact { 0_u8 } else { 1_u8 };
-
-    // Flagged exact matches are treated as equally exact: sub-tolerance x-error
-    // is floating-point noise, not a meaningful quality signal. Collapsing it
-    // to zero lets complexity (simplicity) decide among exact matches, which
-    // both matches the original RIES intent and keeps the bounded pool stable.
-    let a_eff_err = if a_exactness == 0 { 0.0 } else { a.error.abs() };
-    let b_eff_err = if b_exactness == 0 { 0.0 } else { b.error.abs() };
-
-    let mut ord = a_exactness
-        .cmp(&b_exactness)
-        .then_with(|| a_eff_err.total_cmp(&b_eff_err));
+    let mut ord = b
+        .exact
+        .cmp(&a.exact)
+        .then_with(|| match_error_rank(a).cmp(&match_error_rank(b)));
 
     if ord != Ordering::Equal {
         return ord;
@@ -160,38 +169,18 @@ pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Order
 #[derive(Clone)]
 struct PoolEntry {
     m: Match,
-    rank_key: (u8, i64, i32, u32), // (exactness, error_bits, mode_tie, complexity)
+    rank_key: (bool, u64, i32, u32), // (inexact, error bucket, mode tie, complexity)
     canonical_key: Option<Box<(String, String)>>,
 }
 
 impl PoolEntry {
     fn new(m: Match, ranking_mode: RankingMode) -> Self {
-        let is_exact = m.exact;
-        let exactness_rank = if is_exact { 0 } else { 1 };
-        // Convert error to sortable integer, handling special values.
-        // For IEEE 754 doubles, positive values' bit patterns preserve ordering
-        // when interpreted as unsigned, but we need to handle NaN/Infinity specially.
-        let error_abs = m.error.abs();
-        let error_bits = if is_exact {
-            // Exact matches collapse to a single rank so complexity (not residual
-            // floating-point noise) decides between them; see `compare_matches`.
-            0
-        } else if error_abs.is_nan() {
-            // NaN should sort as worst (largest) error
-            i64::MAX
-        } else if error_abs.is_infinite() {
-            // Infinity should also sort as worst (just below NaN)
-            i64::MAX - 1
-        } else {
-            // Safe: positive f64 bit patterns have sign bit 0, so to_bits() < i64::MAX.
-            error_abs.to_bits() as i64
-        };
         let mode_tie = match ranking_mode {
             RankingMode::Complexity => 0,
             RankingMode::Parity => legacy_parity_score_match(&m),
         };
         Self {
-            rank_key: (exactness_rank, error_bits, mode_tie, m.complexity),
+            rank_key: (!m.exact, match_error_rank(&m), mode_tie, m.complexity),
             m,
             canonical_key: None,
         }
@@ -458,10 +447,11 @@ impl TopKPool {
 
     /// Get all matches, sorted by ranking mode.
     pub fn into_sorted(self) -> Vec<Match> {
-        let ranking_mode = self.ranking_mode;
-        let mut matches: Vec<Match> = self.heap.into_iter().map(|e| e.m).collect();
-        matches.sort_by(|a, b| compare_matches(a, b, ranking_mode));
-        matches
+        self.heap
+            .into_sorted_vec()
+            .into_iter()
+            .map(|entry| entry.m)
+            .collect()
     }
 
     pub(crate) fn minimum_error(&self) -> Option<f64> {
@@ -518,6 +508,30 @@ mod tests {
         assert!(pool.try_insert(make_match("x1+", "35/", 0.01, 34)));
 
         assert_eq!(pool.len(), 2);
+    }
+
+    #[test]
+    fn inexact_error_bucket_orders_both_results_and_eviction() {
+        let target = 1.5_f64;
+        let ulp = target.next_up() - target;
+        let candidate = |lhs, steps: f64, complexity| {
+            let error = steps * ulp;
+            let mut m = make_match(lhs, "2", error, complexity);
+            m.x_value = target + error;
+            m
+        };
+        let simple = candidate("xs", 1_003.0, 37);
+        let complex = candidate("xx*", -1_002.0, 47);
+        let closer = candidate("x1+", 999.0, 90);
+
+        assert!(compare_matches(&simple, &complex, RankingMode::Complexity).is_lt());
+        assert!(compare_matches(&closer, &simple, RankingMode::Complexity).is_lt());
+        for (first, second) in [(&simple, &complex), (&complex, &simple)] {
+            let mut pool = TopKPool::new(1, 1.0);
+            assert!(pool.try_insert(first.clone()));
+            assert!(pool.try_insert(second.clone()));
+            assert_eq!(pool.into_sorted()[0].lhs.expr, simple.lhs.expr);
+        }
     }
 
     #[test]

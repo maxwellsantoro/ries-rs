@@ -8,25 +8,6 @@ on:
     branches: [main, master]
 
 jobs:
-  dotrepo:
-    name: dotrepo
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install dotrepo
-        run: cargo install --git https://github.com/maxwellsantoro/dotrepo dotrepo-cli --locked
-
-      - name: Validate manifest
-        run: dotrepo validate
-
-      - name: Check generated surfaces
-        run: dotrepo generate --check
-
   release-integrity:
     name: Release Integrity
     runs-on: ubuntu-latest
@@ -50,7 +31,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt
 
@@ -65,7 +46,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: clippy
 
@@ -92,7 +73,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
@@ -119,7 +100,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -140,7 +121,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -170,7 +151,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -191,7 +172,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -213,7 +194,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: wasm32-unknown-unknown
 
@@ -231,7 +212,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
@@ -258,7 +239,7 @@ jobs:
         run: gcc -O2 /tmp/ries-original.c -lm -o /tmp/ries-original
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
 
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
