@@ -1827,7 +1827,9 @@ fn precision_preserves_default_trig_and_distinguishes_unavailable_operators() {
         "10000000000000000",
     ]);
     let row = &trig["high_precision_verification"]["results"][0];
-    assert_eq!(row["lhs_postfix"], "xSE");
+    // 10^16 is an integer, so sinpi(x) = 0 is the simplest exact. e^sinpi(x) = 1
+    // is the same root with an extra exponential.
+    assert_eq!(row["lhs_postfix"], "xS");
     assert_eq!(row["status"], "verified");
     assert_eq!(row["highprec_error"], 0.0);
 

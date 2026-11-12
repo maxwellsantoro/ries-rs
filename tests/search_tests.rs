@@ -1443,8 +1443,10 @@ fn test_default_api_level_finds_plain_equations() {
         }
         if target == 2.5 {
             assert!(
-                matches.iter().all(|m| m.lhs.value.abs() >= 1e-4),
-                "a non-zero target must still drop LHS values under 1e-4"
+                matches
+                    .iter()
+                    .all(|m| m.lhs.value == 0.0 || m.lhs.value.abs() >= 1e-4),
+                "a non-zero target must still drop tiny nonzero LHS values"
             );
         }
     }
@@ -1510,6 +1512,22 @@ fn test_website_parity_page_contains_plain_forms() {
         assert_eq!(page[0].lhs.expr.to_postfix(), "x");
         assert_eq!(summary.rhs, "0");
     }
+}
+
+#[test]
+fn test_half_integer_cospi_is_exact_on_the_parity_page() {
+    // The level-5 website call. cospi(1/2) = 0 must be labeled exact and kept.
+    let (gen, mut cfg) = api_level_configs(5, 0.5);
+    cfg.max_matches = 100;
+    cfg.ranking_mode = ries_rs::pool::RankingMode::Parity;
+    let (matches, _) = search_with_stats_and_config(&gen, &cfg);
+    let page = &matches[..matches.len().min(50)];
+    let found = page
+        .iter()
+        .find(|m| m.exact && m.lhs.expr.to_postfix() == "xC");
+    let found = found.unwrap_or_else(|| panic!("cospi(x) missing from the level-5 parity page"));
+    let summary = ries_rs::MatchSummary::from_match(found);
+    assert_eq!(summary.rhs, "0");
 }
 
 #[test]

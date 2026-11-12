@@ -522,6 +522,7 @@ fn match_one_lhs(
             && crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
             && config.filters.allows_side(rhs)
             && config.filters.allows_pair(&lhs.expr, &rhs.expr)
+            && !super::exact_zero_lhs_needs_zero_rhs(lhs.value, rhs.value, config.target)
             && exact_ceiling
                 .is_none_or(|ceiling| lhs.expr.complexity() + rhs.expr.complexity() <= ceiling)
     };

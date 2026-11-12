@@ -707,12 +707,23 @@ pub fn significant_digits_tolerance(target: f64, target_text: Option<&str>) -> f
 /// `-0.0` compares equal to `0.0`, so a signed zero target is kept too.
 /// A subnormal target is also kept: `x` itself is subnormal, and dropping
 /// every tiny left-hand side leaves the search with nothing to match.
+/// An exact zero is also kept. `cospi(1/2) = 0` is that identity; tiny
+/// nonzero right-hand sides are declined separately by
+/// [`exact_zero_lhs_needs_zero_rhs`].
 #[inline]
 pub(crate) fn prune_near_zero_lhs(value: f64, target: f64, threshold: f64) -> bool {
-    if target == 0.0 || target.abs() < f64::MIN_POSITIVE {
+    if target == 0.0 || target.abs() < f64::MIN_POSITIVE || value == 0.0 {
         return false;
     }
     value.abs() < threshold
+}
+
+/// Exact-zero left sides on a nonzero target only pair with an exact-zero
+/// right side. That keeps `cospi(1/2) = 0` and does not match `cospi(x)` to
+/// every constant inside the acceptance window.
+#[inline]
+pub(crate) fn exact_zero_lhs_needs_zero_rhs(lhs_value: f64, rhs_value: f64, target: f64) -> bool {
+    lhs_value == 0.0 && rhs_value != 0.0 && target != 0.0 && target.abs() >= f64::MIN_POSITIVE
 }
 
 /// A matched equation
@@ -1661,6 +1672,7 @@ pub fn search_streaming_with_config(
                     if !crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
                         || !search_config.filters.allows_pair(&lhs.expr, &rhs.expr)
                         || pass_stop.excludes(lhs.expr.complexity() + rhs.expr.complexity())
+                        || exact_zero_lhs_needs_zero_rhs(lhs.value, rhs.value, search_config.target)
                     {
                         continue;
                     }

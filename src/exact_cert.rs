@@ -11,7 +11,28 @@ use crate::expr::Expression;
 use crate::symbol::{Seft, Symbol};
 use crate::udf::UdfOp;
 
-const TRIG_LOOSE_MAGNITUDE: f64 = 1_152_921_504_606_846_976.0; // 2^60
+/// Magnitude where one double-double ulp, times π, reaches one ulp of a
+/// unit-magnitude sine or cosine.
+///
+/// A double-double ulp at magnitude `M` is `M * 2^-106`. Differentiating
+/// `sin(πx)` multiplies that absolute error by π. One ulp of a result near 1
+/// is `2^-52`, so `M = 2^54 / π` (about `5.86e15`, between `2^52` and `2^53`).
+/// A computed fraction at or above this magnitude is not faithful, and the
+/// result is loose. Exact integers and half-integers are returned first.
+fn trig_loose_magnitude() -> f64 {
+    2.0_f64.powi(54) / std::f64::consts::PI
+}
+
+/// Absolute residual allowed when a side is exactly 0 or both sides are
+/// smaller than a normal evaluation's leftover.
+///
+/// Reduced transcendentals are O(1) before cancellation. One double-double
+/// rounding at magnitude 1 is `2^-106`; a few dozen of those is `64 * 2^-106`
+/// (about `7.9e-31`). That covers a Taylor leftover such as `cos(π/2)`, and
+/// it is far below the `1e-4`–`1e-1` gaps of a rounded reciprocal.
+fn canceled_absolute_floor() -> f64 {
+    64.0 * 2.0_f64.powi(-106)
+}
 
 #[derive(Clone, Copy)]
 struct Dd {
@@ -19,23 +40,34 @@ struct Dd {
     lo: f64,
     /// The fractional part of a transcendental argument was too large to trust.
     loose: bool,
+    /// This value is an exact integer: an f64 integer, or a sum or product of
+    /// those. The property survives magnitudes where a double-double can no
+    /// longer see a fraction. A non-integer power, such as `(2^51+1/2)^3`,
+    /// does not get the flag, so a dropped `0.125` is not called an integer.
+    integral: bool,
 }
 
 impl Dd {
-    fn new(hi: f64, lo: f64, loose: bool) -> Self {
-        Self { hi, lo, loose }
+    fn new(hi: f64, lo: f64, loose: bool, integral: bool) -> Self {
+        Self {
+            hi,
+            lo,
+            loose,
+            integral,
+        }
     }
 
     fn zero() -> Self {
-        Self::new(0.0, 0.0, false)
+        Self::new(0.0, 0.0, false, true)
     }
 
     fn one() -> Self {
-        Self::new(1.0, 0.0, false)
+        Self::new(1.0, 0.0, false, true)
     }
 
     fn from_f64(value: f64) -> Self {
-        Self::new(value, 0.0, false)
+        let integral = value.is_finite() && value.fract() == 0.0;
+        Self::new(value, 0.0, false, integral)
     }
 
     fn from_i32(value: i32) -> Self {
@@ -45,11 +77,11 @@ impl Dd {
     fn pi() -> Self {
         // Extra word of π past the f64 constant. The high word is exactly
         // `f64::consts::PI`, so `x = pi` differs only by this word.
-        Self::new(std::f64::consts::PI, 1.2246467991473532e-16, false)
+        Self::new(std::f64::consts::PI, 1.2246467991473532e-16, false, false)
     }
 
     fn ln2() -> Self {
-        Self::new(std::f64::consts::LN_2, 2.3190468138462996e-17, false)
+        Self::new(std::f64::consts::LN_2, 2.3190468138462996e-17, false, false)
     }
 
     fn abs(self) -> Self {
@@ -66,15 +98,21 @@ impl Dd {
         }
         let hi_floor = self.hi.floor();
         if hi_floor == self.hi {
-            return renormalize(self.hi, self.lo.floor(), self.loose);
+            return renormalize(self.hi, self.lo.floor(), self.loose, self.integral);
         }
         let frac = (self.hi - hi_floor) + self.lo;
         if frac >= 1.0 {
-            Self::from_f64(hi_floor + 1.0).flag(self.loose)
+            Self::from_f64(hi_floor + 1.0)
+                .flag(self.loose)
+                .exact_if(self.integral)
         } else if frac < 0.0 {
-            Self::from_f64(hi_floor - 1.0).flag(self.loose)
+            Self::from_f64(hi_floor - 1.0)
+                .flag(self.loose)
+                .exact_if(self.integral)
         } else {
-            Self::from_f64(hi_floor).flag(self.loose)
+            Self::from_f64(hi_floor)
+                .flag(self.loose)
+                .exact_if(self.integral)
         }
     }
 
@@ -98,6 +136,12 @@ impl Dd {
         self
     }
 
+    /// `integral` stays set only when every operation that built this value was.
+    fn exact_if(mut self, integral: bool) -> Self {
+        self.integral &= integral;
+        self
+    }
+
     fn is_exact_integer(self) -> bool {
         let rounded = self.round();
         (self - rounded).hi == 0.0 && (self - rounded).lo == 0.0
@@ -117,7 +161,7 @@ impl Dd {
 impl std::ops::Neg for Dd {
     type Output = Self;
     fn neg(self) -> Self {
-        Self::new(-self.hi, -self.lo, self.loose)
+        Self::new(-self.hi, -self.lo, self.loose, self.integral)
     }
 }
 
@@ -125,7 +169,12 @@ impl std::ops::Add for Dd {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         let (sum, err) = two_sum(self.hi, rhs.hi);
-        renormalize(sum, err + self.lo + rhs.lo, self.loose || rhs.loose)
+        renormalize(
+            sum,
+            err + self.lo + rhs.lo,
+            self.loose || rhs.loose,
+            self.integral && rhs.integral,
+        )
     }
 }
 
@@ -141,12 +190,13 @@ impl std::ops::Mul for Dd {
     fn mul(self, rhs: Self) -> Self {
         let (prod, err) = two_prod(self.hi, rhs.hi);
         let cross = self.hi * rhs.lo + self.lo * rhs.hi + self.lo * rhs.lo;
-        let loose = self.loose
-            || rhs.loose
-            || self.hi.abs() > 1e290
-            || rhs.hi.abs() > 1e290
-            || !prod.is_finite();
-        renormalize(prod, err + cross, loose)
+        let overflow = self.hi.abs() > 1e290 || rhs.hi.abs() > 1e290 || !prod.is_finite();
+        let integral = self.integral && rhs.integral && prod.is_finite();
+        // A product of exact integrals is still an integer when it overflows the
+        // Dekker split: every f64 at this magnitude is an integer, and the
+        // rounded product of integers is an integer. Other overflows stay loose.
+        let loose = self.loose || rhs.loose || (overflow && !integral);
+        renormalize(prod, err + cross, loose, integral)
     }
 }
 
@@ -157,8 +207,47 @@ impl std::ops::Div for Dd {
         let (prod, err) = two_prod(q, rhs.hi);
         let remainder = (((self.hi - prod) - err) + self.lo) - q * rhs.lo;
         let loose = self.loose || rhs.loose || !q.is_finite();
-        renormalize(q, remainder / rhs.hi, loose)
+        // Dividing an integer by a power of two that divides it stays an
+        // integer (`x/2` at `1e300`). Any other quotient does not.
+        let integral = q.is_finite() && integer_divided_by_power_of_two(self, rhs);
+        renormalize(q, remainder / rhs.hi, loose, integral)
     }
+}
+
+/// Powers of two in the exact integer `value`, or `u32::MAX` for 0.
+fn two_valuation(value: Dd) -> u32 {
+    fn f64_valuation(n: f64) -> u32 {
+        if n == 0.0 {
+            return u32::MAX;
+        }
+        let bits = n.abs().to_bits();
+        let exp = ((bits >> 52) & 0x7ff) as i32;
+        let frac = bits & 0x000f_ffff_ffff_ffff;
+        if exp == 0 {
+            return frac.trailing_zeros();
+        }
+        let significand = frac | (1_u64 << 52);
+        let total = significand.trailing_zeros() as i32 + (exp - 1023 - 52);
+        if total < 0 {
+            0
+        } else {
+            total as u32
+        }
+    }
+    if value.lo != 0.0 {
+        f64_valuation(value.lo)
+    } else {
+        f64_valuation(value.hi)
+    }
+}
+
+fn integer_divided_by_power_of_two(lhs: Dd, rhs: Dd) -> bool {
+    if !lhs.integral || !rhs.integral || rhs.lo != 0.0 || rhs.hi == 0.0 {
+        return false;
+    }
+    let mag = rhs.hi.abs();
+    let power_of_two = mag.is_finite() && (mag.to_bits() & 0x000f_ffff_ffff_ffff) == 0;
+    power_of_two && two_valuation(lhs) >= two_valuation(rhs)
 }
 
 fn two_sum(a: f64, b: f64) -> (f64, f64) {
@@ -168,9 +257,9 @@ fn two_sum(a: f64, b: f64) -> (f64, f64) {
     (sum, err)
 }
 
-fn renormalize(a: f64, b: f64, loose: bool) -> Dd {
+fn renormalize(a: f64, b: f64, loose: bool, integral: bool) -> Dd {
     let (hi, lo) = two_sum(a, b);
-    Dd::new(hi, lo, loose || !hi.is_finite())
+    Dd::new(hi, lo, loose || !hi.is_finite(), integral && hi.is_finite())
 }
 
 /// Dekker product. Exact error term without assuming a fused multiply-add,
@@ -212,6 +301,7 @@ fn scale2(value: Dd, exp: i32) -> Dd {
         value.hi * factor,
         value.lo * factor,
         value.loose || !factor.is_finite(),
+        value.integral && factor.is_finite(),
     )
 }
 
@@ -220,9 +310,47 @@ fn frexp(value: f64) -> (f64, i32) {
         return (value, 0);
     }
     let bits = value.to_bits();
-    let exponent = ((bits >> 52) & 0x7ff) as i32 - 1022;
+    let exp_field = ((bits >> 52) & 0x7ff) as i32;
+    if exp_field == 0 {
+        // Subnormals have no implicit 1, so the zero exponent field is not
+        // -1022. Scale into the normal range and correct the power of two.
+        // 2^54 lifts the smallest subnormal (2^-1074) to 2^-1020.
+        let (mantissa, exponent) = frexp(value * 2.0_f64.powi(54));
+        return (mantissa, exponent - 54);
+    }
+    let exponent = exp_field - 1022;
     let mantissa = f64::from_bits((bits & 0x800f_ffff_ffff_ffff) | 0x3fe0_0000_0000_0000);
     (mantissa, exponent)
+}
+
+/// `n` mod 4 for an exact integer, in `0..=3`.
+fn integer_mod4(n: Dd) -> i32 {
+    fn mod4(x: f64) -> f64 {
+        x.rem_euclid(4.0)
+    }
+    if n.hi.abs() < 2.0_f64.powi(53) {
+        let exact = if n.lo == 0.0 { n.hi } else { n.hi + n.lo };
+        return mod4(exact) as i32;
+    }
+    // At and above 2^54 every f64 integer is a multiple of 4, so the residue
+    // lives in the low word.
+    if n.hi.abs() >= 2.0_f64.powi(54) {
+        return integer_mod4(Dd::from_f64(n.lo).round());
+    }
+    mod4(mod4(n.hi) + mod4(n.lo)) as i32
+}
+
+/// Sine of π times an exact half-integer: `sin(π(k+1/2)) = (-1)^k`.
+fn half_integer_sin_sign(value: Dd) -> Option<f64> {
+    let doubled = value * Dd::from_f64(2.0);
+    if !doubled.is_exact_integer() || is_even_integer(doubled) {
+        return None;
+    }
+    match integer_mod4(doubled) {
+        1 => Some(1.0),
+        3 => Some(-1.0),
+        _ => None,
+    }
 }
 
 fn sin_cos(theta: Dd) -> (Dd, Dd) {
@@ -249,11 +377,22 @@ fn sin_cos_pi(value: Dd) -> Option<(Dd, Dd)> {
     }
     let nearest = value.round();
     let fraction = value - nearest;
-    if fraction.hi == 0.0 && fraction.lo == 0.0 {
+    // A computed value whose magnitude exceeds 2^105 has a double-double ulp
+    // coarser than 1/2, so both words can be integers while the true value is
+    // not. An exact integral (literals combined by + and *) is exact at every
+    // magnitude: `sinpi(1 + x)` at `1e300` really is an integer.
+    let fraction_resolved =
+        !value.loose && (value.integral || value.hi.abs() < 0.5 * 2.0_f64.powi(106));
+    if fraction_resolved && fraction.hi == 0.0 && fraction.lo == 0.0 {
         let sign = if is_even_integer(nearest) { 1.0 } else { -1.0 };
         return Some((Dd::zero(), Dd::from_f64(sign)));
     }
-    let loose = value.loose || value.hi.abs() > TRIG_LOOSE_MAGNITUDE;
+    if fraction_resolved {
+        if let Some(sign) = half_integer_sin_sign(value) {
+            return Some((Dd::from_f64(sign), Dd::zero()));
+        }
+    }
+    let loose = !fraction_resolved || value.hi.abs() >= trig_loose_magnitude();
     let (mut sin, mut cos) = sin_cos(fraction * Dd::pi());
     if !is_even_integer(nearest) {
         sin = -sin;
@@ -299,7 +438,17 @@ fn ln(value: Dd) -> Option<Dd> {
         return Some(Dd::zero().flag(value.loose));
     }
     let (mantissa_hi, mut exponent) = frexp(value.hi);
-    let mut mantissa = renormalize(mantissa_hi, value.lo / 2.0_f64.powi(exponent), value.loose);
+    // A zero low word must not be scaled by a subnormal power of two: that
+    // division is 0/0. A nonzero low word is scaled in two steps so the
+    // exponent of a subnormal cannot underflow the factor itself.
+    let lo_scaled = if value.lo == 0.0 {
+        0.0
+    } else if exponent >= 0 {
+        value.lo / 2.0_f64.powi(exponent)
+    } else {
+        value.lo * 2.0_f64.powi((-exponent).min(1023)) * 2.0_f64.powi((-exponent - 1023).max(0))
+    };
+    let mut mantissa = renormalize(mantissa_hi, lo_scaled, value.loose, false);
     if mantissa.hi < std::f64::consts::FRAC_1_SQRT_2 {
         mantissa = mantissa * Dd::from_f64(2.0);
         exponent -= 1;
@@ -318,14 +467,8 @@ fn ln(value: Dd) -> Option<Dd> {
     Some((sum * Dd::from_f64(2.0) + Dd::from_i32(exponent) * Dd::ln2()).flag(value.loose))
 }
 
-fn atan(value: Dd) -> Option<Dd> {
-    if !value.hi.is_finite() {
-        return None;
-    }
-    if value.hi == 0.0 && value.lo == 0.0 {
-        return Some(Dd::zero());
-    }
-    // Euler's series stays accurate at |z| = 1, where the Taylor series does not.
+fn atan_euler(value: Dd) -> Dd {
+    // Euler's series on an argument already reduced below 1/2.
     let square = value * value;
     let unit = square / (Dd::one() + square);
     let mut sum = Dd::one();
@@ -333,11 +476,45 @@ fn atan(value: Dd) -> Option<Dd> {
     for n in 1..48 {
         term = term * unit * Dd::from_f64(f64::from(2 * n)) / Dd::from_f64(f64::from(2 * n + 1));
         sum = sum + term;
-        if term.hi.abs() < 1e-28 {
+        if term.hi.abs() < 1e-30 {
             break;
         }
     }
-    Some((value / (Dd::one() + square) * sum).flag(value.loose))
+    value / (Dd::one() + square) * sum
+}
+
+fn atan(value: Dd) -> Option<Dd> {
+    if !value.hi.is_finite() {
+        return None;
+    }
+    if value.hi == 0.0 && value.lo == 0.0 {
+        return Some(Dd::zero().flag(value.loose));
+    }
+    let negative = value.hi < 0.0 || (value.hi == 0.0 && value.lo < 0.0);
+    let mut reduced = value.abs();
+    let mut right_angle = false;
+    if reduced.hi > 1.0 || (reduced.hi == 1.0 && reduced.lo > 0.0) {
+        // atan(|x|) = π/2 - atan(1/|x|), so the series sees |z| <= 1.
+        reduced = Dd::one() / reduced;
+        right_angle = true;
+    }
+    // Half-angle: atan(z) = 2 atan(z / (1 + sqrt(1+z²))). One step takes
+    // |z| <= 1 down to at most √2 - 1 ≈ 0.414, where the series is faithful.
+    let mut doublings = 0_i32;
+    for _ in 0..4 {
+        if reduced.hi <= 0.5 {
+            break;
+        }
+        let hypotenuse = sqrt(Dd::one() + reduced * reduced)?;
+        reduced = reduced / (Dd::one() + hypotenuse);
+        doublings += 1;
+    }
+    let mut angle = atan_euler(reduced) * Dd::from_f64(2.0_f64.powi(doublings));
+    if right_angle {
+        angle = Dd::pi() * Dd::from_f64(0.5) - angle;
+    }
+    let signed = if negative { -angle } else { angle };
+    base_finite(signed.flag(value.loose))
 }
 
 fn atan2(y: Dd, x: Dd) -> Option<Dd> {
@@ -422,19 +599,35 @@ fn lambert_w(value: Dd) -> Option<Dd> {
     if value.hi == 0.0 && value.lo == 0.0 {
         return Some(Dd::zero());
     }
-    // Below -1/e the real principal branch ends.
-    if value.hi < -0.3678794411714423 {
+    // Same branch point as `eval::lambert_w`. The f64 `-1/e` sits one ulp
+    // below the real value; arguments strictly below that float are outside
+    // the principal branch, and the float itself is W = -1.
+    let branch = -1.0 / std::f64::consts::E;
+    if value.hi < branch || (value.hi == branch && value.lo < 0.0) {
         return None;
+    }
+    if value.hi == branch && value.lo == 0.0 {
+        return Some(Dd::from_f64(-1.0).flag(value.loose));
+    }
+    if value.hi == std::f64::consts::E && value.lo == 0.0 {
+        return Some(Dd::one().flag(value.loose));
     }
     let mut w = if value.hi < 0.0 {
         Dd::from_f64(-0.5)
-    } else if value.hi < 1.0 {
+    } else if value.hi < 1.0 || (value.hi == 1.0 && value.lo < 0.0) {
         value
+    } else if value.hi == 1.0 && value.lo == 0.0 {
+        // ln(ln(1)) is ln(0). W(1) is the omega constant; 1/2 converges to it.
+        Dd::from_f64(0.5)
     } else {
         let log = ln(value)?;
-        log - ln(log)?
+        if log.hi <= 0.0 {
+            value
+        } else {
+            log - ln(log)?
+        }
     };
-    for _ in 0..16 {
+    for _ in 0..24 {
         let ew = exp(w)?;
         let residual = w * ew - value;
         if residual.hi.abs() <= 1e-24 * value.hi.abs().max(1.0) {
@@ -497,7 +690,7 @@ fn evaluate(expr: &Expression, target: f64, context: &EvalContext<'_>) -> Option
 }
 
 fn eval_constant(sym: Symbol, target: f64, context: &EvalContext<'_>) -> Option<Dd> {
-    use crate::eval::constants::{APERY, CATALAN, E, GAMMA, PHI, PI, PLASTIC};
+    use crate::eval::constants::{APERY, CATALAN, GAMMA, PLASTIC};
     let value = match sym {
         Symbol::One => 1.0,
         Symbol::Two => 2.0,
@@ -508,9 +701,15 @@ fn eval_constant(sym: Symbol, target: f64, context: &EvalContext<'_>) -> Option<
         Symbol::Seven => 7.0,
         Symbol::Eight => 8.0,
         Symbol::Nine => 9.0,
-        Symbol::Pi => PI,
-        Symbol::E => E,
-        Symbol::Phi => PHI,
+        Symbol::Pi => {
+            // The extra word of π is what stops `π * 2^52` from looking like an
+            // integer. `x = pi` still agrees: the low word is under eight ulps.
+            return Some(Dd::pi());
+        }
+        Symbol::E => return exp(Dd::one()),
+        Symbol::Phi => {
+            return sqrt(Dd::from_f64(5.0)).map(|root| (Dd::one() + root) / Dd::from_f64(2.0));
+        }
         Symbol::Gamma => GAMMA,
         Symbol::Plastic => PLASTIC,
         Symbol::Apery => APERY,
@@ -664,13 +863,25 @@ pub(crate) fn certified_equal(
         return false;
     }
     let diff = (lhs - rhs).abs();
-    let scale = lhs.abs().hi.abs().max(rhs.abs().hi.abs());
-    let limit = if scale == 0.0 {
+    let lhs_abs = lhs.abs().hi.abs();
+    let rhs_abs = rhs.abs().hi.abs();
+    let scale = lhs_abs.max(rhs_abs);
+    let ulp_limit = if scale == 0.0 {
         0.0
     } else {
         8.0 * ulp_of(scale)
     };
-    diff.hi.abs() <= limit
+    // Eight ulps of a canceled residual are far smaller than the residual
+    // itself, so a Taylor leftover compared with exact 0 would never pass.
+    // The floor is a few dozen double-double roundoffs of an O(1) reduction.
+    let one_exact_zero = (lhs.hi == 0.0 && lhs.lo == 0.0) || (rhs.hi == 0.0 && rhs.lo == 0.0);
+    let both_tiny = scale <= 2.0_f64.powi(-60);
+    let floor = if one_exact_zero || both_tiny {
+        canceled_absolute_floor()
+    } else {
+        0.0
+    };
+    diff.hi.abs() <= ulp_limit.max(floor)
 }
 
 #[cfg(test)]
@@ -726,5 +937,161 @@ mod tests {
         let quarter = atan2(Dd::one(), Dd::one()).unwrap();
         assert!((quarter.hi - pi.hi * 0.25).abs() < 1e-15);
         let _ = pi;
+    }
+
+    fn within_ulps(got: f64, expect: f64, ulps: f64) -> bool {
+        let scale = got.abs().max(expect.abs()).max(1.0);
+        (got - expect).abs() <= ulps * ulp_of(scale)
+    }
+
+    #[test]
+    fn half_integer_cospi_is_exact_zero() {
+        for target in [0.5, -0.5, 1.5, -1.5, 2.5, 2.0_f64.powi(50) + 0.5] {
+            assert!(agrees("xC", "1l", target), "cospi({target}) = 0 via ln(1)");
+            assert!(agrees("xC", "1S", target), "cospi({target}) = sinpi(1)");
+        }
+        assert!(agrees("xS", "1", 0.5), "sinpi(1/2) = 1");
+        assert!(agrees("xS", "1n", -0.5), "sinpi(-1/2) = -1");
+        assert!(agrees("xS", "1n", 1.5), "sinpi(3/2) = -1");
+        // Integers stay exact, including magnitudes past the loose cutoff.
+        assert!(agrees("xS", "1l", 2.0));
+        assert!(agrees("xS", "1l", 2.0_f64.powi(53)));
+        assert!(agrees("xS", "1l", 2.0_f64.powi(62)));
+        let (sin, cos) = sin_cos_pi(Dd::from_f64(2.0_f64.powi(60))).unwrap();
+        assert_eq!(sin.hi, 0.0);
+        assert_eq!(cos.hi, 1.0);
+        assert!(!sin.loose);
+        // A non-integer at the conservative cutoff is not a faithful fraction.
+        let cutoff = trig_loose_magnitude();
+        let shaky = renormalize(cutoff, 0.125, false, false);
+        assert!(sin_cos_pi(shaky).unwrap().0.loose);
+        let below = Dd::from_f64(2.0_f64.powi(52) + 0.25);
+        assert!(!sin_cos_pi(below).unwrap().0.loose);
+    }
+
+    #[test]
+    fn atan_matches_f64_across_the_range_and_atan2_quadrants() {
+        for value in [0.1, 0.5, 1.0, 1.2, 2.0, 10.0, 1e8] {
+            let got = atan(Dd::from_f64(value)).unwrap();
+            assert!(
+                within_ulps(got.hi, value.atan(), 1.0),
+                "atan({value}) got {} expect {}",
+                got.hi,
+                value.atan()
+            );
+            let neg = atan(Dd::from_f64(-value)).unwrap();
+            assert!(within_ulps(neg.hi, (-value).atan(), 1.0));
+        }
+        let samples = [
+            (1.0, 1.0),
+            (1.0, -1.0),
+            (-1.0, -1.0),
+            (-1.0, 1.0),
+            (1.0, 0.0),
+            (-1.0, 0.0),
+            (0.0, -1.0),
+            (10.0, -0.5),
+        ];
+        for (y, x) in samples {
+            let got = atan2(Dd::from_f64(y), Dd::from_f64(x)).unwrap();
+            assert!(
+                within_ulps(got.hi, y.atan2(x), 1.0),
+                "atan2({y}, {x}) got {} expect {}",
+                got.hi,
+                y.atan2(x)
+            );
+        }
+        assert!(agrees("x1A", "p2/1xA-", 2.0));
+        assert!(agrees("x1A", "p2/1xA-", 10.0));
+    }
+
+    #[test]
+    fn lambert_w_covers_its_domain() {
+        let branch = -1.0 / std::f64::consts::E;
+        let at_branch = lambert_w(Dd::from_f64(branch)).unwrap();
+        assert_eq!(at_branch.hi, -1.0);
+        assert!(lambert_w(Dd::from_f64(branch.next_down())).is_none());
+        let omega = 0.5671432904097838_f64;
+        let w1 = lambert_w(Dd::one()).unwrap();
+        assert!(
+            within_ulps(w1.hi, omega, 1.0),
+            "W(1) got {} expect {omega}",
+            w1.hi
+        );
+        assert!(agrees("x", "1W", omega));
+        assert!(agrees("xxE*", "1", omega));
+        assert!(agrees("xW", "1", std::f64::consts::E));
+        for value in [-0.2, 0.5, 2.0, 10.0] {
+            let got = lambert_w(Dd::from_f64(value)).unwrap();
+            let back = got * exp(got).unwrap();
+            assert!(
+                within_ulps(back.hi, value, 8.0),
+                "W({value})*exp(W) got {} ",
+                back.hi
+            );
+        }
+    }
+
+    #[test]
+    fn computed_huge_trig_is_not_an_integer_identity() {
+        assert!(
+            !agrees("xES", "1l", 123.456789),
+            "sinpi(e^x) = 0 is not exact at 123.456789"
+        );
+        assert!(
+            !agrees("xET", "1l", 123.456789),
+            "tanpi(e^x) = 0 is not exact at 123.456789"
+        );
+        assert!(
+            !agrees("px*S", "1S", 2.0_f64.powi(52)),
+            "sinpi(pi*x) = 0 is not exact at 2^52"
+        );
+        assert!(
+            !agrees("xp*S", "1S", 2.0_f64.powi(53)),
+            "sinpi(x*pi) = 0 is not exact at 2^53"
+        );
+        assert!(
+            !agrees("ex*S", "1S", 2.0_f64.powi(52)),
+            "sinpi(e*x) = 0 is not exact at 2^52"
+        );
+        assert!(
+            !agrees("fx*S", "1S", 2.0_f64.powi(52)),
+            "sinpi(phi*x) = 0 is not exact at 2^52"
+        );
+        assert!(agrees("1x+S", "1S", 1e300), "sinpi(1+x) = 0 at 1e300");
+        assert!(agrees("2x*S", "1S", 1e300), "sinpi(2*x) = 0 at 1e300");
+        assert!(
+            !agrees("px*S", "1S", 1e300),
+            "sinpi(pi*x) = 0 is not exact at 1e300"
+        );
+        let half_past_mantissa = 2.0_f64.powi(51) + 0.5;
+        assert!(
+            !agrees("x3^S", "1S", half_past_mantissa),
+            "sinpi(x^3) = 0 is not exact at 2^51+1/2"
+        );
+        assert!(
+            !agrees("x4^S", "1S", half_past_mantissa),
+            "sinpi(x^4) = 0 is not exact at 2^51+1/2"
+        );
+        assert!(agrees("x2/S", "1S", 1e300), "sinpi(x/2) = 0 at 1e300");
+        assert!(agrees("9x^", "4rT", 0.0), "9^x = tanpi(1/4) at 0");
+        assert!(agrees("2rx+", "6rS", 0.0), "1/2+x = sinpi(1/6) at 0");
+    }
+
+    #[test]
+    fn ln_of_smallest_subnormal_is_the_power_of_two() {
+        let got = ln(Dd::from_f64(5e-324)).unwrap();
+        let expect = Dd::from_i32(-1074) * Dd::ln2();
+        let diff = (got - expect).abs();
+        let scale = expect.abs().hi.abs();
+        assert!(
+            diff.hi.abs() <= 8.0 * ulp_of(scale),
+            "ln(5e-324) got {} expect {}",
+            got.hi,
+            expect.hi
+        );
+        let (mantissa, exponent) = frexp(5e-324);
+        assert_eq!(mantissa, 0.5);
+        assert_eq!(exponent, -1073);
     }
 }

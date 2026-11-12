@@ -257,10 +257,25 @@ f64 `cospi(1/x)` lands on `cospi(1/8)` after the reciprocal rounds onto an
 eighth-turn, and the trig reduction then reports a zero residual. The real
 values at that f64 differ by about `0.046`. The same pattern stamps
 `e^sinpi(1/x) = 1` at `1e-12` and `cospi(pi + x) = -cospi(1/8)` at `1e15`.
-Double-double can see those gaps. An argument whose magnitude exceeds `2^60`,
-or any evaluation the checker cannot finish, is not labeled exact. Genuine
-identities stay exact: `2*x = 5` at `2.5`, `x = pi`, `x = sqrt(2)`, `sinpi` of
-an integer, and `x = ln(1)` at `0`.
+Double-double can see those gaps. A computed trigonometric argument whose
+magnitude reaches `2^54/π` has a double-double ulp large enough to move sine
+or cosine by about one ulp, so that result is not labeled exact. Exact
+integers and half-integers (`cospi(x) = 0` at `1/2`) are recognized before
+that cutoff, including an exact f64 integer such as `sinpi(x) = 0` at `2^62`.
+A computed value is not treated as an integer once its magnitude reaches
+`2^105`, where one double-double ulp is coarser than `1/2` and both words can
+be integral while the true value is not (`sinpi(e^x) = 0` at `123.456789`).
+Sums and products of f64 integers stay exact at every magnitude, so
+`sinpi(1+x) = 0`, `sinpi(2*x) = 0`, and `sinpi(x/2) = 0` at `1e300` are
+exact. A non-integer power is not snapped: `sinpi(x^3) = 0` is not exact at
+`2^51+1/2`, where the cube's fraction no longer fits in a double-double.
+`pi`, `e`, and `phi` are carried with an extra word, so scaling them by
+`2^52` does not manufacture an integer. A comparison with exact 0 also allows
+an absolute residual of `64 * 2^-106`, a few dozen double-double roundoffs of
+an O(1) reduction, which is far below the gaps above. An evaluation the
+checker cannot finish is not labeled exact. Genuine identities stay exact:
+`2*x = 5` at `2.5`, `x = pi`, `x = sqrt(2)`, `cospi(x) = 0` at `1/2`,
+`sinpi` of an integer, `x = W(1)` at the omega constant, and `x = ln(1)` at `0`.
 
 A stationary LHS cannot locate a root with the linearized search and is
 skipped. Every match, including an approximation, must resolve x at the

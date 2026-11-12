@@ -127,6 +127,38 @@ fn test_wasm_website_parity_page_leads_with_plain_forms() {
 }
 
 #[wasm_bindgen_test]
+fn test_wasm_half_integer_cospi_is_exact() {
+    // search(0.5, {level: 5, maxMatches: 50, rankingMode: 'parity'})
+    let options = Object::new();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("level"),
+        &JsValue::from_f64(5.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("maxMatches"),
+        &JsValue::from_f64(50.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rankingMode"),
+        &JsValue::from_str("parity"),
+    )
+    .unwrap();
+    let results = search(0.5, Some(options.into())).expect("0.5");
+    assert!(results.len() <= 50);
+    assert!(
+        results
+            .iter()
+            .any(|m| m.is_exact && m.lhs_postfix == "xC" && m.rhs == "0"),
+        "cospi(x) = 0 should be an exact row"
+    );
+}
+
+#[wasm_bindgen_test]
 fn test_wasm_search_result_properties() {
     // Test that search results have expected properties
     let result = search(1.618033988, None).expect("search should succeed");
