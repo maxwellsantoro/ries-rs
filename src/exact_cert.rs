@@ -299,16 +299,106 @@ fn is_even_integer(n: Dd) -> bool {
     is_even_integer(Dd::from_f64(n.lo).round())
 }
 
+struct PowerScale {
+    value: f64,
+    /// Overflow, underflow, or a subnormal result. A true zero is not loose:
+    /// scaling zero by any power is still zero.
+    loose: bool,
+}
+
+/// Multiply `value` by `2^exp` with bit operations.
+///
+/// `f64::powi` computes a negative power as a reciprocal. `2^1074` overflows,
+/// so `2^-1074` comes back as the finite value 0, and a later multiply looks
+/// like an exact zero. A subnormal result cannot carry a double-double's low
+/// word, so it is loose as well.
+fn ldexp_f64(value: f64, exp: i32) -> PowerScale {
+    if value == 0.0 {
+        return PowerScale {
+            value,
+            loose: false,
+        };
+    }
+    if !value.is_finite() {
+        return PowerScale { value, loose: true };
+    }
+    let bits = value.to_bits();
+    let sign = bits & 0x8000_0000_0000_0000;
+    let exp_field = ((bits >> 52) & 0x7ff) as i32;
+    let frac = bits & 0x000f_ffff_ffff_ffff;
+    // `significand` has its leading 1 at bit 52.
+    // `value = significand * 2^(unbiased - 52)`.
+    let (significand, unbiased) = if exp_field == 0 {
+        let shift = frac.leading_zeros() as i32 - 11;
+        (frac << shift, -1074 + 52 - shift)
+    } else {
+        (frac | (1_u64 << 52), exp_field - 1023)
+    };
+    let unbiased = i64::from(unbiased) + i64::from(exp);
+    if unbiased > 1023 {
+        return PowerScale {
+            value: f64::from_bits(sign | 0x7ff0_0000_0000_0000),
+            loose: true,
+        };
+    }
+    if unbiased >= -1022 {
+        let field = (unbiased + 1023) as u64;
+        return PowerScale {
+            value: f64::from_bits(sign | (field << 52) | (significand & 0x000f_ffff_ffff_ffff)),
+            loose: false,
+        };
+    }
+    // Bit 0 of a subnormal encoding is `2^-1074`.
+    let shift = -1022 - unbiased;
+    if shift >= 64 {
+        return PowerScale {
+            value: f64::from_bits(sign),
+            loose: true,
+        };
+    }
+    let shift = shift as u32;
+    let half = 1_u64 << (shift - 1);
+    let remainder = significand & ((1_u64 << shift) - 1);
+    let mut shifted = significand >> shift;
+    let round_up = remainder > half || (remainder == half && (shifted & 1) == 1);
+    if round_up {
+        shifted += 1;
+    }
+    if shifted == 0 {
+        return PowerScale {
+            value: f64::from_bits(sign),
+            loose: true,
+        };
+    }
+    // Rounding carried into the smallest normal, 2^-1022.
+    if shifted >= (1_u64 << 52) {
+        return PowerScale {
+            value: f64::from_bits(sign | (1_u64 << 52)),
+            loose: false,
+        };
+    }
+    PowerScale {
+        value: f64::from_bits(sign | shifted),
+        loose: true,
+    }
+}
+
 fn scale2(value: Dd, exp: i32) -> Dd {
     if exp == 0 {
         return value;
     }
-    let factor = 2.0_f64.powi(exp);
+    let hi = ldexp_f64(value.hi, exp);
+    let lo = ldexp_f64(value.lo, exp);
+    // The high word is the result. A normal high word is a faithful scale
+    // even when the low word no longer fits; a subnormal or flushed high
+    // word is not an exact 0. `e^-740` is about `4.2e-322`.
+    let lost = hi.loose || !lo.value.is_finite();
+    let lo = if lo.loose { 0.0 } else { lo.value };
     renormalize(
-        value.hi * factor,
-        value.lo * factor,
-        value.loose || !factor.is_finite(),
-        value.integral && factor.is_finite(),
+        hi.value,
+        lo,
+        value.loose || lost,
+        value.integral && exp >= 0 && !lost,
     )
 }
 
@@ -322,7 +412,7 @@ fn frexp(value: f64) -> (f64, i32) {
         // Subnormals have no implicit 1, so the zero exponent field is not
         // -1022. Scale into the normal range and correct the power of two.
         // 2^54 lifts the smallest subnormal (2^-1074) to 2^-1020.
-        let (mantissa, exponent) = frexp(value * 2.0_f64.powi(54));
+        let (mantissa, exponent) = frexp(ldexp_f64(value, 54).value);
         return (mantissa, exponent - 54);
     }
     let exponent = exp_field - 1022;
@@ -445,17 +535,19 @@ fn ln(value: Dd) -> Option<Dd> {
         return Some(Dd::zero().flag(value.loose));
     }
     let (mantissa_hi, mut exponent) = frexp(value.hi);
-    // A zero low word must not be scaled by a subnormal power of two: that
-    // division is 0/0. A nonzero low word is scaled in two steps so the
-    // exponent of a subnormal cannot underflow the factor itself.
-    let lo_scaled = if value.lo == 0.0 {
-        0.0
-    } else if exponent >= 0 {
-        value.lo / 2.0_f64.powi(exponent)
-    } else {
-        value.lo * 2.0_f64.powi((-exponent).min(1023)) * 2.0_f64.powi((-exponent - 1023).max(0))
-    };
-    let mut mantissa = renormalize(mantissa_hi, lo_scaled, value.loose, false);
+    // Same power-of-two scale as `exp`. A flushed low word is dropped; it is
+    // below half an ulp of a unit mantissa. An infinite scale is loose.
+    let lo_scaled = ldexp_f64(value.lo, -exponent);
+    let mut mantissa = renormalize(
+        mantissa_hi,
+        if lo_scaled.loose {
+            0.0
+        } else {
+            lo_scaled.value
+        },
+        value.loose || !lo_scaled.value.is_finite(),
+        false,
+    );
     if mantissa.hi < std::f64::consts::FRAC_1_SQRT_2 {
         mantissa = mantissa * Dd::from_f64(2.0);
         exponent -= 1;
@@ -516,7 +608,10 @@ fn atan(value: Dd) -> Option<Dd> {
         reduced = reduced / (Dd::one() + hypotenuse);
         doublings += 1;
     }
-    let mut angle = atan_euler(reduced) * Dd::from_f64(2.0_f64.powi(doublings));
+    let mut angle = atan_euler(reduced);
+    if doublings > 0 {
+        angle = scale2(angle, doublings);
+    }
     if right_angle {
         angle = Dd::pi() * Dd::from_f64(0.5) - angle;
     }
@@ -619,6 +714,7 @@ fn lambert_w(value: Dd) -> Option<Dd> {
     if value.hi == std::f64::consts::E && value.lo == 0.0 {
         return Some(Dd::one().flag(value.loose));
     }
+    let mut steps_loose = value.loose;
     let mut w = if value.hi < 0.0 {
         Dd::from_f64(-0.5)
     } else if value.hi < 1.0 || (value.hi == 1.0 && value.lo < 0.0) {
@@ -636,9 +732,12 @@ fn lambert_w(value: Dd) -> Option<Dd> {
     };
     for _ in 0..24 {
         let ew = exp(w)?;
+        // A flushed exponential is not a converged residual. Keep the step,
+        // but do not report the result as exact.
+        steps_loose |= ew.loose;
         let residual = w * ew - value;
         if residual.hi.abs() <= 1e-24 * value.hi.abs().max(1.0) {
-            return base_finite(w.flag(value.loose));
+            return base_finite(w.flag(steps_loose));
         }
         let denom = ew * (w + Dd::one())
             - (w + Dd::from_f64(2.0)) * residual / (Dd::from_f64(2.0) * w + Dd::from_f64(2.0));
@@ -930,6 +1029,39 @@ mod tests {
     }
 
     #[test]
+    fn exp_underflow_is_loose_and_cancellation_zeros_remain() {
+        for exponent in [-740.0, -744.0, -745.0] {
+            let value = exp(Dd::from_f64(exponent)).expect("within the exp cutoff");
+            assert!(
+                value.loose && value.hi.is_finite() && value.hi != 0.0,
+                "e^{exponent} is {} + {} loose={} and must not be an exact 0",
+                value.hi,
+                value.lo,
+                value.loose
+            );
+        }
+        let overflow = scale2(Dd::one(), 1024);
+        assert!(overflow.loose, "2^1024 overflows");
+        let exact_power = scale2(Dd::one(), 10);
+        assert!(!exact_power.loose);
+        assert_eq!(exact_power.hi, 1024.0);
+        assert_eq!(exact_power.lo, 0.0);
+        let subnormal = ldexp_f64(1.0, -1074);
+        assert!(subnormal.loose);
+        assert_eq!(subnormal.value.to_bits(), 1);
+        assert!(ldexp_f64(1.0, -1075).loose);
+        assert_eq!(ldexp_f64(1.0, -1075).value, 0.0);
+        assert!(!ldexp_f64(0.0, -1075).loose);
+
+        assert!(agrees("xx-", "1l", 3.0), "x - x = 0");
+        assert!(agrees("2S", "1l", 0.0), "sinpi(2) = 0");
+        assert!(agrees("xC", "1l", 0.5), "cospi(x) = 0 at 1/2");
+        assert!(agrees("11-E1-", "1l", 1.0), "e^(1-1) - 1 = 0");
+        assert!(agrees("x", "1W", 0.5671432904097838), "x = W(1)");
+        assert!(agrees("x", "1l", 0.0), "x = 0");
+    }
+
+    #[test]
     fn genuine_exact_identities_stay_exact() {
         assert!(agrees("2x*", "5", 2.5));
         assert!(agrees("x", "52/", 2.5));
@@ -1106,6 +1238,10 @@ mod tests {
     #[test]
     fn ln_of_smallest_subnormal_is_the_power_of_two() {
         let got = ln(Dd::from_f64(5e-324)).unwrap();
+        assert!(
+            !got.loose,
+            "ln of the smallest subnormal is a normal value"
+        );
         let expect = Dd::from_i32(-1074) * Dd::ln2();
         let diff = (got - expect).abs();
         let scale = expect.abs().hi.abs();
