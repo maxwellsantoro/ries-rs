@@ -65,7 +65,7 @@ impl DisplayFormat {
 
 /// Collapse certified constant zeros for readable infix output. Only integer
 /// trig arguments and ln(1) qualify; a rounded or underflowed value is not proof.
-fn exact_zero_constant(expression: &Expression, trig_scale: f64) -> bool {
+pub(crate) fn exact_zero_constant(expression: &Expression, trig_scale: f64) -> bool {
     if expression.contains_x()
         || expression.has_decimal_literals()
         || expression

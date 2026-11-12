@@ -365,13 +365,15 @@ fn make_match(
     let rhs_eval = evaluate_with_context(&rhs_expr, target, context).ok()?;
 
     let x_value = rhs_eval.value;
-    let exact = crate::search::match_exactness(
+    let f64_exact = crate::search::match_exactness(
         lhs_eval.value,
         rhs_eval.value,
         lhs_eval.derivative,
         x_value,
         target,
     )?;
+    let exact =
+        f64_exact && crate::exact_cert::certified_equal(&lhs_expr, &rhs_expr, target, context);
 
     Some(Match {
         lhs: EvaluatedExpr {

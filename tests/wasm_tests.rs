@@ -78,6 +78,134 @@ fn test_wasm_search_with_options() {
     );
 }
 
+fn website_options() -> JsValue {
+    let options = Object::new();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("level"),
+        &JsValue::from_f64(3.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("maxMatches"),
+        &JsValue::from_f64(50.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rankingMode"),
+        &JsValue::from_str("parity"),
+    )
+    .unwrap();
+    options.into()
+}
+
+#[wasm_bindgen_test]
+fn test_wasm_website_parity_page_leads_with_plain_forms() {
+    // The browser calls search(target, {level: 3, maxMatches: 50, rankingMode: 'parity'}).
+    let options = website_options();
+    let two_and_a_half = search(2.5, Some(options.clone())).expect("2.5");
+    assert!(two_and_a_half.len() <= 50);
+    let first = &two_and_a_half[0];
+    assert!(first.is_exact);
+    assert!(first.lhs_postfix == "2x*" || first.lhs_postfix == "x2*");
+    assert_eq!(first.rhs_postfix, "5");
+    assert!(two_and_a_half
+        .iter()
+        .any(|m| m.is_exact && m.lhs_postfix == "x" && m.rhs_postfix == "52/"));
+
+    let pi = search(std::f64::consts::PI, Some(options.clone())).expect("pi");
+    assert!(pi[0].is_exact);
+    assert_eq!(pi[0].lhs_postfix, "x");
+    assert_eq!(pi[0].rhs_postfix, "p");
+
+    let zero = search(0.0, Some(options)).expect("0");
+    assert!(zero[0].is_exact);
+    assert_eq!(zero[0].lhs, "x");
+    assert_eq!(zero[0].rhs, "0");
+}
+
+#[wasm_bindgen_test]
+fn test_wasm_half_integer_cospi_is_exact() {
+    // search(0.5, {level: 5, maxMatches: 50, rankingMode: 'parity'})
+    let options = Object::new();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("level"),
+        &JsValue::from_f64(5.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("maxMatches"),
+        &JsValue::from_f64(50.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rankingMode"),
+        &JsValue::from_str("parity"),
+    )
+    .unwrap();
+    let results = search(0.5, Some(options.into())).expect("0.5");
+    assert!(results.len() <= 50);
+    assert!(
+        results
+            .iter()
+            .any(|m| m.is_exact && m.lhs_postfix == "xC" && m.rhs == "0"),
+        "cospi(x) = 0 should be an exact row"
+    );
+}
+
+fn parity_page(target: f64, level: f64) -> Vec<ries_rs::WasmMatch> {
+    let options = Object::new();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("level"),
+        &JsValue::from_f64(level),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("maxMatches"),
+        &JsValue::from_f64(50.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rankingMode"),
+        &JsValue::from_str("parity"),
+    )
+    .unwrap();
+    search(target, Some(options.into())).expect("search")
+}
+
+#[wasm_bindgen_test]
+fn test_wasm_tiny_residuals_are_not_exact() {
+    // search(target, {level, maxMatches: 50, rankingMode: 'parity'})
+    let cases = [
+        (1e-16, 3.0, &["xCS", "1xC-"][..]),
+        (2e-16, 3.0, &["xCS"][..]),
+        (1e-31, 3.0, &["xE1-", "xES"][..]),
+        (1e-15, 5.0, &["xsCS"][..]),
+        (1e-12, 5.0, &["xsCS"][..]),
+        (100.0 * 5e-324, 3.0, &["1x+l", "x1+l"][..]),
+        (1e-310, 3.0, &["1x+l", "x1+l", "xqCl"][..]),
+        (5e-324, 3.0, &["xx^l"][..]),
+    ];
+    for (target, level, forbidden) in cases {
+        let page = parity_page(target, level);
+        assert!(page.len() <= 50);
+        for lhs in forbidden {
+            assert!(
+                !page.iter().any(|m| m.is_exact && m.lhs_postfix == *lhs),
+                "exact {lhs} at {target} level {level}"
+            );
+        }
+    }
+}
+
 #[wasm_bindgen_test]
 fn test_wasm_search_result_properties() {
     // Test that search results have expected properties

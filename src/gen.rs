@@ -780,18 +780,13 @@ fn prefer_rhs(candidate: &Expression, current: &Expression, search: Option<&Sear
     // For a fixed LHS and RHS value, exactness and error are identical.
     let complexity = candidate.complexity().cmp(&current.complexity());
     let parity = || legacy_parity_score_expr(candidate).cmp(&legacy_parity_score_expr(current));
-    // A stop condition bounds results by the complexity of the simplest stop
-    // match (`StopBound`). Keeping a costlier spelling of a value would raise
-    // that bound; any costlier spelling is past the bound anyway.
-    let stop_bounded =
-        search.is_some_and(|config| config.stop_at_exact || config.stop_below.is_some());
+    // Keep the simplest spelling of a bit-identical value. A costlier spelling
+    // would also raise a stop bound, and a 50-row parity page cannot show
+    // `2*x = 5` if `5` was replaced by a denser rewrite of the same bits.
+    // Parity breaks a complexity tie and still orders distinct values.
     match search.map(|config| config.ranking_mode) {
-        Some(RankingMode::Parity) if stop_bounded => complexity
+        Some(RankingMode::Parity) => complexity
             .then_with(parity)
-            .then_with(|| candidate.symbols().cmp(current.symbols()))
-            .is_lt(),
-        Some(RankingMode::Parity) => parity()
-            .then(complexity)
             .then_with(|| candidate.symbols().cmp(current.symbols()))
             .is_lt(),
         Some(RankingMode::Complexity) => complexity

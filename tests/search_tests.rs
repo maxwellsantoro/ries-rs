@@ -716,11 +716,14 @@ fn test_streaming_stop_priority_changes_results_without_ending_the_scan() {
             // Phase 1 scans every generated LHS; phase 2 rescans within the bound.
             assert!(stats.lhs_count > scanned.lhs_count);
 
-            // The simplest stop match leads, even though parity ranking alone
-            // prefers a costlier equation, and every result is within its bound.
+            // Exact rows are complexity-first under parity, so the unrestricted
+            // page and the stop page lead with the same simplest equation.
+            // Every stopped result stays within that equation's complexity.
             assert_eq!(priority[0].lhs.expr.to_postfix(), "x");
             assert_eq!(priority[0].rhs.expr.to_postfix(), "2");
-            assert!(compare_matches(&ranked[0], &priority[0], RankingMode::Parity).is_lt());
+            assert_eq!(ranked[0].lhs.expr.to_postfix(), "x");
+            assert_eq!(ranked[0].rhs.expr.to_postfix(), "2");
+            assert!(compare_matches(&ranked[0], &priority[0], RankingMode::Parity).is_eq());
             assert!(priority
                 .iter()
                 .all(|m| m.complexity <= priority[0].complexity));
@@ -1440,8 +1443,126 @@ fn test_default_api_level_finds_plain_equations() {
         }
         if target == 2.5 {
             assert!(
-                matches.iter().all(|m| m.lhs.value.abs() >= 1e-4),
-                "a non-zero target must still drop LHS values under 1e-4"
+                matches
+                    .iter()
+                    .all(|m| m.lhs.value == 0.0 || m.lhs.value.abs() >= 1e-4),
+                "a non-zero target must still drop tiny nonzero LHS values"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_website_parity_page_contains_plain_forms() {
+    // web/index.html calls search(target, {level: 3, maxMatches: 50, rankingMode: 'parity'}).
+    // wasm::search doubles the pool, then returns the first 50.
+    let cases = [
+        (2.5, &["2x*", "x2*"][..], &["5"][..]),
+        (2.5, &["x"][..], &["52/"][..]),
+        (1.5, &["x"][..], &["32/"][..]),
+        (12.0, &["x"][..], &["26*"][..]),
+        (42.0, &["x"][..], &["67*"][..]),
+        (2.0, &["x"][..], &["2"][..]),
+        (std::f64::consts::PI, &["x"][..], &["p"][..]),
+        (std::f64::consts::E, &["x"][..], &["e"][..]),
+        (ries_rs::eval::constants::PHI, &["x"][..], &["f"][..]),
+        (2.0_f64.sqrt(), &["x"][..], &["2q"][..]),
+    ];
+    for (target, lhs_forms, rhs_forms) in cases {
+        let (gen, mut cfg) = api_level_configs(3, target);
+        cfg.max_matches = 100;
+        cfg.ranking_mode = ries_rs::pool::RankingMode::Parity;
+        let (matches, _) = search_with_stats_and_config(&gen, &cfg);
+        let page = &matches[..matches.len().min(50)];
+        assert!(
+            page.iter().any(|m| {
+                m.exact
+                    && lhs_forms.contains(&m.lhs.expr.to_postfix().as_str())
+                    && rhs_forms.contains(&m.rhs.expr.to_postfix().as_str())
+            }),
+            "level 3 parity page missing {lhs_forms:?} = {rhs_forms:?} for {target}"
+        );
+        let min_exact = page
+            .iter()
+            .filter(|m| m.exact)
+            .map(|m| m.complexity)
+            .min()
+            .unwrap();
+        assert!(
+            page[0].exact && page[0].complexity == min_exact,
+            "parity page for {target} should lead with a simplest exact, got {}",
+            page[0].lhs.expr.to_postfix()
+        );
+    }
+    for target in [0.0, -0.0] {
+        let (gen, mut cfg) = api_level_configs(3, target);
+        cfg.max_matches = 100;
+        cfg.ranking_mode = ries_rs::pool::RankingMode::Parity;
+        let (matches, _) = search_with_stats_and_config(&gen, &cfg);
+        let page = &matches[..matches.len().min(50)];
+        let plain = page.iter().find(|m| {
+            m.exact
+                && m.lhs.expr.to_postfix() == "x"
+                && matches!(m.rhs.expr.to_postfix().as_str(), "1l" | "1S")
+        });
+        let plain = plain.unwrap_or_else(|| panic!("no plain zero for {target}"));
+        let summary = ries_rs::MatchSummary::from_match(plain);
+        assert_eq!(summary.lhs, "x");
+        assert_eq!(summary.rhs, "0");
+        assert_eq!(page[0].lhs.expr.to_postfix(), "x");
+        assert_eq!(summary.rhs, "0");
+    }
+}
+
+#[test]
+fn test_half_integer_cospi_is_exact_on_the_parity_page() {
+    // The level-5 website call. cospi(1/2) = 0 must be labeled exact and kept.
+    let (gen, mut cfg) = api_level_configs(5, 0.5);
+    cfg.max_matches = 100;
+    cfg.ranking_mode = ries_rs::pool::RankingMode::Parity;
+    let (matches, _) = search_with_stats_and_config(&gen, &cfg);
+    let page = &matches[..matches.len().min(50)];
+    let found = page
+        .iter()
+        .find(|m| m.exact && m.lhs.expr.to_postfix() == "xC");
+    let found = found.unwrap_or_else(|| panic!("cospi(x) missing from the level-5 parity page"));
+    let summary = ries_rs::MatchSummary::from_match(found);
+    assert_eq!(summary.rhs, "0");
+}
+
+#[test]
+fn test_tiny_targets_do_not_label_nonzero_residuals_exact() {
+    // Website call: search(target, {level, maxMatches: 50, rankingMode: 'parity'}).
+    // The pool is twice the page, matching wasm::search.
+    let cases = [
+        (1e-16, 3, &["xCS", "1xC-"][..]),
+        (2e-16, 3, &["xCS"][..]),
+        (1e-31, 3, &["xE1-", "xES"][..]),
+        (1e-15, 5, &["xsCS"][..]),
+        (1e-12, 5, &["xsCS"][..]),
+        (100.0 * 5e-324, 3, &["1x+l", "x1+l"][..]),
+        (1e-310, 3, &["1x+l", "x1+l", "xqCl"][..]),
+        (5e-324, 3, &["xx^l"][..]),
+    ];
+    for (target, level, forbidden) in cases {
+        let (gen, mut cfg) = api_level_configs(level, target);
+        cfg.max_matches = 100;
+        cfg.ranking_mode = ries_rs::pool::RankingMode::Parity;
+        let (matches, _) = search_with_stats_and_config(&gen, &cfg);
+        let page = &matches[..matches.len().min(50)];
+        for lhs in forbidden {
+            assert!(
+                !page
+                    .iter()
+                    .any(|m| m.exact && m.lhs.expr.to_postfix() == *lhs),
+                "exact {lhs} at {target} level {level} is a nonzero residual"
+            );
+        }
+        if let Some(first) = page.first() {
+            assert!(
+                !first.exact || !forbidden.contains(&first.lhs.expr.to_postfix().as_str()),
+                "page at {target} level {level} leads with {}",
+                first.lhs.expr.to_postfix()
             );
         }
     }

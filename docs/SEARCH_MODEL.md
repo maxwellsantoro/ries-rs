@@ -241,13 +241,48 @@ The two scales are not the same function, and benchmarks should not treat them a
 
 The canonical comparator is `compare_matches` in `src/pool.rs`.
 
-A row is exact when all three conditions hold (`match_exactness`):
+A row is exact when `match_exactness` accepts it and a double-double
+re-evaluation agrees (`label_exact`):
 
 - the two sides, both evaluated at the typed target, agree to a few ulps of
   `max(|lhs|, |rhs|)` (`sides_agree_within_ulps`)
 - the solved `x` is within eight ulps of the typed target
 - one ulp of the RHS corresponds to at most eight ulps of the target under
   the LHS slope, i.e. `ulp(rhs) ≤ 8 · ulp(target) · |f′(target)|`
+- those f64 sides still agree to eight ulps when both expressions are
+  evaluated again at the same f64 in double-double arithmetic
+
+The last check is what rejects a rounded reciprocal or argument. At `1e-15`,
+f64 `cospi(1/x)` lands on `cospi(1/8)` after the reciprocal rounds onto an
+eighth-turn, and the trig reduction then reports a zero residual. The real
+values at that f64 differ by about `0.046`. The same pattern stamps
+`e^sinpi(1/x) = 1` at `1e-12` and `cospi(pi + x) = -cospi(1/8)` at `1e15`.
+Double-double can see those gaps. A computed trigonometric argument whose
+magnitude reaches `2^54/π` has a double-double ulp large enough to move sine
+or cosine by about one ulp, so that result is not labeled exact. Exact
+integers and half-integers (`cospi(x) = 0` at `1/2`) are recognized before
+that cutoff, including an exact f64 integer such as `sinpi(x) = 0` at `2^62`.
+A computed value is not treated as an integer once its magnitude reaches
+`2^105`, where one double-double ulp is coarser than `1/2` and both words can
+be integral while the true value is not (`sinpi(e^x) = 0` at `123.456789`).
+Sums and products of f64 integers stay exact at every magnitude, so
+`sinpi(1+x) = 0`, `sinpi(2*x) = 0`, and `sinpi(x/2) = 0` at `1e300` are
+exact. A non-integer power is not snapped: `sinpi(x^3) = 0` is not exact at
+`2^51+1/2`, where the cube's fraction no longer fits in a double-double.
+`pi`, `e`, and `phi` are carried with an extra word, so scaling them by
+`2^52` does not manufacture an integer. A comparison with exact 0 accepts
+only an exact 0: eight ulps of a nonzero residual are smaller than the
+residual, so `sinpi(cospi(x)) = 0` at `1e-16` (about `1.55e-31`) is not
+exact. A product or quotient that underflows to 0 is not that proof either
+(`x/2` at `5e-324`). Scaling by a power of two, which is how `exp` rebuilds
+its reduced series, is loose when the power overflows, underflows, or lands
+in the subnormal range (`e^-740` is about `4.2e-322`, not an exact 0).
+`ln(1+x)` for a tiny `x` is computed from that low word, so it is `x` and
+not an exact 0 (`ln(1+x)` at `4.94e-322` and at `1e-310`). An
+evaluation the checker cannot finish is not labeled exact. Genuine identities
+stay exact:
+`2*x = 5` at `2.5`, `x = pi`, `x = sqrt(2)`, `cospi(x) = 0` at `1/2`,
+`sinpi` of an integer, `x = W(1)` at the omega constant, and `x = ln(1)` at `0`.
 
 A stationary LHS cannot locate a root with the linearized search and is
 skipped. Every match, including an approximation, must resolve x at the
@@ -290,7 +325,15 @@ Ordering is:
    The raw error is preserved for output and tolerance checks.
 3. Ranking-mode tie-break:
    - `complexity`: lower `C_match` first
-   - `parity`: lower legacy parity score first, then lower `C_match`
+   - `parity`, exact rows: lower `C_match` first, then lower legacy parity score
+   - `parity`, inexact rows: lower legacy parity score first, then lower `C_match`
+
+Exact rows are one root. Ordering them by complexity keeps `2*x = 5`,
+`x = 5/2`, `x = 3/2`, `x = 2*6`, `x = 6*7`, `x = 2`, `x = pi`, `x = e`,
+`x = phi`, and `x = sqrt(2)` on the first page of a level-3 parity search
+(`maxMatches` 50, the website default). Operator-dense rewrites of those roots
+used to fill that page because Add and Mul have negative parity weights.
+Inexact approximations keep the historical parity order.
 4. Lexicographic postfix order of LHS symbols
 5. Lexicographic postfix order of RHS symbols
 
@@ -302,10 +345,11 @@ Default and pretty infix omit multiplication by literal `1` and use explicit
 `*` after compound factors. Postfix output records the original operations.
 
 Search keeps one admissible RHS representative for each bit-identical value.
-It applies RHS symbol, value, and expression filters before choosing by the
-configured ranking mode. Numeric-anagram searches keep a representative per
-value and digit multiset. Parity compares the signed score first. Both modes compare complexity
-and then postfix symbol order. Equations with the same RHS value can differ
+It applies RHS symbol, value, and expression filters before choosing the
+simplest spelling. Parity breaks a complexity tie. A denser rewrite of the
+same bits does not replace `5` or `5/2`, so the plain equation can appear in
+the parity page above. Numeric-anagram searches keep a representative per
+value and digit multiset. Equations with the same RHS value can differ
 on the left, while all use the same chosen RHS expression.
 
 By default search passes all generated LHS forms to the matcher. With
@@ -344,8 +388,9 @@ zeros tighten this threshold. This report preference does not change the
 recorded errors, exactness classification, or canonical pool ordering.
 Library reports can opt into this behavior with
 `ReportConfig::with_target_precision`; the default `best_error_floor` is zero.
-CLI infix output simplifies certified constant zeros such as `sinpi(1)` and
-`ln(1)` to `0`; postfix output retains the searched expression.
+CLI, WASM, and Python infix simplify certified constant zeros such as
+`sinpi(1)` and `ln(1)` to `0`; postfix output retains the searched expression.
+A level-3 parity search for `0` or `-0` therefore shows plain `x = 0`.
 
 
 ### Measured cost of the LHS key
@@ -432,8 +477,10 @@ remain eligible for the postfix tie-breaks. The scan can stop once the LHS
 alone exceeds the ceiling, because the remaining LHS expressions are processed
 in ascending complexity order and RHS complexity is nonnegative.
 
-Parity ranking disables both uses of the ceiling. Its signed legacy score
-precedes total complexity, so a more complex exact match can rank higher.
+Parity ranking disables both uses of the ceiling. Inexact rows still rank by
+legacy score before complexity, so the worst retained complexity is not a
+bound on what can enter. Exact rows are complexity-first: a more complex
+exact match does not outrank a simpler one.
 
 ## Determinism Contract
 

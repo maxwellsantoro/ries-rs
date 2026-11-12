@@ -275,6 +275,13 @@ fn main() {
         eprintln!("Error: --max-match-distance must be finite and nonnegative.");
         std::process::exit(2);
     }
+    if args
+        .stop_below
+        .is_some_and(|threshold| !threshold.is_finite() || threshold < 0.0)
+    {
+        eprintln!("Error: --stop-below must be finite and nonnegative.");
+        std::process::exit(2);
+    }
 
     // Classic mode = "sniper mode": stop early like original RIES
     // Also stop at exact for --ie/--re exact modes
@@ -334,10 +341,8 @@ fn main() {
         rhs_excluded_symbols,
         show_newton: diagnostics.show_newton,
         show_match_checks: diagnostics.show_match_checks,
-        show_pruned_arith: diagnostics.show_pruned_arith,
         show_pruned_range: diagnostics.show_pruned_range,
         show_db_adds: diagnostics.show_db_adds,
-        match_all_digits: args.match_all_digits,
         derivative_margin: args
             .derivative_margin
             .or(args.significance_loss_margin)

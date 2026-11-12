@@ -522,6 +522,7 @@ fn match_one_lhs(
             && crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
             && config.filters.allows_side(rhs)
             && config.filters.allows_pair(&lhs.expr, &rhs.expr)
+            && !super::exact_zero_lhs_needs_zero_rhs(lhs.value, rhs.value, config.target)
             && exact_ceiling
                 .is_none_or(|ceiling| lhs.expr.complexity() + rhs.expr.complexity() <= ceiling)
     };
@@ -635,8 +636,7 @@ fn match_one_lhs(
             (config.target + x_delta, x_delta)
         };
 
-        let Some(exact) =
-            super::match_exactness(lhs.value, rhs.value, lhs.derivative, x_value, config.target)
+        let Some(exact) = super::label_exact(lhs, rhs, x_value, config.target, &context.eval)
         else {
             continue;
         };
