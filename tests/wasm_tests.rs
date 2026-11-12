@@ -158,6 +158,51 @@ fn test_wasm_half_integer_cospi_is_exact() {
     );
 }
 
+fn parity_page(target: f64, level: f64) -> Vec<ries_rs::WasmMatch> {
+    let options = Object::new();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("level"),
+        &JsValue::from_f64(level),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("maxMatches"),
+        &JsValue::from_f64(50.0),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rankingMode"),
+        &JsValue::from_str("parity"),
+    )
+    .unwrap();
+    search(target, Some(options.into())).expect("search")
+}
+
+#[wasm_bindgen_test]
+fn test_wasm_tiny_residuals_are_not_exact() {
+    // search(target, {level, maxMatches: 50, rankingMode: 'parity'})
+    let cases = [
+        (1e-16, 3.0, &["xCS", "1xC-"][..]),
+        (2e-16, 3.0, &["xCS"][..]),
+        (1e-31, 3.0, &["xE1-", "xES"][..]),
+        (1e-15, 5.0, &["xsCS"][..]),
+        (1e-12, 5.0, &["xsCS"][..]),
+    ];
+    for (target, level, forbidden) in cases {
+        let page = parity_page(target, level);
+        assert!(page.len() <= 50);
+        for lhs in forbidden {
+            assert!(
+                !page.iter().any(|m| m.is_exact && m.lhs_postfix == *lhs),
+                "exact {lhs} at {target} level {level}"
+            );
+        }
+    }
+}
+
 #[wasm_bindgen_test]
 fn test_wasm_search_result_properties() {
     // Test that search results have expected properties

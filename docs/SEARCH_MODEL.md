@@ -270,10 +270,11 @@ Sums and products of f64 integers stay exact at every magnitude, so
 exact. A non-integer power is not snapped: `sinpi(x^3) = 0` is not exact at
 `2^51+1/2`, where the cube's fraction no longer fits in a double-double.
 `pi`, `e`, and `phi` are carried with an extra word, so scaling them by
-`2^52` does not manufacture an integer. A comparison with exact 0 also allows
-an absolute residual of `64 * 2^-106`, a few dozen double-double roundoffs of
-an O(1) reduction, which is far below the gaps above. An evaluation the
-checker cannot finish is not labeled exact. Genuine identities stay exact:
+`2^52` does not manufacture an integer. A comparison with exact 0 accepts only an exact 0: eight ulps of a nonzero
+residual are smaller than the residual, so `sinpi(cospi(x)) = 0` at `1e-16`
+(about `1.55e-31`) is not exact. A product or quotient that underflows to 0
+is not that proof either (`x/2` at `5e-324`). An evaluation the checker cannot finish is not labeled exact.
+Genuine identities stay exact:
 `2*x = 5` at `2.5`, `x = pi`, `x = sqrt(2)`, `cospi(x) = 0` at `1/2`,
 `sinpi` of an integer, `x = W(1)` at the omega constant, and `x = ln(1)` at `0`.
 

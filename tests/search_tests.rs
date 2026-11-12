@@ -1531,6 +1531,41 @@ fn test_half_integer_cospi_is_exact_on_the_parity_page() {
 }
 
 #[test]
+fn test_tiny_targets_do_not_label_nonzero_residuals_exact() {
+    // Website call: search(target, {level, maxMatches: 50, rankingMode: 'parity'}).
+    // The pool is twice the page, matching wasm::search.
+    let cases = [
+        (1e-16, 3, &["xCS", "1xC-"][..]),
+        (2e-16, 3, &["xCS"][..]),
+        (1e-31, 3, &["xE1-", "xES"][..]),
+        (1e-15, 5, &["xsCS"][..]),
+        (1e-12, 5, &["xsCS"][..]),
+    ];
+    for (target, level, forbidden) in cases {
+        let (gen, mut cfg) = api_level_configs(level, target);
+        cfg.max_matches = 100;
+        cfg.ranking_mode = ries_rs::pool::RankingMode::Parity;
+        let (matches, _) = search_with_stats_and_config(&gen, &cfg);
+        let page = &matches[..matches.len().min(50)];
+        for lhs in forbidden {
+            assert!(
+                !page
+                    .iter()
+                    .any(|m| m.exact && m.lhs.expr.to_postfix() == *lhs),
+                "exact {lhs} at {target} level {level} is a nonzero residual"
+            );
+        }
+        if let Some(first) = page.first() {
+            assert!(
+                !first.exact || !forbidden.contains(&first.lhs.expr.to_postfix().as_str()),
+                "page at {target} level {level} leads with {}",
+                first.lhs.expr.to_postfix()
+            );
+        }
+    }
+}
+
+#[test]
 fn test_target_zero_finds_x_equals_ln_one() {
     // `1-1` is a zero, but RHS dedupe keeps the cheaper `ln(1)` (complexity
     // 23 vs 25). The near-zero prune used to drop `x` itself, so that identity

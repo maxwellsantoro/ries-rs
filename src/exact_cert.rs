@@ -23,17 +23,6 @@ fn trig_loose_magnitude() -> f64 {
     2.0_f64.powi(54) / std::f64::consts::PI
 }
 
-/// Absolute residual allowed when a side is exactly 0 or both sides are
-/// smaller than a normal evaluation's leftover.
-///
-/// Reduced transcendentals are O(1) before cancellation. One double-double
-/// rounding at magnitude 1 is `2^-106`; a few dozen of those is `64 * 2^-106`
-/// (about `7.9e-31`). That covers a Taylor leftover such as `cos(π/2)`, and
-/// it is far below the `1e-4`–`1e-1` gaps of a rounded reciprocal.
-fn canceled_absolute_floor() -> f64 {
-    64.0 * 2.0_f64.powi(-106)
-}
-
 #[derive(Clone, Copy)]
 struct Dd {
     hi: f64,
@@ -196,8 +185,22 @@ impl std::ops::Mul for Dd {
         // Dekker split: every f64 at this magnitude is an integer, and the
         // rounded product of integers is an integer. Other overflows stay loose.
         let loose = self.loose || rhs.loose || (overflow && !integral);
-        renormalize(prod, err + cross, loose, integral)
+        // A flushed product of two nonzero values is not a proof of 0.
+        // `x/2` and `x*(1/2)` at the smallest subnormal are about `2.5e-324`.
+        flushed_nonzero(renormalize(prod, err + cross, loose, integral), self, rhs)
     }
+}
+
+fn is_nonzero(value: Dd) -> bool {
+    value.hi != 0.0 || value.lo != 0.0
+}
+
+/// A zero computed from nonzero inputs underflowed. It is not an exact 0.
+fn flushed_nonzero(mut value: Dd, lhs: Dd, rhs: Dd) -> Dd {
+    if is_nonzero(lhs) && is_nonzero(rhs) && !is_nonzero(value) {
+        value.loose = true;
+    }
+    value
 }
 
 impl std::ops::Div for Dd {
@@ -210,7 +213,11 @@ impl std::ops::Div for Dd {
         // Dividing an integer by a power of two that divides it stays an
         // integer (`x/2` at `1e300`). Any other quotient does not.
         let integral = q.is_finite() && integer_divided_by_power_of_two(self, rhs);
-        renormalize(q, remainder / rhs.hi, loose, integral)
+        flushed_nonzero(
+            renormalize(q, remainder / rhs.hi, loose, integral),
+            self,
+            rhs,
+        )
     }
 }
 
@@ -863,25 +870,16 @@ pub(crate) fn certified_equal(
         return false;
     }
     let diff = (lhs - rhs).abs();
-    let lhs_abs = lhs.abs().hi.abs();
-    let rhs_abs = rhs.abs().hi.abs();
-    let scale = lhs_abs.max(rhs_abs);
-    let ulp_limit = if scale == 0.0 {
-        0.0
-    } else {
-        8.0 * ulp_of(scale)
-    };
-    // Eight ulps of a canceled residual are far smaller than the residual
-    // itself, so a Taylor leftover compared with exact 0 would never pass.
-    // The floor is a few dozen double-double roundoffs of an O(1) reduction.
-    let one_exact_zero = (lhs.hi == 0.0 && lhs.lo == 0.0) || (rhs.hi == 0.0 && rhs.lo == 0.0);
-    let both_tiny = scale <= 2.0_f64.powi(-60);
-    let floor = if one_exact_zero || both_tiny {
-        canceled_absolute_floor()
-    } else {
-        0.0
-    };
-    diff.hi.abs() <= ulp_limit.max(floor)
+    // An exact 0 is only the pair of zero words. A nonzero residual compared
+    // with 0 is larger than eight ulps of itself, so it is not exact:
+    // `sinpi(cospi(x))` at `1e-16` is about `1.55e-31`, not 0. Half-integer
+    // `cospi` and integer `sinpi` return an exact 0 from the snap, so those
+    // identities do not need a residual allowance.
+    if diff.hi == 0.0 && diff.lo == 0.0 {
+        return true;
+    }
+    let scale = lhs.abs().hi.abs().max(rhs.abs().hi.abs());
+    scale > 0.0 && diff.hi.abs() <= 8.0 * ulp_of(scale)
 }
 
 #[cfg(test)]
@@ -902,6 +900,33 @@ mod tests {
         assert!(!agrees("xrC", "8rC", -tiny));
         assert!(!agrees("xp+C", "8rCn", 1e15), "cospi(pi+x) = -cospi(1/8)");
         assert!(!agrees("xrSE", "1", 1e-12), "e^sinpi(1/x) = 1 at 1e-12");
+    }
+
+    #[test]
+    fn tiny_nonzero_residual_is_not_exact_zero() {
+        // True zeros at the origin stay exact: the snap and exp(0) are exact.
+        assert!(agrees("xCS", "1l", 0.0), "sinpi(cospi(0)) = 0");
+        assert!(agrees("xE1-", "1l", 0.0), "e^0 - 1 = 0");
+        assert!(agrees("xES", "1l", 0.0), "sinpi(e^0) = 0");
+        // The same shapes at a tiny target are a real gap, not a rounding.
+        assert!(!agrees("xCS", "1l", 1e-16), "sinpi(cospi(x)) = 0 at 1e-16");
+        assert!(!agrees("1xC-", "1l", 1e-16), "1 - cospi(x) = 0 at 1e-16");
+        assert!(!agrees("xCS", "1S", 2e-16), "sinpi(cospi(x)) = 0 at 2e-16");
+        assert!(!agrees("xE1-", "1l", 1e-31), "e^x - 1 = 0 at 1e-31");
+        assert!(!agrees("xES", "1l", 1e-31), "sinpi(e^x) = 0 at 1e-31");
+        assert!(
+            !agrees("xsCS", "1l", 1e-15),
+            "sinpi(cospi(x^2)) = 0 at 1e-15"
+        );
+        assert!(
+            !agrees("xsCS", "1l", 1e-12),
+            "sinpi(cospi(x^2)) = 0 at 1e-12"
+        );
+        // Underflow is not a proof of zero. The smallest subnormal divided
+        // by two is a nonzero subnormal, and `x*1` at 0 really is zero.
+        assert!(!agrees("x2/", "1l", 5e-324), "x/2 = 0 at 5e-324");
+        assert!(!agrees("x2r*", "1l", 5e-324), "x*(1/2) = 0 at 5e-324");
+        assert!(agrees("x1*", "1l", 0.0), "x*1 = 0 at 0");
     }
 
     #[test]
