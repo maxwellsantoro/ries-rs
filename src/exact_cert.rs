@@ -389,17 +389,47 @@ fn scale2(value: Dd, exp: i32) -> Dd {
     }
     let hi = ldexp_f64(value.hi, exp);
     let lo = ldexp_f64(value.lo, exp);
-    // The high word is the result. A normal high word is a faithful scale
-    // even when the low word no longer fits; a subnormal or flushed high
-    // word is not an exact 0. `e^-740` is about `4.2e-322`.
-    let lost = hi.loose || !lo.value.is_finite();
-    let lo = if lo.loose { 0.0 } else { lo.value };
+    // A subnormal or flushed high word is not an exact 0 (`e^-740`).
+    // A low word that does not survive the scale may be dropped only when it
+    // is at most half an ulp of the scaled high word. Anything larger is loose.
+    let drop_lo = lo.loose;
+    let lost = hi.loose
+        || !lo.value.is_finite()
+        || (drop_lo && !scaled_low_word_is_half_ulp(value.lo, exp, hi.value));
     renormalize(
         hi.value,
-        lo,
+        if drop_lo { 0.0 } else { lo.value },
         value.loose || lost,
         value.integral && exp >= 0 && !lost,
     )
+}
+
+/// `floor(log2(|value|))`, or `i32::MIN` for zero.
+fn exponent_floor(value: f64) -> i32 {
+    if value == 0.0 || !value.is_finite() {
+        return i32::MIN;
+    }
+    let bits = value.abs().to_bits();
+    let exp_field = ((bits >> 52) & 0x7ff) as i32;
+    if exp_field == 0 {
+        let frac = bits & 0x000f_ffff_ffff_ffff;
+        return -1074 + (63 - frac.leading_zeros() as i32);
+    }
+    exp_field - 1023
+}
+
+/// True when `|lo| * 2^exp` cannot move `hi_scaled` by half an ulp.
+fn scaled_low_word_is_half_ulp(lo: f64, exp: i32, hi_scaled: f64) -> bool {
+    if lo == 0.0 {
+        return true;
+    }
+    if hi_scaled == 0.0 || !hi_scaled.is_finite() {
+        return false;
+    }
+    // `|lo| < 2^(floor(log2|lo|)+1)`, so this is one bit conservative.
+    let lo_binade = i64::from(exponent_floor(lo)) + i64::from(exp);
+    let half_ulp_exp = i64::from(exponent_floor(hi_scaled)) - 53;
+    lo_binade < half_ulp_exp
 }
 
 fn frexp(value: f64) -> (f64, i32) {
@@ -527,6 +557,43 @@ fn exp(value: Dd) -> Option<Dd> {
     Some(scale2(exp_reduced(reduced), n).flag(value.loose))
 }
 
+/// `ln(1 + delta)` for `|delta| < 1/2`.
+///
+/// A tiny delta lives in the low word of `1 + delta`. Frexp would scale that
+/// word into the subnormal range, drop it, and return an exact 0. The series
+/// keeps the word. Below `2^-52` the square is at most half an ulp of the
+/// result, and forming it would underflow, so the delta itself is the answer.
+fn log1p(delta: Dd) -> Option<Dd> {
+    if !delta.hi.is_finite() {
+        return None;
+    }
+    if delta.hi == 0.0 && delta.lo == 0.0 {
+        return Some(Dd::zero().flag(delta.loose));
+    }
+    if delta.hi.abs() <= 2.0_f64.powi(-52) && delta.lo.abs() <= 2.0_f64.powi(-52) {
+        return Some(delta);
+    }
+    let denom = Dd::from_f64(2.0) + delta;
+    if denom.hi == 0.0 && denom.lo == 0.0 {
+        return None;
+    }
+    let z = delta / denom;
+    if !z.hi.is_finite() {
+        return None;
+    }
+    let z2 = z * z;
+    let mut sum = z;
+    let mut term = z;
+    for n in 1..32 {
+        term = term * z2;
+        sum = sum + term / Dd::from_f64(f64::from(2 * n + 1));
+        if term.hi.abs() <= 1e-30 * sum.hi.abs().max(1.0) {
+            break;
+        }
+    }
+    Some((sum * Dd::from_f64(2.0)).flag(delta.loose || z.loose))
+}
+
 fn ln(value: Dd) -> Option<Dd> {
     if value.hi <= 0.0 || !value.hi.is_finite() {
         return None;
@@ -534,9 +601,14 @@ fn ln(value: Dd) -> Option<Dd> {
     if value.hi == 1.0 && value.lo == 0.0 {
         return Some(Dd::zero().flag(value.loose));
     }
+    let delta = value - Dd::one();
+    if delta.hi.abs() < 0.5 {
+        return log1p(delta);
+    }
     let (mantissa_hi, mut exponent) = frexp(value.hi);
-    // Same power-of-two scale as `exp`. A flushed low word is dropped; it is
-    // below half an ulp of a unit mantissa. An infinite scale is loose.
+    // Scale the low word into the mantissa. A subnormal or flushed scale is
+    // part of the result's loose flag: dropping it and still returning an
+    // exact value is how `ln(1+x)` became 0.
     let lo_scaled = ldexp_f64(value.lo, -exponent);
     let mut mantissa = renormalize(
         mantissa_hi,
@@ -545,7 +617,7 @@ fn ln(value: Dd) -> Option<Dd> {
         } else {
             lo_scaled.value
         },
-        value.loose || !lo_scaled.value.is_finite(),
+        value.loose || lo_scaled.loose,
         false,
     );
     if mantissa.hi < std::f64::consts::FRAC_1_SQRT_2 {
@@ -563,7 +635,7 @@ fn ln(value: Dd) -> Option<Dd> {
             break;
         }
     }
-    Some((sum * Dd::from_f64(2.0) + Dd::from_i32(exponent) * Dd::ln2()).flag(value.loose))
+    Some(sum * Dd::from_f64(2.0) + Dd::from_i32(exponent) * Dd::ln2())
 }
 
 fn atan_euler(value: Dd) -> Dd {
@@ -1059,6 +1131,33 @@ mod tests {
         assert!(agrees("11-E1-", "1l", 1.0), "e^(1-1) - 1 = 0");
         assert!(agrees("x", "1W", 0.5671432904097838), "x = W(1)");
         assert!(agrees("x", "1l", 0.0), "x = 0");
+        assert!(agrees("xlE", "x", 2.0), "exp(ln x) = x at 2");
+    }
+
+    #[test]
+    fn ln_of_one_plus_tiny_is_not_exact_zero() {
+        let hundred_ulps = 100.0 * 5e-324;
+        for target in [hundred_ulps, 1e-310] {
+            assert!(!agrees("1x+l", "1l", target), "ln(1+x) = 0 at {target}");
+            assert!(!agrees("x1+l", "1l", target), "ln(x+1) = 0 at {target}");
+            // The deviation is preserved, so the true small value still certifies.
+            assert!(agrees("1x+l", "x", target), "ln(1+x) = x at {target}");
+        }
+        assert!(!agrees("xx^l", "1l", 5e-324), "ln(x^x) = 0 at 5e-324");
+        assert!(
+            !agrees("xqCl", "1l", 1e-310),
+            "ln(cospi(sqrt(x))) = 0 at 1e-310"
+        );
+        let near = ln(Dd::one() + Dd::from_f64(hundred_ulps)).unwrap();
+        assert!(!near.loose);
+        assert!(near.hi.abs() > 0.0, "ln(1 + 4.94e-322) collapsed to 0");
+        let ordinary = ln(Dd::from_f64(1.1)).unwrap();
+        assert!(!ordinary.loose);
+        assert!(
+            (ordinary.hi - 1.1_f64.ln()).abs() < 1e-15,
+            "ln(1.1) = {}",
+            ordinary.hi
+        );
     }
 
     #[test]
@@ -1238,10 +1337,7 @@ mod tests {
     #[test]
     fn ln_of_smallest_subnormal_is_the_power_of_two() {
         let got = ln(Dd::from_f64(5e-324)).unwrap();
-        assert!(
-            !got.loose,
-            "ln of the smallest subnormal is a normal value"
-        );
+        assert!(!got.loose, "ln of the smallest subnormal is a normal value");
         let expect = Dd::from_i32(-1074) * Dd::ln2();
         let diff = (got - expect).abs();
         let scale = expect.abs().hi.abs();

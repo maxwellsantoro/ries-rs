@@ -1540,6 +1540,9 @@ fn test_tiny_targets_do_not_label_nonzero_residuals_exact() {
         (1e-31, 3, &["xE1-", "xES"][..]),
         (1e-15, 5, &["xsCS"][..]),
         (1e-12, 5, &["xsCS"][..]),
+        (100.0 * 5e-324, 3, &["1x+l", "x1+l"][..]),
+        (1e-310, 3, &["1x+l", "x1+l", "xqCl"][..]),
+        (5e-324, 3, &["xx^l"][..]),
     ];
     for (target, level, forbidden) in cases {
         let (gen, mut cfg) = api_level_configs(level, target);

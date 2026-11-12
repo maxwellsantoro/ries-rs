@@ -276,7 +276,9 @@ residual, so `sinpi(cospi(x)) = 0` at `1e-16` (about `1.55e-31`) is not
 exact. A product or quotient that underflows to 0 is not that proof either
 (`x/2` at `5e-324`). Scaling by a power of two, which is how `exp` rebuilds
 its reduced series, is loose when the power overflows, underflows, or lands
-in the subnormal range (`e^-740` is about `4.2e-322`, not an exact 0). An
+in the subnormal range (`e^-740` is about `4.2e-322`, not an exact 0).
+`ln(1+x)` for a tiny `x` is computed from that low word, so it is `x` and
+not an exact 0 (`ln(1+x)` at `4.94e-322` and at `1e-310`). An
 evaluation the checker cannot finish is not labeled exact. Genuine identities
 stay exact:
 `2*x = 5` at `2.5`, `x = pi`, `x = sqrt(2)`, `cospi(x) = 0` at `1/2`,

@@ -190,6 +190,9 @@ fn test_wasm_tiny_residuals_are_not_exact() {
         (1e-31, 3.0, &["xE1-", "xES"][..]),
         (1e-15, 5.0, &["xsCS"][..]),
         (1e-12, 5.0, &["xsCS"][..]),
+        (100.0 * 5e-324, 3.0, &["1x+l", "x1+l"][..]),
+        (1e-310, 3.0, &["1x+l", "x1+l", "xqCl"][..]),
+        (5e-324, 3.0, &["xx^l"][..]),
     ];
     for (target, level, forbidden) in cases {
         let page = parity_page(target, level);
