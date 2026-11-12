@@ -152,6 +152,13 @@ pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Order
 
     ord = match ranking_mode {
         RankingMode::Complexity => a.complexity.cmp(&b.complexity),
+        // Exact rows are the same root. Complexity first keeps `2*x = 5` ahead
+        // of an operator-dense rewrite and inside a 50-row parity page.
+        // Inexact rows keep the historical parity-score order.
+        RankingMode::Parity if a.exact => a
+            .complexity
+            .cmp(&b.complexity)
+            .then_with(|| legacy_parity_score_match(a).cmp(&legacy_parity_score_match(b))),
         RankingMode::Parity => legacy_parity_score_match(a)
             .cmp(&legacy_parity_score_match(b))
             .then_with(|| a.complexity.cmp(&b.complexity)),
@@ -169,18 +176,21 @@ pub fn compare_matches(a: &Match, b: &Match, ranking_mode: RankingMode) -> Order
 #[derive(Clone)]
 struct PoolEntry {
     m: Match,
-    rank_key: (bool, u64, i32, u32), // (inexact, error bucket, mode tie, complexity)
+    rank_key: (bool, u64, i32, i32), // (inexact, error bucket, primary tie, secondary tie)
     canonical_key: Option<Box<(String, String)>>,
 }
 
 impl PoolEntry {
     fn new(m: Match, ranking_mode: RankingMode) -> Self {
-        let mode_tie = match ranking_mode {
-            RankingMode::Complexity => 0,
-            RankingMode::Parity => legacy_parity_score_match(&m),
+        let complexity = i32::try_from(m.complexity).unwrap_or(i32::MAX);
+        let parity = legacy_parity_score_match(&m);
+        let (primary, secondary) = match ranking_mode {
+            RankingMode::Complexity => (complexity, 0),
+            RankingMode::Parity if m.exact => (complexity, parity),
+            RankingMode::Parity => (parity, complexity),
         };
         Self {
-            rank_key: (!m.exact, match_error_rank(&m), mode_tie, m.complexity),
+            rank_key: (!m.exact, match_error_rank(&m), primary, secondary),
             m,
             canonical_key: None,
         }
@@ -400,7 +410,9 @@ impl TopKPool {
     /// Candidates at the ceiling may still enter on the postfix tie-breaks.
     ///
     /// Returns `None` for parity ranking, while the pool has room, or when its
-    /// worst entry is inexact. A higher complexity can still improve parity rank.
+    /// worst entry is inexact. Inexact parity rows still rank by legacy score
+    /// before complexity, so a higher complexity can improve that rank. Exact
+    /// parity rows are complexity-first and do not.
     #[inline]
     pub fn exact_complexity_ceiling(&self) -> Option<u32> {
         if self.ranking_mode != RankingMode::Complexity || self.heap.len() < self.capacity {
@@ -604,12 +616,25 @@ mod tests {
         let complexity_sorted = complexity_pool.into_sorted();
         assert_eq!(complexity_sorted[0].lhs.expr.to_postfix(), "2x*");
 
-        // Parity mode: legacy parity score first.
+        // Parity mode: legacy parity score first for inexact rows.
         let mut parity_pool = TopKPool::new_with_diagnostics(10, 1.0, false, RankingMode::Parity);
         parity_pool.try_insert(low_operator);
         parity_pool.try_insert(high_operator);
         let parity_sorted = parity_pool.into_sorted();
         assert_eq!(parity_sorted[0].lhs.expr.to_postfix(), "x1+");
+    }
+
+    #[test]
+    fn test_parity_exact_rows_prefer_lower_complexity() {
+        let simple = make_match("2x*", "5", 0.0, 49);
+        let dense = make_match("x1+", "3", 0.0, 81);
+        assert!(simple.exact && dense.exact);
+        assert!(compare_matches(&simple, &dense, RankingMode::Parity).is_lt());
+
+        let mut pool = TopKPool::new_with_diagnostics(1, 1.0, false, RankingMode::Parity);
+        assert!(pool.try_insert(dense));
+        assert!(pool.try_insert(simple));
+        assert_eq!(pool.into_sorted()[0].lhs.expr.to_postfix(), "2x*");
     }
 
     #[test]

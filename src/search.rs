@@ -280,6 +280,9 @@ fn target_search_scale(target: f64) -> f64 {
 /// Classify a match, discarding a near-target hit that cannot locate a root
 /// at the precision it claims. A rounded residual of zero can span millions
 /// of floats around a stationary point or hold everywhere for an identity.
+///
+/// A `Some(true)` here is only an f64 candidate. [`label_exact`] keeps the
+/// label when double-double evaluation at the same target still agrees.
 pub(crate) fn match_exactness(
     lhs_value: f64,
     rhs_value: f64,
@@ -295,6 +298,23 @@ pub(crate) fn match_exactness(
     let min_slope = ulp_of(rhs_value.abs()) / resolution;
     (derivative.is_finite() && derivative.abs() >= min_slope && derivative != 0.0)
         .then(|| near_target && sides_agree_within_ulps(lhs_value, rhs_value))
+}
+
+/// f64 exactness, then a double-double check that a rounded reciprocal or
+/// trigonometric argument did not manufacture the agreement.
+pub(crate) fn label_exact(
+    lhs: &EvaluatedExpr,
+    rhs: &EvaluatedExpr,
+    solved_x: f64,
+    target: f64,
+    eval: &crate::eval::EvalContext<'_>,
+) -> Option<bool> {
+    match match_exactness(lhs.value, rhs.value, lhs.derivative, solved_x, target)? {
+        false => Some(false),
+        true => Some(crate::exact_cert::certified_equal(
+            &lhs.expr, &rhs.expr, target, eval,
+        )),
+    }
 }
 #[cfg(test)]
 use newton::newton_raphson;
@@ -685,9 +705,14 @@ pub fn significant_digits_tolerance(target: f64, target_text: Option<&str>) -> f
 /// (`cospi(2.5) = 0` against many tiny right-hand sides). Target zero is the
 /// exception: `x` evaluates to 0, and dropping it makes `x = ln(1)` unreachable.
 /// `-0.0` compares equal to `0.0`, so a signed zero target is kept too.
+/// A subnormal target is also kept: `x` itself is subnormal, and dropping
+/// every tiny left-hand side leaves the search with nothing to match.
 #[inline]
 pub(crate) fn prune_near_zero_lhs(value: f64, target: f64, threshold: f64) -> bool {
-    value.abs() < threshold && target != 0.0
+    if target == 0.0 || target.abs() < f64::MIN_POSITIVE {
+        return false;
+    }
+    value.abs() < threshold
 }
 
 /// A matched equation
@@ -811,8 +836,9 @@ pub struct SearchConfig {
     ///
     /// LHS expressions with absolute values below this threshold are pruned
     /// to prevent flooding results with trivial matches like `cospi(2.5) = 0`.
-    /// The prune is skipped when the target itself is zero, so `x = ln(1)` can
-    /// be found. Set to 0.0 to disable this filtering for every target.
+    /// The prune is skipped when the target itself is zero or subnormal, so
+    /// `x = ln(1)` and `x` at a subnormal target can be found. Set to 0.0 to
+    /// disable this filtering for every target.
     ///
     /// Default: 1e-4
     pub zero_value_threshold: f64,
@@ -889,15 +915,6 @@ pub struct SearchConfig {
     /// Default: false
     pub show_match_checks: bool,
 
-    /// Show pruned arithmetic diagnostic output.
-    ///
-    /// When true, prints information about arithmetic expressions that were pruned.
-    /// Enabled by `-DA` command-line flag.
-    ///
-    /// Default: false
-    #[allow(dead_code)]
-    pub show_pruned_arith: bool,
-
     /// Show pruned range/zero diagnostic output.
     ///
     /// When true, prints information about expressions pruned due to range
@@ -913,16 +930,6 @@ pub struct SearchConfig {
     ///
     /// Default: false
     pub show_db_adds: bool,
-
-    /// When true, matches must match all significant digits of the target.
-    ///
-    /// When enabled, the tolerance is computed based on the magnitude of the
-    /// target value to require full precision matching. The actual tolerance
-    /// is computed in `main.rs` and passed as `max_error`.
-    ///
-    /// Default: false
-    #[allow(dead_code)]
-    pub match_all_digits: bool,
 
     /// Threshold below which derivative is considered degenerate in Newton-Raphson.
     ///
@@ -1022,10 +1029,8 @@ impl Default for SearchConfig {
             rhs_excluded_symbols: None,
             show_newton: false,
             show_match_checks: false,
-            show_pruned_arith: false,
             show_pruned_range: false,
             show_db_adds: false,
-            match_all_digits: false,
             derivative_margin: DEGENERATE_DERIVATIVE,
             ranking_mode: RankingMode::Complexity,
             lhs_value_dedup: false,
@@ -1697,13 +1702,9 @@ pub fn search_streaming_with_config(
                     } else {
                         (initial_guess, x_delta)
                     };
-                    let Some(exact) = match_exactness(
-                        lhs.value,
-                        rhs.value,
-                        lhs.derivative,
-                        x_value,
-                        search_config.target,
-                    ) else {
+                    let Some(exact) =
+                        label_exact(lhs, rhs, x_value, search_config.target, &context.eval)
+                    else {
                         continue;
                     };
 
@@ -1826,13 +1827,8 @@ pub fn search_one_sided_with_stats_and_config(
             }
 
             let error = rhs.value - config.target;
-            let Some(is_exact) = match_exactness(
-                lhs.value,
-                rhs.value,
-                lhs.derivative,
-                rhs.value,
-                config.target,
-            ) else {
+            let Some(is_exact) = label_exact(&lhs, rhs, rhs.value, config.target, &context.eval)
+            else {
                 continue;
             };
             if !pool.would_accept(error.abs(), is_exact) || !config.filters.allows_error(error) {

@@ -5,14 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] - 2026-11-12
 
 Release decision: these changes target **3.0.0**, not a 2.x release, because
 `ExpressionConstraintOptions` gains a required field and the stop contract
-changes observable ordering. Package metadata is staged at 3.0.0; this batch
-remains unpublished until the coordinated release in `RELEASING.md`.
+changes observable ordering. Package metadata is 3.0.0. Publishing still
+follows `RELEASING.md`; this heading is the version note, not a tag.
 
 ### Fixed
+- Exact labels no longer trust an f64 residual when a rounded reciprocal or trigonometric argument manufactured it. Candidates that agree in f64 are re-evaluated in double-double at the typed target and stay exact only when the real sides still agree to eight ulps. This drops `cospi(1/x) = cospi(1/8)` at `±1e-15`, `cospi(pi+x) = -cospi(1/8)` at `1e15`, and `e^sinpi(1/x) = 1` at `1e-12`. `2*x = 5`, `x = pi`, `x = sqrt(2)`, integer `sinpi`, and `x = ln(1)` stay exact.
+- Parity ranking of exact rows is complexity-first, and each right-hand value keeps its simplest spelling. The website call `search(target, {level: 3, maxMatches: 50, rankingMode: 'parity'})` therefore leads with plain equations such as `2*x = 5`, `x = 5/2`, `x = pi`, and `x = 0`.
+- Subnormal targets are no longer emptied by the near-zero left-hand prune, which used to drop `x` itself.
+- `--stop-below` rejects NaN, infinities, and negative thresholds.
+- Release builds use Rust 1.99.1, matching CI. The Windows archive is `ries-rs-windows-x86_64.zip`.
 - Reject PSLQ with match-all-digits instead of silently substituting residual tolerance for a root-distance contract.
 - Validate decimal targets before PSLQ/special-mode dispatch.
 - Preserve original target spelling in manifests and replay arguments; exact replay now requires identical root/error bits, with explicit opt-in tolerance.

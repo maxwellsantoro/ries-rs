@@ -167,7 +167,12 @@ fn two_representatives_preserve_exact_rank_one_but_can_drop_top_k_equations() {
         assert_ne!(full, reduced, "{ranking_mode:?}");
         winners.push(full[0].clone());
     }
-    assert_ne!(winners[0], winners[1]);
+    // Exact rows use complexity first under both rankings, so rank one is the
+    // same simplest equation. Later rows can still differ, which is what
+    // `full != reduced` records above.
+    assert_eq!(winners[0], winners[1]);
+    assert_eq!(winners[0].0, "x");
+    assert_eq!(winners[0].1, "1");
 }
 
 #[test]
@@ -185,7 +190,9 @@ fn keeping_the_parity_preferred_rhs_recovers_rank_one_in_the_one_sided_fixture()
     let full = exhaustive(&lhs, &rhs, &config);
     let reduced = exhaustive(&lhs, &representatives(&rhs, |e| e.value.to_bits()), &config);
     let (current, _) = search_one_sided_with_stats_and_config(&gen, &config);
-    assert_eq!(full[0].rhs.expr.to_postfix(), "12+");
+    // Exact parity is complexity-first and the representative is the simplest
+    // spelling, so rank one is `x = 3` rather than `x = 1+2`.
+    assert_eq!(full[0].rhs.expr.to_postfix(), "3");
     assert_eq!(equations(&full), equations(&reduced));
     assert_eq!(equations(&current), equations(&full));
 }
@@ -209,7 +216,7 @@ fn search_modes_choose_the_best_admissible_rhs_representative() {
     let gen = tiny_grammar();
     for (ranking_mode, excluded, expected) in [
         (RankingMode::Complexity, None, "3"),
-        (RankingMode::Parity, None, "12+"),
+        (RankingMode::Parity, None, "3"),
         (RankingMode::Complexity, Some(Three), "12+"),
         (RankingMode::Parity, Some(Add), "3"),
     ] {

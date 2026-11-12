@@ -65,6 +65,9 @@ impl MatchSummary {
         table: Option<&crate::symbol_table::SymbolTable>,
     ) -> Self {
         let format = |expr: &crate::expr::Expression| {
+            if crate::report::exact_zero_constant(expr, context.trig_argument_scale) {
+                return "0".to_owned();
+            }
             expr.try_to_infix_with_context(table, context.trig_argument_scale)
                 .unwrap_or_else(|_| expr.to_postfix())
         };

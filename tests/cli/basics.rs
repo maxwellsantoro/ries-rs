@@ -438,12 +438,10 @@ fn test_json_deterministic_golden_output_order_for_complexity_ranking_nonclassic
 }
 
 #[test]
-fn test_parity_ranking_keeps_higher_complexity_exact_matches() {
-    // Each search first finds x = 2 at complexity 28.
-    for (lhs_symbols, rhs_symbols, expected_lhs, expected_rhs) in [
-        ("1x+", "23", "1x+", "3"), // LHS alone exceeds the initial ceiling.
-        ("xr", "2r", "xr", "2r"),  // Only the combined equation exceeds it.
-    ] {
+fn test_parity_ranking_leads_with_the_simplest_exact_match() {
+    // Exact parity rows are complexity-first, so a one-row page keeps x = 2
+    // rather than a denser exact rewrite of the same root.
+    for (lhs_symbols, rhs_symbols) in [("1x+", "23"), ("xr", "2r")] {
         let (stdout, _) = run_ries(&[
             "2",
             "-l0",
@@ -460,10 +458,32 @@ fn test_parity_ranking_keeps_higher_complexity_exact_matches() {
         ]);
         let parsed: Value = serde_json::from_str(&stdout).expect("valid parity JSON");
         let best = &parsed["results"][0];
-        assert_eq!(best["exact"], true);
-        assert_eq!(best["lhs_postfix"], expected_lhs, "{best}");
-        assert_eq!(best["rhs_postfix"], expected_rhs, "{best}");
-        assert!(best["complexity"].as_u64().unwrap() > 28, "{best}");
+        assert_eq!(best["exact"], true, "{best}");
+        assert_eq!(best["lhs_postfix"], "x", "{best}");
+        assert_eq!(best["rhs_postfix"], "2", "{best}");
+    }
+}
+
+#[test]
+fn stop_below_rejects_non_finite_thresholds() {
+    for bad in ["nan", "NaN", "inf", "+inf", "-inf", "infinity", "-1"] {
+        let output = run_ries_raw(&[
+            "2.5",
+            &format!("--stop-below={bad}"),
+            "--report",
+            "false",
+            "-n",
+            "1",
+        ]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "accepted --stop-below={bad}\n{stderr}"
+        );
+        assert!(
+            stderr.contains("stop-below"),
+            "--stop-below={bad} stderr was {stderr}"
+        );
     }
 }
 

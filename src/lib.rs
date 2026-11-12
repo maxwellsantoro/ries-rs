@@ -86,6 +86,7 @@
 //! - [`udf`] - User-defined functions
 
 pub mod eval;
+mod exact_cert;
 pub mod expr;
 mod fast_match;
 pub mod gen;

@@ -13,7 +13,9 @@ pip install ries-rs
 
 Published wheels use CPython's stable ABI (`abi3`) with a Python 3.9 minimum,
 so one wheel per supported operating-system/architecture target works across
-Python 3.9 and newer.
+Python 3.9 and newer. Classifiers list 3.9 through 3.14, the versions the
+abi3 wheel is built to load. Release CI builds that wheel on 3.9 and tests
+the bindings on 3.11.
 
 Local development build:
 

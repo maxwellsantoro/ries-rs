@@ -635,8 +635,7 @@ fn match_one_lhs(
             (config.target + x_delta, x_delta)
         };
 
-        let Some(exact) =
-            super::match_exactness(lhs.value, rhs.value, lhs.derivative, x_value, config.target)
+        let Some(exact) = super::label_exact(lhs, rhs, x_value, config.target, &context.eval)
         else {
             continue;
         };
