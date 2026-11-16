@@ -34,20 +34,51 @@ Live demo: [maxwellsantoro.com/projects/ries-rs/app/](https://maxwellsantoro.com
 
 ![RIES-RS web UI](docs/assets/web-ui.png)
 
+## What’s new in v3.0.0
+
+- **Precision-aware discovery:** preserves your decimal input and prioritizes the
+  simplest equation that explains its precision. For `1.41421356`, discovery
+  selects `x = sqrt(2)` and retains `x^2 = 2` as supporting evidence.
+- **One workflow across interfaces:** Rust, CLI, Python, and WASM return
+  structured hypotheses, supporting equations, resolved settings, and explicit
+  verification statuses. Existing raw `search()` APIs remain available.
+- **More reliable search:** fixes missed expressions, stopping order, impossible
+  composed-trig roots, decimal-boundary handling, and symbol-cost arithmetic.
+- **Better browser results and exports:** results stay attached to their
+  completed search; mathematical rendering and CAS exports are corrected.
+- **Independent checks:** supported polynomial equations can receive exact
+  rational root bounds, with qualification tools and full release CI.
+
+See the [v3.0.0 release notes](docs/releases/v3.0.0.md) for details and Rust API
+migration guidance, or try the [discovery workflow](docs/DISCOVERY_WORKFLOW.md).
+
+## Benefits over original RIES
+
+[Robert Munafo’s original RIES](https://mrob.com/pub/ries/) established the core
+equation-search model, including profiles, symbol customization, and restricted
+mathematical classes. `ries-rs` builds on that foundation with a broader toolkit:
+
+| Benefit | What you gain |
+| --- | --- |
+| Work across environments | CLI, Rust library, Python bindings, and browser/Node WASM packages powered by one engine. |
+| Respect decimal precision | Discovery prioritizes concise explanations consistent with the digits you supplied. |
+| Reproduce research | Deterministic ordering, structured JSON, run manifests, and exact-bit replay checks. |
+| Connect analysis tools | Structured hypotheses and supporting equations, plus LaTeX, SymPy, and Mathematica exports. |
+| Choose execution strategies | Parallel generation, parallel turbo refinement, and streaming options for larger searches. |
+| Inspect numerical evidence | Optional high-precision reevaluation, explicit unavailable-check statuses, and independent root certificates for a restricted polynomial grammar. |
+| Integrate and distribute | Memory-safe Rust, MIT licensing, regression-tested APIs, cross-platform CI, prebuilt executables, and Python wheels. |
+
+Historical ordering can differ, and speed depends on the workload. Numerical
+matches suggest conjectures; they do not establish symbolic identities. See
+[compatibility status](docs/PARITY_STATUS.md) and the
+[search model](docs/SEARCH_MODEL.md) for the current contracts.
+
 ## Who It's For
 
 - Researchers who want reproducible constant-recognition runs with structured output and run manifests
 - Programmers who want equation search embedded in Rust, Python, or browser workflows
 - People comparing modern behavior against historical RIES baselines with explicit parity notes
 - Educators and demo authors who want the same engine behind a CLI, Python module, and live browser demo
-
-## Why Use `ries-rs`
-
-- Rust implementation with a cleaner architecture and broad regression coverage
-- Deterministic mode for reproducible output ordering
-- Structured JSON and manifests for automation and research workflows
-- Browser and library integrations in addition to the CLI
-- Public benchmark artifacts and explicit parity tracking against older versions
 
 ## Install
 
