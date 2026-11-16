@@ -19,26 +19,21 @@ or publishing.
 
 ## Maintainer Checklist
 
-### Preflight (Local)
+### Candidate preparation
 
-Before tagging a release:
+1. Update the release metadata below and run
+   `python3 scripts/check_release_integrity.py` (Python 3.11+; use
+   `uv run --no-project --with tomli python3 scripts/check_release_integrity.py`
+   on older Python).
+2. Finish the affected integration checks from
+   [VALIDATION.md](docs/VALIDATION.md), then commit the release-ready source.
+3. Validate that immutable candidate using the full release gate in
+   [VALIDATION.md](docs/VALIDATION.md) and the consumer procedure below. Retain
+   commit/tree-bound receipts and inspect hosted CI before tagging.
 
-1. Run the automated integrity preflight:
-   - `uv run --no-project --with tomli python3 scripts/check_release_integrity.py`
-2. Run formatting and lint checks:
-   - `cargo fmt --all -- --check`
-   - `cargo clippy --all-targets --locked -- -D warnings`
-   - `cargo clippy --all-targets --no-default-features --locked -- -D warnings`
-   - `cargo clippy --all-targets --features highprec --locked -- -D warnings`
-3. Run test checks you expect CI to enforce:
-   - `cargo test --tests --locked`
-   - `cargo check --manifest-path ries-py/Cargo.toml --locked`
-   - `cargo build --features wasm --locked`
-4. Sanity-check packaging:
-   - `cargo package --allow-dirty --locked`
-   - `cd ries-py && maturin sdist --out dist-check`
-5. Review pending changes:
-   - `git status --short`
+Workers should not repeat the whole release matrix while implementing packets.
+The coordinator owns the final full gate; focused development receipts help
+iteration but do not replace clean-candidate release evidence.
 
 The integrity check covers the versioned release metadata surfaces that have to
 move together:
@@ -57,7 +52,9 @@ move together:
 - The release workflow calls the full reusable CI workflow at the tagged commit. Every artifact build depends on that successful run through `validate-tag`; publication cannot bypass it. CI includes built browser smoke tests and retained matcher/historical qualification evidence.
 - Before tagging, run `python3 scripts/qualify_search.py --output output/qualification --repeats 3` with a release binary, inspect the missing-equation and certificate results, and follow [QUALIFICATION.md](docs/QUALIFICATION.md). A local dirty-tree baseline is not release qualification.
 - Release automation is tag-driven via `push` tags matching `v*` in `.github/workflows/release.yml`.
-- CI coverage for release-related surfaces is defined in `.github/workflows/ci.yml` (release integrity, Rust checks/tests, WASM tests, Python bindings crate check).
+- [ci.yml](.github/workflows/ci.yml) selects affected lanes on pull requests and
+  runs the full gate on main-branch pushes, manual runs, and reusable release
+  calls. A PR's intentionally skipped lanes are not release qualification.
 - The historical root-accuracy smoke job downloads and verifies the pinned original RIES source; download or checksum failure fails CI. It checks root accuracy, not expression or ranking parity.
 - GitHub release publishing now assumes both registry publishing paths are configured:
   - crates.io via repository secret `CARGO_REGISTRY_TOKEN`
@@ -133,11 +130,10 @@ Suggested smoke checks (one per artifact surface):
 - WASM (Node/package sanity):
   - `tar -tzf ries-rs-wasm.tar.gz | head`
   - `npm run test:web:smoke` (from a clean checkout with build prerequisites installed), or a minimal Node import check against `pkg-node/`
-- Python wheel (inside a temporary venv):
-  - `python -m venv .venv-release-check`
-  - `. .venv-release-check/bin/activate`
-  - `pip install <wheel-file.whl>`
-  - `python -c "import ries_rs; print(len(ries_rs.search(3.14159)))"`
+- Python wheel (inside an isolated environment managed by `uv`):
+  - `uv venv .venv-release-check`
+  - `uv pip install --python .venv-release-check/bin/python <wheel-file.whl>`
+  - `.venv-release-check/bin/python -c 'import ries_rs; print(len(ries_rs.search(3.14159)))'`
 
 ### Website Handoff
 

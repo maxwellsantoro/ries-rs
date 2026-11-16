@@ -1529,12 +1529,12 @@ mod tests {
     fn test_format_of_solved_root_follows_output_dialect() {
         let solved = solve_for_x_at(&expr("x2^"), &expr("4"), -2.0).expect("even root");
         assert!(
-            solved.to_infix_sympy().contains("**"),
+            solved.to_infix_sympy().contains("real_root("),
             "sympy: {}",
             solved.to_infix_sympy()
         );
         assert!(
-            solved.to_infix_mathematica().contains("^("),
+            solved.to_infix_mathematica().contains("Surd["),
             "mathematica: {}",
             solved.to_infix_mathematica()
         );

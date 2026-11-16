@@ -1,44 +1,47 @@
-# Documentation Map
+# Documentation map
 
-This repository keeps current reference documentation separate from historical
-implementation notes.
+Read the smallest set that answers the task. Code and regression tests define
+current runtime behavior; the roadmap records delivered packets, acceptance
+criteria, and deferred scope.
 
-## Current Reference
+## Planning and development
 
-- `../README.md`: project overview, install paths, and primary usage examples
-- `ARCHITECTURE.md`: codebase layout, runtime surfaces, and search pipeline
-- `SEARCH_MODEL.md`: formal search behavior, ranking, and determinism contract
-- `COMPLEXITY.md`: symbol weights and complexity rationale
-- `PERFORMANCE.md`: benchmarking policy, artifact sources, and profiling workflow
-- `PARITY_STATUS.md`: current compatibility summary relative to historical RIES baselines
-- `PYTHON_BINDINGS.md`: Python package install, API surface, and troubleshooting
-- `WASM_BINDINGS.md`: JS/WASM package API, build targets, and deployment notes
-- `../web/README.md`: browser UI, static-site bundle, and Playwright smoke flow
-- `../tests/README.md`: test suite layout and test commands
-- `../RELEASING.md`: maintainer release checklist and artifact verification
-- `benchmarks/`: reproducible benchmark reports and raw benchmark artifacts
-- `releases/`: versioned release notes used for GitHub releases
+- [ROADMAP.md](ROADMAP.md): delivery status, dependencies, agent packet ownership,
+  acceptance criteria, and execution order
+- [VALIDATION.md](VALIDATION.md): change-scoped checks, evidence reuse, integration,
+  CI policy, and release validation
+- [CONTRIBUTING.md](../CONTRIBUTING.md): setup and contribution workflow
+- [AGENTS.md](../AGENTS.md): short agent entrypoint
+- [Tests](../tests/README.md): suite inventory and historical comparison tooling
+- [RELEASING.md](../RELEASING.md): immutable candidate and publication checklist
 
-## Historical Material
+## Current reference
 
-- `archive/plans/`: selected archived design and implementation plans with ongoing technical value
-- `archive/parity/`: archived parity gap reports and compatibility investigations
-- `archive/artifacts/`: archived generated/debug artifacts
+| Need | Read |
+|------|------|
+| Overview, install, common examples | [README.md](../README.md) |
+| Module ownership and search pipeline | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Search, numerical acceptance, ranking, determinism | [SEARCH_MODEL.md](SEARCH_MODEL.md) |
+| Symbol weights and budgets | [COMPLEXITY.md](COMPLEXITY.md) |
+| Python API and local development | [PYTHON_BINDINGS.md](PYTHON_BINDINGS.md) |
+| JavaScript / WASM API | [WASM_BINDINGS.md](WASM_BINDINGS.md) |
+| Browser build, hosting, smoke flow | [web/README.md](../web/README.md) |
+| Independent correctness evidence and its limits | [QUALIFICATION.md](QUALIFICATION.md) |
+| Decimal discovery, reproducible export, and selected-hypothesis verification | [DISCOVERY_WORKFLOW.md](DISCOVERY_WORKFLOW.md) |
+| Benchmark methodology and profiling | [PERFORMANCE.md](PERFORMANCE.md) |
+| Historical compatibility scope | [PARITY_STATUS.md](PARITY_STATUS.md) |
 
-Archived material is useful for project history, not for current behavior.
+## Versioned evidence and history
 
-## Source-of-Truth Rule
+- [benchmarks/](benchmarks/README.md): dated measurements and raw artifacts;
+  results apply to the recorded source and environment
+- `releases/`: versioned release notes
+- `archive/plans/`: completed or superseded implementation plans
+- `archive/parity/`: earlier compatibility investigations
+- `archive/artifacts/`: retained debug and generated artifacts
+- `../reviews/`: earlier code assessments; findings must be checked against current code
 
-For runtime behavior, trust these in order:
-
-1. `src/`
-2. `tests/`
-3. current public docs (`README.md`, files listed above)
-
-For published install and release surfaces, trust these in order:
-
-1. crates.io for the Rust package (`ries`)
-2. PyPI for the Python package (`ries-rs`)
-3. GitHub Releases for native binaries and WASM artifacts
-
-- [QUALIFICATION.md](QUALIFICATION.md): independent search checks, fixed-corpus evidence, experimental root certificates, and enforced Linux resource limits.
+Archived plans are not an active backlog. Preserve measured evidence and release
+history; fix current guidance in the references above. Published package versions
+are established by crates.io (`ries`), PyPI (`ries-rs`), and GitHub Releases,
+not by an unreleased local checkout.

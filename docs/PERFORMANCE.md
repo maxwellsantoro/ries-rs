@@ -94,6 +94,15 @@ root. It checks the effective matcher and deduplication setting. If the search
 falls back to streaming, lower the level or restrict the symbol set to obtain
 a materialized comparison.
 
+## Iteration and validation
+
+Benchmarks are experiments rather than mandatory checks for every edit. Run them
+when changing a performance-sensitive path or evaluating a measured hypothesis;
+keep before/after runs at identical budgets and on the same machine. Use
+[VALIDATION.md](VALIDATION.md) for correctness-check selection and evidence reuse.
+Unchanged benchmark results remain historical evidence for their recorded source,
+not automatic qualification of a later release.
+
 ## Criterion Benchmarks
 
 Repository microbenchmarks live under `benches/` and use Criterion.

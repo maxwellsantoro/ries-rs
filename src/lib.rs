@@ -6,8 +6,8 @@
 //! A Rust implementation of Robert Munafo's RIES (RILYBOT Inverse Equation Solver).
 //!
 //! Given a numeric target value, RIES searches for algebraic equations
-//! that have the target as a solution. For example, given π, it finds
-//! equations like `x = π`, `x² = 10`, `sin(πx) = 0`, etc.
+//! that have the target as a solution. For example, given √2, it finds
+//! equations like `x² = 2` and `x = sqrt(2)`.
 //!
 //! ## Features
 //!
@@ -85,6 +85,7 @@
 //! - [`thresholds`] - Named threshold constants
 //! - [`udf`] - User-defined functions
 
+pub mod discovery;
 pub mod eval;
 pub mod expr;
 mod fast_match;
@@ -112,7 +113,10 @@ mod wasm;
 
 // WASM re-exports (when feature is enabled)
 #[cfg(feature = "wasm")]
-pub use wasm::{init, list_presets, search as wasm_search, version, SearchOptions, WasmMatch};
+pub use wasm::{
+    discover_wasm as wasm_discover, init, list_presets, search as wasm_search, version,
+    SearchOptions, WasmMatch,
+};
 
 // =============================================================================
 // Type Aliases
@@ -132,6 +136,10 @@ pub type Complexity = u32;
 // =============================================================================
 
 // High-level API
+pub use discovery::{
+    discover, DiscoveryCheck, DiscoveryHypothesis, DiscoveryOptions, DiscoveryRun, DiscoveryStats,
+    DiscoverySymbol, DiscoveryValidation, ResolvedDiscoveryConfig,
+};
 pub use search::search;
 pub use solver::{
     canonical_expression_key, solve_for_x_at, solve_for_x_at_with_context,

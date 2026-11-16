@@ -12,8 +12,8 @@ GitHub releases include a `ries-rs-wasm.tar.gz` artifact containing `pkg`,
 From the repository root:
 
 ```bash
-npm install
-rustup toolchain install nightly
+npm ci
+rustup toolchain install nightly --profile minimal --component rust-src --target wasm32-unknown-unknown
 
 # Browser-friendly package
 npm run build
@@ -30,14 +30,15 @@ npm run build:web:site
 
 The local scripts currently use nightly `wasm-pack` with `-Z build-std`.
 
-For the browser UI and static bundle itself, see `web/README.md`.
+For the browser UI and static bundle itself, see [web/README.md](../web/README.md).
 
 ## Exported Functions
 
 The package exports:
 
 - `init()`
-- `search(target, options?)`
+- `discover(targetLiteral, options?)` — precision-aware hypotheses and complete run evidence
+- `search(target, options?)` — compatibility/raw match objects
 - `listPresets()`
 - `version()`
 
@@ -47,13 +48,19 @@ Threaded builds also re-export `initThreadPool(n)` when built with the
 ## Quick Start
 
 ```javascript
-import init, { search, SearchOptions, listPresets, version } from "ries-rs";
+import init, { discover, search, SearchOptions, listPresets, version } from "ries-rs";
 
 await init();
 
 console.log(version());
 console.log(listPresets());
 
+const run = discover("3.14159265", { level: 3, maxMatches: 3 });
+console.log(run.hypotheses[0].representative.solve_for_x); // x = pi
+console.log(run.config.input_tolerance);
+console.log(JSON.stringify(run)); // preserves the original literal and settings
+
+// Existing raw callers retain their match objects and ordering.
 const results = search(3.141592653589793, {
   level: 3,
   maxMatches: 8,
@@ -67,6 +74,58 @@ console.log(results[0].to_json());
 const options = new SearchOptions().level(1).max_matches(4);
 console.log(search(2, options));
 ```
+
+## `discover(targetLiteral, options?)`
+
+This additive entry point accepts the original decimal as a string and returns a
+plain JSON-compatible object with schema `ries-discovery-v1`. It uses the shared
+Rust discovery policy: prefer simple hypotheses that meet the entered precision,
+retain supporting equations, and safely group recognized duplicate presentations.
+Existing `search()` and `SearchOptions` calls retain their raw behavior.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `level` | integer | `2` | accepted range `0..=5` |
+| `maxMatches` | integer | `8` | hypothesis limit, `1..=1000`; a run can return fewer |
+| `preset` | string or null | null | validated against `listPresets()` |
+| `parallel` | boolean | false | true requires a threaded build with its pool initialized |
+| `verificationBits` | integer or null | null | optional numerical corroboration, at most 4096 bits |
+
+Snake-case aliases `max_matches` and `verification_bits` are accepted. Options
+must be a plain object; unknown fields, duplicate aliases, and invalid types or
+ranges fail rather than being ignored. `null`, `undefined`, and omitted options
+select defaults. Decimal validation rejects nonfinite values, nonzero underflow,
+and rounding loss beyond the original literal's last-place tolerance. Surrounding
+space and trailing zeros are preserved in `target_literal`; this still searches
+using a parsed `f64` target.
+
+The result includes:
+
+- `engine_version`, `target_literal`, and parsed `target`
+- `config`: effective precision tolerance, budgets, grammar/weights, preset
+  constants, selection policy, requested verification, and parallel settings
+- `stats`: effective matcher, candidate/hypothesis counts, and search work
+- `hypotheses`: unique keys, representative match summaries, other retained
+  `supporting_equations`, `within_input_precision`, and validation statuses
+
+Validation distinguishes floating-point search, optional higher-precision
+numerical corroboration, and an independent polynomial root certificate. The
+standard WASM build cannot provide GMP/MPFR corroboration; a requested unsupported
+check reports `unavailable` with a reason. Precision requests of 53 bits or less
+also report unavailable. No numerical status is a proof about the intended
+constant, and discovery does not compute independent polynomial certificates.
+
+Save the full JSON run to use the repository's independent checker:
+
+```bash
+python3 scripts/verify_discovery.py run.json --output evidence.json
+python3 scripts/verify_discovery.py evidence.json --verify
+```
+
+The checker supports a conservative polynomial grammar, can use a retained
+supporting equation, and reports unavailable cases explicitly. Browser selected
+exports additionally wrap the full run with schema `ries-discovery-selection-v1`
+and a zero-based `hypothesis_index`; the checker accepts that form too.
 
 ## `search(target, options?)`
 
@@ -108,14 +167,19 @@ Notes:
   spelling cannot be reconstructed. With no `targetText`, match-all-digits uses
   the shortest round-trip spelling of that numeric value.
 - `target` must be finite; `NaN` and `Infinity` return an error.
+- Results use raw match ordering, with error ahead of complexity for inexact
+  matches. Complexity ranking does not apply the CLI report's precision-aware
+  preference for simpler equations within the entered precision. Use `discover()`
+  for precision-aware hypothesis selection and run evidence.
 
 ### API vs CLI level scale
 
 The WASM `level` option uses `search::level_to_complexity`, not the CLI
 `-l/--level` mapping. The API budget is `40 + 2*L` on each side. The CLI uses
 `35 + 10*L` on each side, so the two scales meet near the bottom and then the
-CLI pulls ahead. Level 5 on the API stays inside a few seconds in the browser;
-CLI level 3 does not.
+CLI pulls ahead. The smaller API steps limit interactive search growth, but
+runtime still depends on the target, grammar, device, and build; no fixed browser
+latency is guaranteed.
 
 | Level | API `(max_lhs, max_rhs)` | CLI `(max_lhs, max_rhs)` |
 |-------|--------------------------|--------------------------|

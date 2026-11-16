@@ -339,6 +339,42 @@ fn search(
     Ok(py_matches)
 }
 
+/// Discover concise hypotheses using the precision of an original decimal.
+///
+/// Returns a plain JSON-compatible dict containing the original literal,
+/// resolved configuration, actual matcher statistics, and hypotheses with
+/// separate numerical/verification statuses. Existing `search()` continues to
+/// return typed raw matches. Search runs without holding the Python GIL.
+///
+/// A result can contain fewer hypotheses than requested: the cheapest equation
+/// that resolves the input precision bounds the retained search complexity.
+/// Numerical agreement and optional high-precision reevaluation are not proof.
+#[pyfunction]
+#[pyo3(signature = (target_literal, level=2, max_matches=8, preset=None, parallel=false, verification_bits=None))]
+fn discover(
+    py: Python<'_>,
+    target_literal: &str,
+    level: u32,
+    max_matches: usize,
+    preset: Option<&str>,
+    parallel: bool,
+    verification_bits: Option<u32>,
+) -> PyResult<Py<PyAny>> {
+    let options = ries_core::DiscoveryOptions {
+        level,
+        max_matches,
+        preset: preset.map(str::to_owned),
+        parallel,
+        verification_bits,
+    };
+    let run = py
+        .detach(|| ries_core::discover(target_literal, &options))
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let json = serde_json::to_string(&run)
+        .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
+    Ok(py.import("json")?.call_method1("loads", (json,))?.unbind())
+}
+
 /// Get list of available domain presets
 ///
 /// Returns
@@ -387,6 +423,7 @@ fn version() -> &'static str {
 fn ries_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMatch>()?;
     m.add_function(wrap_pyfunction!(search, m)?)?;
+    m.add_function(wrap_pyfunction!(discover, m)?)?;
     m.add_function(wrap_pyfunction!(list_presets, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     Ok(())

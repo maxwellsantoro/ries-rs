@@ -383,3 +383,48 @@ fn stop_threshold_winner_beats_a_cheaper_nonqualifying_constant() {
         assert!(data["results"][0]["error"].as_f64().unwrap() < 1e-6);
     }
 }
+
+#[test]
+fn zero_weight_boundary_search_keeps_the_exact_equation_in_every_mode() {
+    for mode in ["--deterministic", "--parallel", "--streaming", "--turbo"] {
+        let (stdout, _) = run_ries(&[
+            "-l0",
+            "--report=false",
+            mode,
+            "-Sxn2",
+            "--S-RHS=2",
+            "--symbol-weights=:n:0 :x:35",
+            "--json",
+            "--",
+            "-2",
+        ]);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let results = json["results"].as_array().unwrap();
+        assert!(
+            results
+                .iter()
+                .any(|m| m["lhs_postfix"] == "xn" && m["rhs_postfix"] == "2" && m["exact"] == true),
+            "{mode}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn full_u32_symbol_weights_are_safe_in_cli_generation() {
+    for mode in ["--deterministic", "--parallel", "--streaming", "--turbo"] {
+        let (stdout, _) = run_ries(&[
+            "2.5",
+            "-l0",
+            "--report=false",
+            mode,
+            "-S1+",
+            "--symbol-weights=:1:4294967295",
+            "--json",
+        ]);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(
+            json["results"].as_array().unwrap().is_empty(),
+            "{mode}: {stdout}"
+        );
+    }
+}

@@ -52,6 +52,12 @@ fn main() {
         .and_then(|value| value.to_str());
     let args = Args::from_arg_matches(&arg_matches).unwrap_or_else(|err| err.exit());
 
+    if args.discover {
+        cli::discovery::run(&args, &arg_matches, explicit_target_literal)
+            .unwrap_or_else(|error| exit_with(error));
+        return;
+    }
+
     if args.list_options {
         cli::print_option_list();
         return;

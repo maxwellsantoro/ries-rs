@@ -1,79 +1,72 @@
 # AGENTS.md
 
-Guidance for AI coding agents working in `ries-rs`. Humans should read
-`README.md` and `CONTRIBUTING.md`; this file is the fast-path orientation for
-agents.
+`ries-rs` searches for compact equations near a supplied numerical target. One
+Rust engine powers the CLI (`ries-rs`, crate `ries`), Rust library, Python
+(`ries_rs`), and WASM/browser interfaces. Read only the references needed for the
+task; start with the relevant packet in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## What this project is
+## Authority and orientation
 
-A Rust reimplementation of Robert Munafo's RIES inverse equation solver: given a
-target number, it searches for compact algebraic equations that have that number
-as a solution. The same engine ships through four surfaces:
+- Runtime: `src/`; regression contracts: `tests/`. When docs disagree with them,
+  inspect the discrepancy and correct the docs rather than assuming new behavior.
+- Current behavior: [docs/SEARCH_MODEL.md](docs/SEARCH_MODEL.md); code map:
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); other docs:
+  [docs/README.md](docs/README.md).
+- Planned work and dependencies: [docs/ROADMAP.md](docs/ROADMAP.md). Planned APIs
+  and acceptance criteria are not implemented contracts.
+- Check selection and reuse: [docs/VALIDATION.md](docs/VALIDATION.md). Release
+  requirements: [RELEASING.md](RELEASING.md).
+- `docs/archive/`, versioned release notes, and benchmark artifacts are historical
+  evidence. Preserve them; do not load them as current instructions. `CLAUDE.md`
+  is a symlink to this file, not a second policy to maintain.
 
-- **Rust CLI** — `src/main.rs` (installed binary `ries-rs`, crate `ries`)
-- **Rust library** — `src/lib.rs`
-- **Python bindings** — `ries-py/` (PyO3, PyPI package `ries-rs`, import `ries_rs`)
-- **WASM + browser UI** — `src/wasm.rs`, `web/`, `package.json`
+## Coordinator and workers
 
-All four feed the same core generation / evaluation / ranking / reporting logic
-in `src/`. See `docs/ARCHITECTURE.md` for the full map and `docs/SEARCH_MODEL.md`
-for the formal search and determinism contract.
+For roadmap implementation, use a coordinator and independent workers with the
+exclusive file ownership and dependency order in the roadmap. Use the project
+[ries-delivery skill](.agents/skills/ries-delivery/SKILL.md) for packet dispatch,
+handoff, and integration. Small single-file tasks do not need a team.
 
-## Source-of-truth rule
+The coordinator records the starting dirty tree, preserves prior work, freezes
+shared interfaces before adapters, and assigns each shared file one owner.
+Workers do not revert another worker's changes or edit outside their ownership
+without coordinating. Report focused test evidence and unresolved limitations;
+the coordinator owns the integrated checks. Reuse existing workers and completed
+exploration rather than asking multiple agents to inspect the same subsystem.
 
-When docs and code disagree, **code and tests win**. `docs/archive/` is
-historical context only — never treat it as current behavior.
+## Validation loop
 
-- `src/` owns runtime behavior
-- `tests/` owns regression and compatibility expectations
-- `README.md` / `docs/` explain the public surfaces
-- `RELEASING.md` is the maintainer release checklist
+Use the change matrix in [docs/VALIDATION.md](docs/VALIDATION.md), not a blanket
+full-suite run. Start with the regression that demonstrates the change; run the
+affected integration checks once after the patch settles. Documentation-only
+changes need cheap doc/integrity checks, not an engine rebuild.
 
-## Verify your changes
+Reuse passing evidence only when all relevant source, test, dependency, feature,
+toolchain, environment, and artifact inputs are unchanged. Include untracked
+inputs in the receipt. A Cargo cache is not a test receipt. Do not run concurrent
+Cargo commands against the same target directory or each agent's full matrix.
+Release candidates still require clean exact-commit CI and fresh installed
+artifacts. Failures, cancellations, timeouts, and unavailable checks are explicit.
 
-Match the CI surfaces relevant to what you touched (full list in
-`CONTRIBUTING.md`). Core Rust loop:
+## Project constraints
 
-```bash
-cargo fmt --all -- --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo nextest run --tests --locked   # or: cargo test
-```
+- Determinism is a public contract: raw ordering lives in `src/pool.rs`, weights
+  in `src/symbol.rs` / `src/symbol_table.rs`. Prefer explicit profiles and
+  `--deterministic` with manifests for reproducible probes.
+- Preserve the original decimal literal. A numerical “exact” match is not a
+  symbolic proof; high-precision reevaluation cannot recover digits lost to f64
+  parsing. Keep root existence, input agreement, and independent evidence distinct.
+- New runtime behavior ships with a meaningful regression. Public changes update
+  the matching reference docs; avoid copying the same contract into every guide.
+- Local Python tooling uses `uv` and `maturin`; use the maintained test helpers.
+  Public pip installation instructions are fine. `highprec` needs GMP/MPFR;
+  browser WASM build scripts need Node and Rust nightly with rust-src/wasm32.
+- Keep shipped PSLQ support scoped. Do not add operators, expand proof claims,
+  change versions, or rewrite release metadata as incidental cleanup.
 
-Feature / binding / packaging surfaces, when relevant:
+## Portfolio metadata
 
-```bash
-cargo clippy --all-targets --no-default-features --locked -- -D warnings
-cargo clippy --all-targets --features highprec --locked -- -D warnings
-cargo build --features wasm --locked
-cargo check --manifest-path ries-py/Cargo.toml --locked
-./scripts/test_ries_py_rust.sh          # Rust-side binding tests
-./scripts/test_ries_py_python.sh -q     # end-to-end Python import/search (uses uv)
-```
-
-CI (`.github/workflows/ci.yml`) is the authoritative gate for release integrity,
-formatting, Clippy across feature sets, both binding test paths, and `cargo nextest`
-on Linux, macOS, and Windows.
-
-## Conventions
-
-1. `highprec` needs system GMP/MPFR (`brew install gmp mpfr` /
-   `apt-get install libgmp-dev libmpfr-dev`); WASM work needs Node.js + Rust
-   nightly.
-2. Python tooling uses `uv` for environments and `maturin` to build the
-   extension — do not introduce ad-hoc `venv`/`pip` flows or `requirements.txt`.
-3. Determinism is part of the contract: canonical ordering lives in
-   `src/pool.rs`, complexity weights in `src/symbol.rs` / `src/symbol_table.rs`.
-   Prefer `--deterministic` (+ `--emit-manifest`) for reproducible runs.
-4. New runtime behavior ships with regression coverage; public-interface changes
-   ship with matching docs updates (see `CONTRIBUTING.md` for the doc map).
-5. The bundled PSLQ mode (`--pslq*`) is a shipped feature, not the project's
-   focus — keep it scoped.
-6. Keep release-surface metadata (versions, packaging docs) in sync; don't change
-   it casually.
-
-## Registry
-
-This project is registered in the portfolio registry as `RIES`
-(`~/projects/registry/project_registry.json`, family `formal-math`). Update the registry
-entry there rather than describing project metadata only in code.
+The registry entry is `RIES` in
+`~/projects/registry/project_registry.json` (family `formal-math`). Update project
+metadata there when it changes; do not substitute repo prose for registry updates.
+Read that repository's guidance before modifying it.

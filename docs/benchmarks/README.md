@@ -8,6 +8,19 @@ This directory contains reproducible benchmark runs and environment metadata use
 - `2026-02-25-level3-baseline.md`: Level-3 non-exact CLI benchmark baseline on Apple M1 (sequential deterministic vs parallel)
 - `2026-02-25-generation-parallel-scaling.md`: Criterion generation-only benchmark showing parallel generation scaling
 
+## Dated qualification evidence
+
+- [November 11 candidate qualification](2026-11-11-review-qualification.md):
+  matcher agreement, bounded correctness evidence, and resource observations for
+  the recorded development candidate
+- [November 11 follow-up review](2026-11-11-followup-review.md): decimal-boundary,
+  adaptive-budget, verification-fallback, and Python artifact checks that
+  supersede the earlier candidate's boundary contracts
+
+These reports retain their original source and environment scope. Use
+[QUALIFICATION.md](../QUALIFICATION.md) for current procedures and
+[VALIDATION.md](../VALIDATION.md) to select checks for a new change.
+
 ## Artifacts
 
 Raw machine/run artifacts are stored in `artifacts/`:

@@ -466,13 +466,65 @@ fn evaluate_decimal_literal_expression(
     })
 }
 
-/// Reject RHS values outside a proven range of the outermost operator.
-/// This is deliberately conservative: unknown ranges impose no restriction.
-/// Residual tolerances must never turn an impossible sine/cosine level into a root.
+/// Reject RHS values outside a proven range of the outer unary composition.
+///
+/// Track signs and absolute-value bounds through square, square root, negation,
+/// and reciprocal. Trig anchors have absolute value at most one; unknown inner
+/// expressions remain unconstrained. Every bound here is exactly 0, 1, or
+/// infinity, avoiding rounded inverse operations at one-ulp range boundaries.
+/// This is a necessary range check, not a proof that an accepted level has a root.
 pub(crate) fn value_in_expression_range(expr: &Expression, value: f64) -> bool {
-    match expr.symbols().last() {
-        Some(Symbol::SinPi | Symbol::CosPi) => (-1.0..=1.0).contains(&value),
-        _ => true,
+    if !value.is_finite() {
+        return false;
+    }
+    let symbols = expr.symbols();
+    let start = symbols
+        .iter()
+        .rposition(|symbol| {
+            !matches!(
+                symbol,
+                Symbol::Neg
+                    | Symbol::Recip
+                    | Symbol::Square
+                    | Symbol::Sqrt
+                    | Symbol::SinPi
+                    | Symbol::CosPi
+            )
+        })
+        .map_or(0, |index| index + 1);
+    if start == symbols.len() {
+        return true;
+    }
+    let (mut negative, mut zero, mut positive) = (true, true, true);
+    let (mut min_abs, mut max_abs) = (0.0_f64, f64::INFINITY);
+    for symbol in &symbols[start..] {
+        match symbol {
+            Symbol::SinPi | Symbol::CosPi => {
+                (negative, zero, positive) = (true, true, true);
+                (min_abs, max_abs) = (0.0, 1.0);
+            }
+            Symbol::Neg => (negative, positive) = (positive, negative),
+            Symbol::Recip => {
+                zero = false;
+                (min_abs, max_abs) = (max_abs.recip(), min_abs.recip());
+            }
+            Symbol::Square => {
+                positive |= negative;
+                negative = false;
+                (min_abs, max_abs) = (min_abs * min_abs, max_abs * max_abs);
+            }
+            Symbol::Sqrt => {
+                negative = false;
+                (min_abs, max_abs) = (min_abs.sqrt(), max_abs.sqrt());
+            }
+            _ => unreachable!("only supported unary operators belong to the suffix"),
+        }
+    }
+    if value == 0.0 {
+        zero
+    } else {
+        let sign_allowed = if value < 0.0 { negative } else { positive };
+        sign_allowed && (min_abs..=max_abs).contains(&value.abs())
     }
 }
 
@@ -1489,6 +1541,61 @@ mod tests {
 
     fn approx_eq(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-10
+    }
+
+    #[test]
+    fn unary_range_rejects_composed_trig_gaps_and_domain_violations() {
+        let above_one = 1.0_f64.next_up();
+        let below_one = 1.0_f64.next_down();
+        for (postfix, rhs) in [
+            ("xCs", above_one),
+            ("xCns", above_one),
+            ("xCss", above_one),
+            ("xCsn", -above_one),
+            ("xCrs", below_one),
+            ("xCnrs", below_one),
+            ("xCsr", below_one),
+            ("xCrsn", -below_one),
+            ("xCrsr", above_one),
+            ("xSs", above_one),
+            ("xSrs", below_one),
+            ("xCsq", above_one),
+            ("xCrsq", below_one),
+            ("xCrsnq", 0.0),
+            ("xCsr", 0.0),
+            ("xCrs", -0.25),
+            ("x2+s", -0.25),
+        ] {
+            let expr = Expression::parse(postfix).unwrap();
+            assert!(
+                !value_in_expression_range(&expr, rhs),
+                "{postfix} cannot take value {rhs}"
+            );
+        }
+    }
+
+    #[test]
+    fn unary_range_keeps_endpoints_interiors_and_unknown_inner_ranges() {
+        for (postfix, levels) in [
+            ("xCs", vec![0.0, 0.25, 1.0_f64.next_down(), 1.0]),
+            ("xCsn", vec![-1.0, -0.25, -0.0]),
+            ("xCrs", vec![1.0, 1.0_f64.next_up(), 2.0, 1e100]),
+            ("xCrsn", vec![-1.0, -1.0_f64.next_up(), -2.0]),
+            ("xCsr", vec![1.0, 1.0_f64.next_up(), 2.0]),
+            ("xCsq", vec![0.0, 0.5, 1.0]),
+            ("xCrsq", vec![1.0, 2.0]),
+            ("x2+", vec![-2.0, 0.0, 2.0]),
+            ("x2+s", vec![0.0, 1.0, 1e100]),
+            ("x2+r", vec![-2.0, 2.0]),
+        ] {
+            let expr = Expression::parse(postfix).unwrap();
+            for rhs in levels {
+                assert!(
+                    value_in_expression_range(&expr, rhs),
+                    "range guard must retain {postfix} = {rhs}"
+                );
+            }
+        }
     }
 
     #[test]

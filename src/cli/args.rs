@@ -17,6 +17,11 @@ use crate::udf;
 #[command(version)]
 #[command(about = "Find algebraic equations given their solution", long_about = None)]
 pub struct Args {
+    /// Precision-aware discovery with a literal-preserving run envelope.
+    /// Uses API levels 0..5; advanced raw-search flags require ordinary search.
+    #[arg(long)]
+    pub discover: bool,
+
     /// Fail on invalid custom definitions, overrides, or ignored configuration
     #[arg(long = "strict-config")]
     pub strict_config: bool,
@@ -685,6 +690,7 @@ pub fn print_option_list() {
         "--canon-reduction",
         "--canon-simplify",
         "--derivative-margin",
+        "--discover",
         "--eval-expression",
         "--explicit-multiply",
         "--find-expression",

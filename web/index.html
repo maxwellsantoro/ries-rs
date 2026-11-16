@@ -31,6 +31,10 @@
       margin: 0.5em 0;
     }
 
+    #completed-run, #status, #results-container details {
+      overflow-wrap: anywhere;
+    }
+
     /* Custom scrollbar - dark theme */
     ::-webkit-scrollbar {
       width: 8px;
@@ -216,7 +220,7 @@
         <div id="quick-constants" class="mb-6 flex flex-wrap gap-2">
           <!-- Constant buttons will be rendered here -->
         </div>
-        <p id="quick-constants-note" class="text-xs text-zinc-600 dark:text-zinc-500 -mt-4 mb-6">
+        <p id="quick-constants-note" class="text-xs text-zinc-600 dark:text-zinc-400 -mt-4 mb-6">
           Built-in constants the solver can represent directly.
         </p>
 
@@ -236,7 +240,7 @@
               value="3"
               class="w-full px-3 py-2 bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
             />
-            <p class="text-xs text-zinc-600 dark:text-zinc-500 mt-1">Higher = more complex equations (0-5)</p>
+            <p class="text-xs text-zinc-600 dark:text-zinc-400 mt-1">Higher = more complex equations (0-5)</p>
           </div>
 
           <!-- Preset -->
@@ -257,7 +261,7 @@
           <!-- Max matches -->
           <div>
             <label for="max-matches" class="block text-sm font-medium text-zinc-700 dark:text-zinc-400 mb-2">
-              Max Matches
+              Result Limit
             </label>
             <input
               type="number"
@@ -265,7 +269,7 @@
               name="max-matches"
               min="1"
               max="1000"
-              value="50"
+              value="8"
               class="w-full px-3 py-2 bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
             />
           </div>
@@ -303,8 +307,9 @@
               name="ranking-mode"
               class="w-full px-3 py-2 bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
             >
-              <option value="parity">Parity (matches original RIES)</option>
-              <option value="complexity">Complexity (simpler first)</option>
+              <option value="discovery">Discovery (entered precision, distinct hypotheses)</option>
+              <option value="complexity">Raw complexity (error, then simplicity)</option>
+              <option value="parity">Raw parity (legacy tie-breaks)</option>
             </select>
           </div>
 
@@ -329,11 +334,11 @@
                 name="match-all-digits"
                 class="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0"
               />
-              <span class="text-sm text-zinc-700 dark:text-zinc-300">Match all digits</span>
+              <span class="text-sm text-zinc-700 dark:text-zinc-300">Match all digits (raw modes)</span>
             </label>
           </div>
           <p id="advanced-support-note" class="text-xs text-zinc-600 dark:text-zinc-400">
-            Web build supports ranking mode and match-all-digits. PSLQ mode is CLI-only.
+            Discovery uses the entered decimal precision. Raw modes expose the original match ordering. PSLQ is CLI-only.
           </p>
         </div>
 
@@ -343,7 +348,7 @@
             type="submit"
             id="search-button"
             disabled
-            class="w-full px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+            class="w-full px-6 py-3 bg-emerald-700 hover:bg-emerald-800 disabled:bg-zinc-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
           >
             <svg id="search-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -387,6 +392,20 @@
         </div>
       </div>
 
+      <p id="completed-run" class="text-sm text-zinc-700 dark:text-zinc-400 mb-2"></p>
+      <p id="pending-settings" class="text-sm text-zinc-700 dark:text-zinc-400 mb-4 hidden" role="status" aria-live="polite"></p>
+      <p id="empty-results" class="text-sm text-zinc-700 dark:text-zinc-400 mb-4 hidden">No equations found for this completed run.</p>
+      <div id="discovery-export" class="mb-4 hidden">
+        <button id="download-run-btn" type="button" class="px-3 py-1.5 text-sm font-medium rounded-lg bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition-colors">Download run JSON</button>
+        <details class="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <summary>Validate a hypothesis</summary>
+          <p>Download this run or use Export on a hypothesis. From a repository checkout, replace run.json with the downloaded filename:</p>
+          <pre class="overflow-x-auto mt-2">python3 scripts/verify_discovery.py run.json --output evidence.json
+python3 scripts/verify_discovery.py evidence.json --verify</pre>
+          <p class="mt-2">The independent checker can bound roots only for its supported polynomial grammar. Other cases report unavailable. Numerical agreement and high-precision corroboration do not prove your intended constant satisfies an equation.</p>
+        </details>
+      </div>
+
       <!-- Card view -->
       <div id="results-container" class="space-y-4">
         <!-- Result cards will be rendered here -->
@@ -418,7 +437,7 @@
 
   <!-- Footer -->
   <footer class="border-t border-zinc-200 dark:border-zinc-800 py-6 mt-8">
-    <div class="max-w-4xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-zinc-600 dark:text-zinc-500">
+    <div class="max-w-4xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-zinc-600 dark:text-zinc-400">
       <p>
         <span id="version">Loading...</span>
       </p>
@@ -453,7 +472,7 @@
     let searchInProgress = false;
     let advancedHintShown = false;
     let currentView = 'cards';   // 'cards' | 'text'
-    let currentMatches = [];     // last search results, for re-rendering on view toggle
+    let completedRun = null;     // immutable request + results, independent of editable controls
     let workerRequestId = 1;
     const workerPending = new Map();
     let workerInitPromise = null;
@@ -465,17 +484,20 @@
     function setStatus(message, kind = 'info') {
       const statusEl = document.getElementById('status');
       statusEl.textContent = message;
-      statusEl.classList.remove('hidden', 'text-emerald-400', 'text-zinc-400', 'text-red-400');
+      statusEl.classList.remove('hidden',
+        'text-emerald-700', 'dark:text-emerald-400',
+        'text-zinc-600', 'dark:text-zinc-400',
+        'text-red-700', 'dark:text-red-400');
 
       switch (kind) {
         case 'success':
-          statusEl.classList.add('text-emerald-400');
+          statusEl.classList.add('text-emerald-700', 'dark:text-emerald-400');
           break;
         case 'error':
-          statusEl.classList.add('text-red-400');
+          statusEl.classList.add('text-red-700', 'dark:text-red-400');
           break;
         default:
-          statusEl.classList.add('text-zinc-400');
+          statusEl.classList.add('text-zinc-600', 'dark:text-zinc-400');
       }
     }
 
@@ -597,9 +619,9 @@
     function toLatex(expr) {
       const fnConversions = [
         { prefix: 'sqrt(',  convert: function(i) { return '\\sqrt{' + toLatex(i) + '}'; } },
-        { prefix: 'sinpi(', convert: function(i) { return '\\sin(\\pi \\cdot ' + toLatex(i) + ')'; } },
-        { prefix: 'cospi(', convert: function(i) { return '\\cos(\\pi \\cdot ' + toLatex(i) + ')'; } },
-        { prefix: 'tanpi(', convert: function(i) { return '\\tan(\\pi \\cdot ' + toLatex(i) + ')'; } },
+        { prefix: 'sinpi(', convert: function(i) { return '\\sin(\\pi \\cdot (' + toLatex(i) + '))'; } },
+        { prefix: 'cospi(', convert: function(i) { return '\\cos(\\pi \\cdot (' + toLatex(i) + '))'; } },
+        { prefix: 'tanpi(', convert: function(i) { return '\\tan(\\pi \\cdot (' + toLatex(i) + '))'; } },
         { prefix: 'ln(',    convert: function(i) { return '\\ln(' + toLatex(i) + ')'; } },
         { prefix: 'W(',     convert: function(i) { return 'W(' + toLatex(i) + ')'; } },
       ];
@@ -775,24 +797,43 @@
     // Text Output Formatting
     // ============================================================
 
-    function formatResults(matches, target, level) {
-      const ver = wasmVersion || 'unknown';
+    function formatResults(run) {
+      const matches = run.matches;
+      const discovery = run.discoveryRun;
+      const settings = discovery ? {
+        mode: 'discovery',
+        level: discovery.config.level,
+        maxMatches: discovery.config.max_matches,
+        preset: discovery.config.preset,
+        inputTolerance: discovery.config.input_tolerance,
+        maxLhsComplexity: discovery.config.max_lhs_complexity,
+        maxRhsComplexity: discovery.config.max_rhs_complexity,
+        selectionPolicy: discovery.config.selection_policy,
+      } : run.options;
       const header =
-        '# RIES-RS v' + ver +
-        ' \u2014 target: ' + target +
-        ' (level ' + level + ', ' + matches.length + ' result' +
+        '# RIES-RS v' + run.version +
+        ' \u2014 target: ' + run.targetLiteral +
+        ' (level ' + run.options.level + ', ' + matches.length + ' result' +
         (matches.length !== 1 ? 's' : '') + ')';
 
       const EQ_WIDTH = 26; // fixed column width for the equation field
 
-      var lines = matches.map(function(m) {
+      var lines = matches.map(function(m, index) {
         var eq = (m.solve_for_x || (m.lhs + ' = ' + m.rhs));
         var padded = eq.length < EQ_WIDTH ? eq + ' '.repeat(EQ_WIDTH - eq.length) : eq;
-        return padded + '\terror=' + m.error.toExponential(2) +
+        let line = padded + '\terror=' + m.error.toExponential(2) +
                '\tcomplexity=' + m.complexity;
+        if (discovery) {
+          const hypothesis = discovery.hypotheses[index];
+          line += '\n# Entered precision: ' + (hypothesis.within_input_precision ? 'met' : 'not met') +
+            '; supporting equations: ' + hypothesis.supporting_equations.length +
+            '; high precision: ' + hypothesis.validation.high_precision.status +
+            '; polynomial certificate: ' + hypothesis.validation.polynomial_certificate.status;
+        }
+        return line;
       });
 
-      return [header].concat(lines).join('\n');
+      return [header, '# Search settings: ' + JSON.stringify(settings)].concat(lines).join('\n');
     }
 
     // ============================================================
@@ -993,6 +1034,17 @@
       return wasmModule.search(targetValue, searchConfig);
     }
 
+    async function runDiscovery(targetLiteral, options) {
+      if (wasmRuntime === 'worker') {
+        if (!wasmWorker) {
+          await initWorkerRuntime();
+          setWorkerStatus({ type: 'ready', workers: workerCount });
+        }
+        return postWorkerRequest('discover', { targetLiteral, options });
+      }
+      return wasmModule.discover(targetLiteral, options);
+    }
+
     async function initWasm() {
       setWorkerStatus({ type: 'loading', message: 'Loading WASM module...' });
 
@@ -1082,6 +1134,7 @@
           targetInput.value = constant.value.toString();
           targetInput.focus();
           updateURL();
+          updatePendingSettings();
         });
 
         container.appendChild(btn);
@@ -1141,6 +1194,42 @@
       };
     }
 
+    function freezeSnapshot(value) {
+      if (value && typeof value === 'object') {
+        Object.values(value).forEach(freezeSnapshot);
+        Object.freeze(value);
+      }
+      return value;
+    }
+
+    function updatePendingSettings() {
+      const note = document.getElementById('pending-settings');
+      const changed = completedRun && (
+        document.getElementById('target').value.trim() !== completedRun.targetLiteral ||
+        JSON.stringify(getSearchOptions()) !== JSON.stringify(completedRun.options)
+      );
+      note.textContent = changed
+        ? 'Settings changed. Find Equations will run the edited settings; these results and exports still belong to the completed run.'
+        : '';
+      note.classList.toggle('hidden', !changed);
+    }
+
+    function completeRun(request, matches, discoveryRun = null) {
+      // WASM objects expose getters, while worker responses are plain objects.
+      // Copy either representation before retaining it as a completed result.
+      const snapshots = Array.from(matches || [], function(match) {
+        const plain = typeof match.to_json === 'function' ? match.to_json() : match;
+        return structuredClone(plain);
+      });
+      completedRun = freezeSnapshot({
+        ...request,
+        version: discoveryRun ? discoveryRun.engine_version : request.version,
+        matches: snapshots,
+        discoveryRun: discoveryRun ? structuredClone(discoveryRun) : null,
+      });
+      renderResults(completedRun);
+    }
+
     function parseTarget(target) {
       const text = target.trim();
       if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(text)) return null;
@@ -1158,6 +1247,14 @@
         return;
       }
 
+      // Capture all request inputs before awaiting the worker. Controls stay
+      // editable while it runs, but cannot change this request or its exports.
+      const request = freezeSnapshot({
+        targetLiteral: target.trim(),
+        targetValue: targetValue,
+        options: getSearchOptions(),
+        version: wasmVersion,
+      });
       searchInProgress = true;
       const button = document.getElementById('search-button');
       const searchIcon = document.getElementById('search-icon');
@@ -1169,17 +1266,18 @@
       searchIcon.classList.add('hidden');
       spinnerIcon.classList.remove('hidden');
       buttonText.textContent = 'Searching...';
-      setStatus('Searching for equations...', 'info');
+      setStatus('Searching for equations for ' + request.targetLiteral + '...' +
+        (completedRun ? ' The last completed run remains below.' : ''), 'info');
 
       try {
-        const options = getSearchOptions();
+        const options = request.options;
 
         // Build search config object (target is passed separately, not in config)
         // Web build supports rankingMode and matchAllDigits in addition to the base search options.
         const searchConfig = {
           level: options.level,
           maxMatches: options.maxMatches,
-          targetText: target.trim(),
+          targetText: request.targetLiteral,
         };
 
         // Only add preset if it's not empty
@@ -1193,21 +1291,39 @@
           searchConfig.matchAllDigits = true;
         }
 
-        // Perform the search (target is first argument, config is optional second)
-        const matches = await runSearch(targetValue, searchConfig);
-
-        // Render results
-        if (matches && matches.length > 0) {
-          renderResults(matches);
-          setStatus('Found ' + matches.length + ' equation' + (matches.length !== 1 ? 's' : ''), 'success');
+        let matches;
+        let discoveryRun = null;
+        if (options.rankingMode === 'discovery') {
+          discoveryRun = await runDiscovery(request.targetLiteral, {
+            level: options.level,
+            maxMatches: options.maxMatches,
+            preset: options.preset || null,
+            parallel: isThreaded,
+          });
+          if (discoveryRun.schema !== 'ries-discovery-v1' ||
+              discoveryRun.target_literal !== request.targetLiteral) {
+            throw new Error('Discovery response does not match the requested run');
+          }
+          matches = discoveryRun.hypotheses.map(hypothesis => hypothesis.representative);
         } else {
-          document.getElementById('results-section').classList.add('hidden');
+          matches = await runSearch(targetValue, searchConfig);
+        }
+
+        // An empty successful search is also a completed run. Replace old
+        // results so a previous nonempty run cannot masquerade as this one.
+        completeRun(request, matches, discoveryRun);
+        if (matches && matches.length > 0) {
+          const count = discoveryRun
+            ? (matches.length === 1 ? '1 hypothesis' : matches.length + ' hypotheses')
+            : matches.length + ' equation' + (matches.length === 1 ? '' : 's');
+          setStatus('Found ' + count, 'success');
+        } else {
           setStatus('No equations found. Try a higher search level.', 'info');
         }
       } catch (err) {
         console.error('Search error:', err);
-        setStatus('Search failed: ' + formatError(err), 'error');
-        document.getElementById('results-section').classList.add('hidden');
+        setStatus('Search failed: ' + formatError(err) +
+          (completedRun ? ' The last completed run is still shown below.' : ''), 'error');
       } finally {
         // Reset UI
         button.disabled = false;
@@ -1215,6 +1331,7 @@
         spinnerIcon.classList.add('hidden');
         buttonText.textContent = 'Find Equations';
         searchInProgress = false;
+        updatePendingSettings();
       }
     }
 
@@ -1242,14 +1359,28 @@
     // Results Rendering (Task 11)
     // ============================================================
 
-    function renderResults(matches) {
-      currentMatches = matches;
+    function renderResults(run) {
+      const matches = run.matches;
 
       const container = document.getElementById('results-container');
       const section = document.getElementById('results-section');
 
       container.textContent = '';
       section.classList.remove('hidden');
+      document.getElementById('completed-run').textContent =
+        'Completed run: target ' + run.targetLiteral + ', level ' + run.options.level +
+        ', preset ' + (run.options.preset || 'General') + ', ranking ' + run.options.rankingMode +
+        ', max matches ' + run.options.maxMatches +
+        (run.discoveryRun
+          ? ', entered precision ±' + run.discoveryRun.config.input_tolerance + '.'
+          : ', match all digits ' + (run.options.matchAllDigits ? 'on' : 'off') + '.');
+      document.getElementById('empty-results').classList.toggle('hidden', matches.length !== 0);
+      document.getElementById('discovery-export').classList.toggle('hidden', !run.discoveryRun);
+      document.getElementById('download-run-btn').onclick = function() {
+        downloadFile('ries-rs-' + safeTargetName(run.targetLiteral) + '-run.json',
+          JSON.stringify(run.discoveryRun, null, 2), 'application/json');
+      };
+      updatePendingSettings();
 
       matches.forEach(function(match, index) {
         const card = document.createElement('div');
@@ -1295,7 +1426,7 @@
         // Complexity info
         if (match.complexity !== undefined) {
           const complexityDiv = document.createElement('div');
-          complexityDiv.className = 'text-zinc-600 dark:text-zinc-500';
+          complexityDiv.className = 'text-zinc-600 dark:text-zinc-400';
           complexityDiv.textContent = 'Complexity: ' + match.complexity;
           metaRow.appendChild(complexityDiv);
         }
@@ -1303,12 +1434,46 @@
         // Metrics (depth/ops)
         if (match.tree_depth !== undefined) {
           const metricsDiv = document.createElement('div');
-          metricsDiv.className = 'text-zinc-600 dark:text-zinc-500 text-xs mt-0.5';
+          metricsDiv.className = 'text-zinc-600 dark:text-zinc-400 text-xs mt-0.5';
           metricsDiv.textContent = 'depth: ' + match.tree_depth + ', ops: ' + match.operator_count;
           metaRow.appendChild(metricsDiv);
         }
         
         leftDiv.appendChild(metaRow);
+        if (run.discoveryRun) {
+          const hypothesis = run.discoveryRun.hypotheses[index];
+          const precision = document.createElement('p');
+          precision.className = 'input-precision text-sm text-zinc-700 dark:text-zinc-300 mt-2';
+          precision.textContent = hypothesis.within_input_precision
+            ? 'Within entered precision (±' + run.discoveryRun.config.input_tolerance + ').'
+            : 'Outside entered precision; this is a looser approximation.';
+          leftDiv.appendChild(precision);
+
+          const evidence = document.createElement('details');
+          evidence.className = 'hypothesis-evidence mt-2 text-sm text-zinc-700 dark:text-zinc-300';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Evidence and supporting equations (' +
+            (hypothesis.supporting_equations.length + 1) + ' retained)';
+          evidence.appendChild(summary);
+          [
+            ['Numerical search', hypothesis.validation.numerical],
+            ['High precision', hypothesis.validation.high_precision],
+            ['Polynomial root bound', hypothesis.validation.polynomial_certificate],
+          ].forEach(function(entry) {
+            const line = document.createElement('p');
+            line.className = 'mt-2';
+            line.textContent = entry[0] + ': ' + entry[1].status + '. ' + entry[1].reason;
+            evidence.appendChild(line);
+          });
+          if (hypothesis.supporting_equations.length) {
+            const support = document.createElement('p');
+            support.className = 'mt-2';
+            support.textContent = 'Other retained equations for this root candidate: ' +
+              hypothesis.supporting_equations.map(m => m.lhs + ' = ' + m.rhs).join('; ');
+            evidence.appendChild(support);
+          }
+          leftDiv.appendChild(evidence);
+        }
 
         // Right side: copy buttons
         const actionsDiv = document.createElement('div');
@@ -1345,6 +1510,22 @@
           ? 'Eq(x, ' + postfixToSympy(match.solve_for_x_postfix, match.constants) + ')'
           : 'Eq(' + postfixToSympy(match.lhs_postfix || '', match.constants) + ', ' + postfixToSympy(match.rhs_postfix || '', match.constants) + ')';
         actionsDiv.appendChild(copySympyBtn);
+        if (run.discoveryRun) {
+          const exportBtn = document.createElement('button');
+          exportBtn.type = 'button';
+          exportBtn.className = 'export-hypothesis px-3 py-1 text-xs font-medium rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition-colors';
+          exportBtn.textContent = 'Export';
+          exportBtn.setAttribute('aria-label', 'Export hypothesis ' + (index + 1));
+          exportBtn.onclick = function() {
+            downloadFile('ries-rs-' + safeTargetName(run.targetLiteral) + '-hypothesis-' + (index + 1) + '.json',
+              JSON.stringify({
+                schema: 'ries-discovery-selection-v1',
+                run: run.discoveryRun,
+                hypothesis_index: index,
+              }, null, 2), 'application/json');
+          };
+          actionsDiv.appendChild(exportBtn);
+        }
 
         cardInner.appendChild(leftDiv);
         cardInner.appendChild(actionsDiv);
@@ -1362,7 +1543,7 @@
 
       // If already in text view, refresh the textarea with new results
       if (currentView === 'text') {
-        renderTextOutput(currentMatches);
+        renderTextOutput(run);
       }
     }
 
@@ -1381,10 +1562,22 @@
     // Text Output Mode (view toggle)
     // ============================================================
 
-    function renderTextOutput(matches) {
-      var target = document.getElementById('target').value.trim();
-      var level = document.getElementById('level').value;
-      var text = formatResults(matches, target, level);
+    function safeTargetName(targetLiteral) {
+      return targetLiteral.replace(/[^a-zA-Z0-9.\-_]/g, '_').slice(0, 100);
+    }
+
+    function downloadFile(filename, text, type) {
+      const blob = new Blob([text], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function renderTextOutput(run) {
+      var text = formatResults(run);
 
       var textarea = document.getElementById('text-output');
       textarea.value = text;
@@ -1404,14 +1597,7 @@
 
       // Download .txt
       document.getElementById('download-btn').onclick = function() {
-        var blob = new Blob([text], { type: 'text/plain' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        var safeName = target.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-        a.download = 'ries-rs-' + safeName + '.txt';
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadFile('ries-rs-' + safeTargetName(run.targetLiteral) + '.txt', text, 'text/plain');
       };
     }
 
@@ -1432,8 +1618,8 @@
         textBtn.classList.add('bg-white', 'dark:bg-zinc-700', 'text-zinc-900', 'dark:text-zinc-100', 'shadow-sm');
         textBtn.classList.remove('text-zinc-600', 'dark:text-zinc-400', 'hover:text-zinc-900', 'dark:hover:text-zinc-200');
         textBtn.setAttribute('aria-pressed', 'true');
-        if (currentMatches.length > 0) {
-          renderTextOutput(currentMatches);
+        if (completedRun) {
+          renderTextOutput(completedRun);
         }
       } else {
         cardsContainer.classList.remove('hidden');
@@ -1524,6 +1710,14 @@
     // Advanced Panel (Task 14)
     // ============================================================
 
+    function syncSearchModeControls() {
+      const discovery = document.getElementById('ranking-mode').value === 'discovery';
+      document.getElementById('match-all-digits').disabled = discovery;
+      document.getElementById('advanced-support-note').textContent = discovery
+        ? 'Discovery uses the entered decimal precision and groups safely recognized duplicate hypotheses. PSLQ is CLI-only.'
+        : 'Raw modes keep the original match ordering. Match-all-digits filters by entered precision. PSLQ is CLI-only.';
+    }
+
     function initAdvancedPanel() {
       const toggle = document.getElementById('advanced-toggle');
       const panel = document.getElementById('advanced-panel');
@@ -1547,7 +1741,7 @@
         chevron.style.transform = isHidden ? '' : 'rotate(180deg)';
         if (!isHidden && !advancedHintShown && !searchInProgress) {
           advancedHintShown = true;
-          setStatus('Advanced options: ranking mode and match-all-digits work in web. PSLQ is CLI-only.', 'info');
+          setStatus('Advanced options: discovery or raw ordering. PSLQ is CLI-only.', 'info');
         }
         updateURL();
       });
@@ -1579,12 +1773,12 @@
       }
 
       const maxMatches = document.getElementById('max-matches').value;
-      if (maxMatches !== '50') {
+      if (maxMatches !== '8') {
         params.set('max-matches', maxMatches);
       }
 
       const rankingMode = document.getElementById('ranking-mode').value;
-      if (rankingMode !== 'parity') {
+      if (rankingMode !== 'discovery') {
         params.set('ranking-mode', rankingMode);
       }
 
@@ -1665,6 +1859,7 @@
           // Visual state applied after search renders results
         }
       }
+      syncSearchModeControls();
 
       // Auto-search if target is present and WASM is ready
       if (params.has('target') && params.get('target').trim() && (wasmModule || wasmRuntime === 'worker')) {
@@ -1694,7 +1889,11 @@
         const el = document.getElementById(id);
         if (el) {
           const eventType = el.type === 'checkbox' ? 'change' : 'input';
-          el.addEventListener(eventType, updateURL);
+          el.addEventListener(eventType, function() {
+            if (id === 'ranking-mode') syncSearchModeControls();
+            updateURL();
+            updatePendingSettings();
+          });
         }
       });
     }
@@ -1720,6 +1919,7 @@
           const resultsSection = document.getElementById('results-section');
           if (!resultsSection.classList.contains('hidden')) {
             resultsSection.classList.add('hidden');
+            completedRun = null;
             const params = new URLSearchParams(window.location.search);
             params.delete('target');
             const queryString = params.toString();

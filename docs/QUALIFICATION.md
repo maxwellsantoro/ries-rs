@@ -25,15 +25,67 @@ to `tools/replay_manifest.py`; rerun the corpus to reconstruct those searches.
 Process wall time includes startup; compare repeated release runs on the same
 machine. A nonzero exit means qualification failed or was incomplete.
 
-CI runs the corpus and uploads its artifacts for 90 days. Download evidence from
-the exact commit used for a release. Local evidence from an uncommitted tree is
+CI runs the corpus for affected changes and full validation, and uploads its
+artifacts for 90 days. Download evidence from the exact commit used for a release. Local evidence from an uncommitted tree is
 development evidence and does not qualify a subsequently tagged commit.
 
 The stop-contract Rust oracle separately exhausts tiny length-1/3 grammars,
 solves linear/quadratic LHS expressions analytically, and tests a fixed sequence
 of randomized symbol restrictions, positive custom weights, and per-side budgets.
 It does not use production generation, evaluation, or Newton refinement to
-construct expected matches. Run it with `cargo test --test stop_contract`.
+construct expected matches. Select the oracle and broader integration checks
+using [VALIDATION.md](VALIDATION.md).
+
+Matcher agreement and known-answer coverage do not measure how useful a novel
+hypothesis is to a researcher. Discovery has a separate corpus below.
+
+## Discovery quality and selected-hypothesis evidence
+
+```bash
+python3 scripts/qualify_discovery.py --binary target/release/ries-rs \
+  --output output/discovery
+```
+
+`tests/corpus/discovery-quality.json` fixes thirteen cases: rounded/truncated
+known formulas, two additional formula-recovery fixtures, a negative root,
+a rational root, injected named-constant recognition, a near miss, and two fixed
+control decimals. Expected solved postfix spellings are declared independently
+of the production selector. Named-constant recognition is reported separately
+from formula recovery. Controls have no mathematical-truth labels; returned
+formulas are observations, not automatically false positives.
+
+The runner records top-1/top-3/required-top-k recovery, unique hypothesis keys,
+duplicate keys and identical solved presentations, retained supporting variants,
+input-precision agreement, and precision-series observations. Missing required
+answers, duplicate result slots, inconsistent precision flags, failed/timed-out
+processes, and incompatible envelopes fail the run. This remains a finite
+regression corpus, not a discovery-success probability or completeness claim.
+
+Raw versioned run JSON preserves the original literal, resolved grammar/weights,
+budgets, configuration, and validation availability. Artifacts record process
+timings, environment, commit/tree/diff and source hashes including untracked
+inputs, corpus hash, and executed binary hash. The source snapshot describes the
+working tree at execution; a dirty-tree experiment is not a clean release receipt.
+The binary must remain unchanged throughout a run. `--repeats` is optional;
+ordinary CI uses one deterministic run per case. Repeated local timings include
+startup and require the same environment for meaningful comparisons.
+
+For each nonempty run the first hypothesis is also exported through
+`scripts/verify_discovery.py`. That tool tries the representative and then its
+retained supporting equations with the existing bounded polynomial checker.
+Every generated certificate is independently checked. Unsupported syntax or
+arithmetic budgets produce `unavailable` with reasons; π and transcendental
+equations do not acquire a proof label. The complete run stays attached to the
+selected evidence. Supporting rows must share the representative's conservative
+structural candidate identity and have coherent reported roots. A certificate
+proves only its explicit source equation, not the displayed rearrangement or
+global domain equivalence. Content hashes detect drift; they do not authenticate
+a search. Known-answer recovery requires agreement with the entered precision;
+a matching formula spelling outside that precision does not count as recovery.
+
+See [the discovery workflow](DISCOVERY_WORKFLOW.md) for run/selection exports,
+zero-based hypothesis selection, certificate rechecking, and the distinction
+between numerical agreement, high-precision corroboration, and a bounded root.
 
 ## Historical differential
 
@@ -131,8 +183,10 @@ and collision-free Python wheel validation.
 
 ## Release-candidate replay and arithmetic boundaries
 
-All target-consuming entry points, including PSLQ, validate the resolved decimal
-before dispatch. Match-all-digits means that the binary target represents the
+CLI and WASM entry points that receive a decimal literal, including CLI PSLQ,
+validate it before dispatch. Numeric-only Python and JavaScript callers supply
+an already rounded `f64`; they cannot recover the original decimal spelling.
+Match-all-digits means that the binary target represents the
 requested decimal precision within half the last typed place; it does not mean
 binary/decimal equality. The independent oracle explicitly covers integer loss
 at `9007199254740993`, true zero `0e-400`, nonzero underflow `1e-400`, signed `-0`,

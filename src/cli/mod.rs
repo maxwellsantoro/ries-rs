@@ -25,6 +25,7 @@
 pub mod args;
 pub mod config_builder;
 pub mod diagnostics;
+pub mod discovery;
 pub mod json_types;
 pub mod legacy;
 pub mod manifest;

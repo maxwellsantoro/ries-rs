@@ -1353,13 +1353,13 @@ fn generate_recursive_streaming(
     // Use shared helper for complexity limit calculation
     let max_complexity = get_max_complexity(config, current.contains_x());
 
-    if current.complexity() >= max_complexity {
+    if current.complexity() > max_complexity {
         return true;
     }
 
     // Calculate minimum additional complexity needed to complete expression
     let min_remaining = min_complexity_to_complete(stack_depth, config);
-    if current.complexity() + min_remaining > max_complexity {
+    if !complexity_fits(current.complexity(), min_remaining, max_complexity) {
         return true;
     }
 
@@ -1368,7 +1368,7 @@ fn generate_recursive_streaming(
     // Constants (Seft::A) - always increase stack by 1
     for &sym in &config.constants {
         let sym_weight = config.symbol_table.weight(sym);
-        if current.complexity() + sym_weight > max_complexity {
+        if !complexity_fits(current.complexity(), u64::from(sym_weight), max_complexity) {
             continue;
         }
         if exceeds_symbol_limit(config, current, sym) {
@@ -1399,7 +1399,7 @@ fn generate_recursive_streaming(
     if config.generate_lhs && !config.constants.contains(&Symbol::X) {
         let sym = Symbol::X;
         let sym_weight = config.symbol_table.weight(sym);
-        if current.complexity() + sym_weight <= max_complexity
+        if complexity_fits(current.complexity(), u64::from(sym_weight), max_complexity)
             && !exceeds_symbol_limit(config, current, sym)
         {
             current.push_with_table(sym, &config.symbol_table);
@@ -1422,7 +1422,7 @@ fn generate_recursive_streaming(
     if stack_depth >= 1 {
         for &sym in &config.unary_ops {
             let sym_weight = config.symbol_table.weight(sym);
-            if current.complexity() + sym_weight > max_complexity {
+            if !complexity_fits(current.complexity(), u64::from(sym_weight), max_complexity) {
                 continue;
             }
             if exceeds_symbol_limit(config, current, sym) {
@@ -1454,7 +1454,7 @@ fn generate_recursive_streaming(
     if stack_depth >= 2 {
         for &sym in &config.binary_ops {
             let sym_weight = config.symbol_table.weight(sym);
-            if current.complexity() + sym_weight > max_complexity {
+            if !complexity_fits(current.complexity(), u64::from(sym_weight), max_complexity) {
                 continue;
             }
             if exceeds_symbol_limit(config, current, sym) {
@@ -1540,13 +1540,13 @@ fn generate_recursive(
     // Use shared helper for complexity limit calculation
     let max_complexity = get_max_complexity(config, current.contains_x());
 
-    if current.complexity() >= max_complexity {
+    if current.complexity() > max_complexity {
         return;
     }
 
     // Calculate minimum additional complexity needed to complete expression
     let min_remaining = min_complexity_to_complete(stack_depth, config);
-    if current.complexity() + min_remaining > max_complexity {
+    if !complexity_fits(current.complexity(), min_remaining, max_complexity) {
         return;
     }
 
@@ -1555,7 +1555,7 @@ fn generate_recursive(
     // Constants (Seft::A) - always increase stack by 1
     for &sym in &config.constants {
         let sym_weight = config.symbol_table.weight(sym);
-        if current.complexity() + sym_weight > max_complexity {
+        if !complexity_fits(current.complexity(), u64::from(sym_weight), max_complexity) {
             continue;
         }
         if exceeds_symbol_limit(config, current, sym) {
@@ -1584,7 +1584,7 @@ fn generate_recursive(
     if config.generate_lhs && !config.constants.contains(&Symbol::X) {
         let sym = Symbol::X;
         let sym_weight = config.symbol_table.weight(sym);
-        if current.complexity() + sym_weight <= max_complexity
+        if complexity_fits(current.complexity(), u64::from(sym_weight), max_complexity)
             && !exceeds_symbol_limit(config, current, sym)
         {
             current.push_with_table(sym, &config.symbol_table);
@@ -1605,7 +1605,7 @@ fn generate_recursive(
     if stack_depth >= 1 {
         for &sym in &config.unary_ops {
             let sym_weight = config.symbol_table.weight(sym);
-            if current.complexity() + sym_weight > max_complexity {
+            if !complexity_fits(current.complexity(), u64::from(sym_weight), max_complexity) {
                 continue;
             }
             if exceeds_symbol_limit(config, current, sym) {
@@ -1635,7 +1635,7 @@ fn generate_recursive(
     if stack_depth >= 2 {
         for &sym in &config.binary_ops {
             let sym_weight = config.symbol_table.weight(sym);
-            if current.complexity() + sym_weight > max_complexity {
+            if !complexity_fits(current.complexity(), u64::from(sym_weight), max_complexity) {
                 continue;
             }
             if exceeds_symbol_limit(config, current, sym) {
@@ -1662,8 +1662,15 @@ fn generate_recursive(
     }
 }
 
-/// Calculate minimum complexity needed to reduce stack to depth 1
-fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u32 {
+/// Compare costs in a wider type: profile weights span the full u32 range.
+/// Reject overflow before push/pop can saturate and corrupt the running cost.
+#[inline]
+fn complexity_fits(current: u32, additional: u64, budget: u32) -> bool {
+    additional <= u64::from(budget.saturating_sub(current)) && current <= budget
+}
+
+/// Calculate minimum complexity needed to reduce stack to depth 1.
+fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u64 {
     if stack_depth <= 1 {
         return 0;
     }
@@ -1676,7 +1683,7 @@ fn min_complexity_to_complete(stack_depth: usize, config: &GenConfig) -> u32 {
         .min()
         .unwrap_or(4);
 
-    ((stack_depth - 1) as u32) * min_binary_weight
+    ((stack_depth - 1) as u64).saturating_mul(u64::from(min_binary_weight))
 }
 
 // =============================================================================
@@ -1741,10 +1748,10 @@ fn replacement_admissible(
     config: &GenConfig,
     current: &Expression,
     replacement: Symbol,
-    replaced_weight: u32,
+    replaced_weight: u64,
 ) -> bool {
     symbol_enabled(config, replacement)
-        && config.symbol_table.weight(replacement) <= replaced_weight
+        && u64::from(config.symbol_table.weight(replacement)) <= replaced_weight
         && !exceeds_symbol_limit(config, current, replacement)
 }
 
@@ -1893,7 +1900,7 @@ fn is_binary_rewrite(config: &GenConfig, expr: &Expression, sym: Symbol) -> bool
     let Some(lhs_start) = subexpr_start(symbols, rhs_start) else {
         return false;
     };
-    let weight = |sym| config.symbol_table.weight(sym);
+    let weight = |sym| u64::from(config.symbol_table.weight(sym));
     let lhs_atom = (lhs_start + 1 == rhs_start).then(|| symbols[lhs_start]);
 
     match sym {
@@ -1910,7 +1917,7 @@ fn is_binary_rewrite(config: &GenConfig, expr: &Expression, sym: Symbol) -> bool
         // a + a is 2*a: prefer `2 a *` (or `a 2 *` when a is an atom ordered
         // before 2). Both the 2 and the * must be admissible.
         Add if is_same_subexpr(symbols, 2) => {
-            let operand_weight: u32 = symbols[rhs_start..].iter().map(|&s| weight(s)).sum();
+            let operand_weight: u64 = symbols[rhs_start..].iter().map(|&s| weight(s)).sum();
             symbol_enabled(config, Two)
                 && symbol_enabled(config, Mul)
                 && weight(Two) + weight(Mul) <= operand_weight + weight(Add)
@@ -2106,14 +2113,14 @@ pub(crate) fn generate_parallel_with_rhs_policy(
                 std::cmp::max(config.max_lhs_complexity, config.max_rhs_complexity)
             };
 
-            if expr1.complexity() + sym2_weight <= next_max
+            if complexity_fits(expr1.complexity(), u64::from(sym2_weight), next_max)
                 && !exceeds_symbol_limit(config, &expr1, sym2)
             {
                 let mut expr2 = expr1.clone();
                 expr2.push_with_table(sym2, &config.symbol_table);
                 // Min complexity check: for stack depth 2, we need at least 1 binary op
                 let min_remaining = min_complexity_to_complete(2, config);
-                if expr2.complexity() + min_remaining <= next_max {
+                if complexity_fits(expr2.complexity(), min_remaining, next_max) {
                     prefixes.push((expr2, 2));
                 }
             }
@@ -2122,14 +2129,14 @@ pub(crate) fn generate_parallel_with_rhs_policy(
         // Unary ops (+0 stack)
         for &sym2 in &config.unary_ops {
             let sym2_weight = config.symbol_table.weight(sym2);
-            if expr1.complexity() + sym2_weight <= max_complexity
+            if complexity_fits(expr1.complexity(), u64::from(sym2_weight), max_complexity)
                 && !exceeds_symbol_limit(config, &expr1, sym2)
                 && !should_prune_unary(config, &expr1, sym2)
             {
                 let mut expr2 = expr1.clone();
                 expr2.push_with_table(sym2, &config.symbol_table);
                 let min_remaining = min_complexity_to_complete(1, config);
-                if expr2.complexity() + min_remaining <= max_complexity {
+                if complexity_fits(expr2.complexity(), min_remaining, max_complexity) {
                     prefixes.push((expr2, 1));
                 }
             }
@@ -2173,6 +2180,110 @@ mod tests {
     use super::*;
     #[cfg(not(target_arch = "wasm32"))]
     use proptest::prelude::*;
+
+    #[test]
+    fn zero_cost_extensions_at_the_budget_agree_across_generators() {
+        use std::collections::BTreeSet;
+        use Symbol::*;
+        let profile = Profile {
+            symbol_weights: HashMap::from([(X, 35), (One, 0), (Neg, 0), (Add, 0)]),
+            ..Default::default()
+        };
+        let config = GenConfig {
+            constants: vec![X, One],
+            unary_ops: vec![Neg],
+            binary_ops: vec![Add],
+            max_length: 3,
+            max_lhs_complexity: 35,
+            max_rhs_complexity: 35,
+            symbol_table: Arc::new(SymbolTable::from_profile(&profile)),
+            ..Default::default()
+        };
+        let keys = |exprs: Vec<EvaluatedExpr>| -> BTreeSet<_> {
+            exprs.into_iter().map(|e| e.expr.to_postfix()).collect()
+        };
+        let serial = keys(generate_all(&config, -2.0).lhs);
+        for expected in ["x", "xn", "1x+"] {
+            assert!(serial.contains(expected), "missing {expected}: {serial:?}");
+        }
+        let bounded = generate_all_with_limit(&config, -2.0, 1000).unwrap();
+        assert_eq!(serial, keys(bounded.lhs));
+        #[cfg(feature = "parallel")]
+        assert_eq!(serial, keys(generate_all_parallel(&config, -2.0).lhs));
+
+        // A zero total budget must still allow expressions made of free symbols.
+        let free_profile = Profile {
+            symbol_weights: HashMap::from([(X, 0), (Neg, 0)]),
+            ..Default::default()
+        };
+        let free = GenConfig {
+            constants: vec![X],
+            unary_ops: vec![Neg],
+            binary_ops: vec![],
+            max_lhs_complexity: 0,
+            max_rhs_complexity: 0,
+            symbol_table: Arc::new(SymbolTable::from_profile(&free_profile)),
+            ..config
+        };
+        assert!(keys(generate_all(&free, -2.0).lhs).contains("xn"));
+    }
+
+    #[test]
+    fn maximum_weights_do_not_wrap_generation_costs_or_rewrites() {
+        use Symbol::*;
+        let profile = Profile {
+            symbol_weights: HashMap::from([
+                (One, u32::MAX),
+                (Neg, u32::MAX),
+                (Add, u32::MAX),
+                (Root, u32::MAX),
+                (Log, u32::MAX),
+            ]),
+            ..Default::default()
+        };
+        let config = GenConfig {
+            constants: vec![One, Two, E, X],
+            unary_ops: vec![Neg, Sqrt, Ln],
+            binary_ops: vec![Add, Root, Log],
+            max_length: 5,
+            max_lhs_complexity: 35,
+            max_rhs_complexity: 35,
+            symbol_table: Arc::new(SymbolTable::from_profile(&profile)),
+            ..Default::default()
+        };
+        let verify = |generated: GeneratedExprs| {
+            assert!(!generated.lhs.is_empty());
+            for expr in generated.lhs.iter().chain(&generated.rhs) {
+                let cost: u64 = expr
+                    .expr
+                    .symbols()
+                    .iter()
+                    .map(|&s| u64::from(config.symbol_table.weight(s)))
+                    .sum();
+                assert!(cost <= 35, "over-budget {}: {cost}", expr.expr.to_postfix());
+                assert_eq!(u64::from(expr.expr.complexity()), cost);
+            }
+        };
+        verify(generate_all(&config, 2.5));
+        verify(generate_all_with_limit(&config, 2.5, 1000).unwrap());
+        #[cfg(feature = "parallel")]
+        verify(generate_all_parallel(&config, 2.5));
+        assert_eq!(
+            min_complexity_to_complete(3, &config),
+            2 * u64::from(u32::MAX)
+        );
+        // Cost comparisons in rewrite pruning must not overflow either.
+        assert!(should_prune_binary(
+            &config,
+            &Expression::from_symbols(&[Two, Two]),
+            Root
+        ));
+        assert!(should_prune_binary(
+            &config,
+            &Expression::from_symbols(&[E, Two]),
+            Log
+        ));
+    }
 
     fn udf(spec: &str) -> UserFunction {
         UserFunction::parse(spec).unwrap()

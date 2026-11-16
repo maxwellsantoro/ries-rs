@@ -59,6 +59,17 @@ def main():
         run(["cargo", "install", "--path", extracted / f"ries-{version}", "--locked", "--root", output / "cli", "--target-dir", output / "build-cli", "--force"])
         cli = output / "cli/bin" / ("ries-rs.exe" if os.name == "nt" else "ries-rs")
         receipt["cli_sha256"] = sha(cli)
+        discovery_result = run([cli, "--discover", "--json", "--deterministic", "-n1", "--", "1.41421356"])
+        discovery = json.loads(discovery_result.stdout)
+        assert discovery["schema"] == "ries-discovery-v1"
+        assert discovery["target_literal"] == "1.41421356"
+        assert discovery["hypotheses"][0]["representative"]["solve_for_x"] == "x = sqrt(2)"
+        discovery_path = output / "installed-discovery.json"
+        discovery_path.write_text(discovery_result.stdout)
+        evidence_path = output / "installed-discovery-evidence.json"
+        run([sys.executable, ROOT / "scripts/verify_discovery.py", discovery_path, "--output", evidence_path])
+        assert json.loads(evidence_path.read_text())["evidence"]["status"] == "independently_bounded"
+        run([sys.executable, ROOT / "scripts/verify_discovery.py", evidence_path, "--verify"])
         literal = "1.000000000000000000000000000000"
         manifest = output / "installed-manifest.json"
         result = run([cli, literal, "--classic", "-l0", "-Sx1", "--match-all-digits", "--precision", "53", "--allow-unverified", "--json", "--emit-manifest", manifest])
@@ -72,17 +83,18 @@ def main():
         env = dict(os.environ, CARGO_TARGET_DIR=str(output / "build-python"), RIES_PY_TEST_VENV=str(output / "python-env"), RIES_PY_TEST_DIST=str(output / "wheels"))
         run(["bash", ROOT / "scripts/test_ries_py_python.sh", "-q"], env=env)
         python = output / "python-env/bin/python"
-        run([python, "-I", "-c", "import ries_rs; assert ries_rs.search(2, level=0, max_matches=1); print(ries_rs.__file__)"])
+        run([python, "-I", "-c", "import ries_rs; assert ries_rs.search(2, level=0, max_matches=1); r=ries_rs.discover('3.14159265', max_matches=1); assert r['schema']=='ries-discovery-v1' and r['hypotheses'][0]['representative']['solve_for_x']=='x = pi'; print(ries_rs.__file__)"])
         receipt["wheel_sha256"] = {p.name: sha(p) for p in (output / "wheels").glob("*.whl")}
 
         run(["npm", "ci", "--no-fund", "--no-audit", "--cache", output / "npm-cache"])
         run(["npm", "run", "build:all"], env=dict(os.environ, CARGO_TARGET_DIR=str(output / "build-wasm")))
+        run(["npm", "run", "test:wasm:package"])
         package = json.loads(run(["npm", "pack", "--ignore-scripts", "--json", "--pack-destination", output]).stdout)[0]
         tarball = output / package["filename"]
         receipt["npm_sha256"] = sha(tarball)
         consumer = output / "npm-consumer"
         run(["npm", "install", "--ignore-scripts", "--no-fund", "--no-audit", "--prefix", consumer, tarball])
-        run(["node", "-e", "const m=require('ries-rs'); if(!m.search(2,{level:0,maxMatches:1}).length) throw Error('no results'); console.log(m.version())"], cwd=consumer)
+        run(["node", "-e", "const m=require('ries-rs'); if(!m.search(2,{level:0,maxMatches:1}).length) throw Error('no results'); const r=m.discover('3.14159265',{maxMatches:1}); if(r.schema!=='ries-discovery-v1'||r.hypotheses[0].representative.solve_for_x!=='x = pi') throw Error('discovery mismatch'); console.log(m.version())"], cwd=consumer)
         run(["npm", "run", "build:css"])
         run(["bash", ROOT / "scripts/build_web_site.sh"])
         packaged_wasm = consumer / "node_modules/ries-rs/pkg"

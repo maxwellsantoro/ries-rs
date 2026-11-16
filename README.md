@@ -1,6 +1,8 @@
 # ries-rs
 
-Rust inverse equation solver for turning a target number into compact algebraic equations.
+Turn a mysterious decimal into your next mathematical conjecture with `ries-rs`,
+an equation-discovery engine you can explore in your browser or build into your
+research workflow.
 
 [![CI](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml)
 [![Coverage](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml)
@@ -10,9 +12,15 @@ Rust inverse equation solver for turning a target number into compact algebraic 
 [![DOI](https://zenodo.org/badge/1123876688.svg)](https://doi.org/10.5281/zenodo.19101924)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`ries-rs` is a Rust implementation of Robert P. Munafo's RIES inverse equation
-solver. Given a target number, it searches for algebraic equations that have
-that number as a solution.
+`ries-rs` is an inverse equation solver that searches for concise mathematical
+explanations of numerical values. Inspired by Robert Munafo’s RIES, it combines
+expression generation, numerical evaluation, root refinement, and ranking to find
+candidate equations involving arithmetic, roots, familiar constants, and
+transcendental functions. Its shared Rust engine powers a command-line tool, a
+Rust library, Python bindings, and a browser interface, with custom symbols,
+reproducible searches, and structured output for further analysis. It gives
+researchers, programmers, and curious mathematicians a practical way to turn
+numerical observations into testable mathematical ideas.
 
 The historical acronym is RIES, for "RILYBOT Inverse Equation Solver". This
 repository aims to be a modern, documented, reproducible reference
@@ -79,17 +87,7 @@ cd ries-py
 maturin develop --release
 ```
 
-For Rust-side binding checks without building/loading the extension module:
-
-```bash
-./scripts/test_ries_py_rust.sh
-```
-
-For end-to-end Python import/search checks in an isolated virtualenv:
-
-```bash
-./scripts/test_ries_py_python.sh -q
-```
+For binding checks, see [the validation guide](docs/VALIDATION.md).
 
 ### Web App / WASM
 
@@ -98,8 +96,8 @@ packages. To build the browser bundle locally, install the JS dependencies and
 the nightly Rust toolchain first:
 
 ```bash
-npm install
-rustup toolchain install nightly
+npm ci
+rustup toolchain install nightly --profile minimal --component rust-src --target wasm32-unknown-unknown
 npm run build:web:site
 ```
 
@@ -119,6 +117,34 @@ Detailed setup guides:
 - [Web UI hosting](web/README.md)
 
 ## Quick Start
+
+For a rounded decimal, use precision-aware discovery. It selects a minimum-cost
+precision-resolving tier before limiting the results, groups safely recognizable
+presentations, and preserves the original literal and resolved settings. From a
+repository checkout, export a run and apply the independent polynomial checker:
+
+```bash
+ries-rs --discover --deterministic --json 1.41421356 > run.json
+python3 scripts/verify_discovery.py run.json --output selected.json
+python3 scripts/verify_discovery.py selected.json --verify
+```
+
+The first hypothesis is `x = sqrt(2)`, with `x^2 = 2` retained as a supporting
+equation. The external verifier can independently bound that polynomial root;
+named constants and unsupported expressions report unavailable checks. Numerical
+agreement does not prove the intended constant equals the equation's root.
+
+Discovery uses API levels 0–5 and may return fewer hypotheses than requested when
+only a small tier resolves the input precision. `--discover --json` exports the
+versioned `ries-discovery-v1` envelope; it does not change ordinary CLI JSON or
+the existing manifest schema. Use ordinary search for custom profiles and the
+broader CLI configuration. See [the search contract](docs/SEARCH_MODEL.md) and
+[the evidence workflow](docs/DISCOVERY_WORKFLOW.md).
+
+The same additive workflow is available as `ries_rs.discover("1.41421356")` in
+Python and `discover("1.41421356")` in JavaScript/WASM. Existing float-based
+`search()` calls retain their raw ordering. The browser defaults to discovery and
+keeps explicit raw complexity/parity modes.
 
 Basic search:
 
@@ -207,7 +233,7 @@ ries-rs --profile examples/fano-heawood.ries --one-sided --deterministic \
 
 Not primary goals of this repository:
 
-- Symbolic AI or conjecture systems
+- Automated proof discovery or treating numerical matches as established theorems
 - Turning the bundled PSLQ integer-relation mode into a separate research platform
 - Experimental search branches outside the core RIES model
 
@@ -218,12 +244,11 @@ for end-to-end CLI runs and generation-only scaling:
 
 - End-to-end CLI baseline:
   [`docs/benchmarks/2026-03-20-level3-baseline.md`](docs/benchmarks/2026-03-20-level3-baseline.md)
-  captures the current level-3 workload; after tightening the adaptive search
-  radius and snapping exact default-scale trig singularities, the candidate
-  scan set dropped to about `8.1M` pairs. The default `--parallel` CLI path is
-  near break-even on this workload because it parallelizes generation only,
-  while the dominant matching/Newton phase stays serial to preserve
-  byte-identical results.
+  records a March 20 workload at its captured source and environment, with about
+  `8.1M` candidate pairs and near break-even sequential/parallel times. These
+  measurements predate later search changes and are not a performance claim for
+  the current candidate. The default `--parallel` path parallelizes generation;
+  the matching/Newton phase stays serial to preserve byte-identical results.
 - `--turbo` parallelizes Newton refinement for wide RHS candidate windows. It
   uses the same traversal, adaptive gates, and result pool as serial matching.
   See [the search model](docs/SEARCH_MODEL.md#turbo-contract) for the contract.
@@ -265,6 +290,7 @@ historical notes.
 
 ## Documentation
 
+- [Roadmap and parallel work packets](docs/ROADMAP.md)
 - [Documentation map](docs/README.md)
 - [Search model](docs/SEARCH_MODEL.md)
 - [Complexity and weights](docs/COMPLEXITY.md)

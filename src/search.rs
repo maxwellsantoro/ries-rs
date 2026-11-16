@@ -1655,7 +1655,8 @@ pub fn search_streaming_with_config(
                 for rhs in rhs_db.iter_tiers_in_range(low, high) {
                     if !crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
                         || !search_config.filters.allows_pair(&lhs.expr, &rhs.expr)
-                        || pass_stop.excludes(lhs.expr.complexity() + rhs.expr.complexity())
+                        || pass_stop
+                            .excludes(lhs.expr.complexity().saturating_add(rhs.expr.complexity()))
                     {
                         continue;
                     }
@@ -1715,7 +1716,7 @@ pub fn search_streaming_with_config(
                             rhs: rhs.clone(),
                             x_value,
                             error,
-                            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                            complexity: lhs.expr.complexity().saturating_add(rhs.expr.complexity()),
                             exact,
                         };
                         pass_stop.observe(&m, search_config);
@@ -1810,7 +1811,7 @@ pub fn search_one_sided_with_stats_and_config(
     loop {
         for rhs in &generated.rhs {
             // RHS are visited in complexity order: past the bound, none qualify.
-            if pass_stop.excludes(lhs.expr.complexity() + rhs.expr.complexity()) {
+            if pass_stop.excludes(lhs.expr.complexity().saturating_add(rhs.expr.complexity())) {
                 early_exit = true;
                 break;
             }
@@ -1844,7 +1845,7 @@ pub fn search_one_sided_with_stats_and_config(
                 rhs: rhs.clone(),
                 x_value: rhs.value,
                 error,
-                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                complexity: lhs.expr.complexity().saturating_add(rhs.expr.complexity()),
                 exact: is_exact,
             };
 

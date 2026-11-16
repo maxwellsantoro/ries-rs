@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import init, { initSync, SearchOptions, search, version } from 'ries-rs';
+import init, { initSync, SearchOptions, search, discover, version } from 'ries-rs';
 
 assert.ok((await init()).memory instanceof WebAssembly.Memory);
 assert.ok(initSync().memory instanceof WebAssembly.Memory);
@@ -13,8 +13,18 @@ assert.equal(options.to_json().max_matches, 1);
 assert.equal(search(2, options).length, 1);
 assert.equal(search(2, options.to_json()).length, 1);
 assert.ok(createRequire(import.meta.url)('ries-rs').version());
+for (const api of [{ discover }, createRequire(import.meta.url)('ries-rs')]) {
+  const run = api.discover('3.14159265', { level: 0, maxMatches: 3 });
+  assert.equal(run.schema, 'ries-discovery-v1');
+  assert.equal(run.target_literal, '3.14159265');
+  assert.equal(run.hypotheses[0].representative.rhs_postfix, 'p');
+  assert.equal(run.config.preset, null);
+  assert.equal(JSON.parse(JSON.stringify(run)).target_literal, '3.14159265');
+  assert.throws(() => api.discover('2', { maxMatch: 1 }), /Invalid discovery options/);
+}
 
 const declarations = readFileSync(new URL('../pkg/ries_rs.d.ts', import.meta.url), 'utf8');
+assert.match(declarations, /export function discover\(/);
 const optionsDeclaration = declarations.split('export class SearchOptions {')[1].split('\n}')[0];
 for (const name of ['level', 'max_matches', 'preset']) {
   assert.match(optionsDeclaration, new RegExp(`\\b${name}\\(`));

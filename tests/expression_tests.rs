@@ -140,3 +140,53 @@ fn test_to_infix_no_question_marks_for_valid_expressions() {
         );
     }
 }
+
+#[test]
+fn cas_exports_preserve_real_roots_and_fractional_positive_indices() {
+    for (postfix, sympy, mathematica) in [
+        (
+            "38nv",
+            "real_root(-8, 3)",
+            "Piecewise[{{Surd[-8, 3], -8<0}}, (-8)^(1/3)]",
+        ),
+        (
+            "3n8nv",
+            "real_root(-8, -3)",
+            "Piecewise[{{Surd[-8, -3], -8<0}}, (-8)^(1/(-3))]",
+        ),
+        (
+            "12+8nv",
+            "real_root(-8, 1+2)",
+            "Piecewise[{{Surd[-8, 1+2], -8<0}}, (-8)^(1/(1+2))]",
+        ),
+        (
+            "12/4v",
+            "real_root(4, 1/2)",
+            "Piecewise[{{Surd[4, 1/2], 4<0}}, 4^(1/(1/2))]",
+        ),
+        (
+            "3xv2*",
+            "real_root(x, 3)*2",
+            "Piecewise[{{Surd[x, 3], x<0}}, x^(1/3)]*2",
+        ),
+    ] {
+        let expr = Expression::parse(postfix).unwrap();
+        assert_eq!(expr.to_infix_sympy(), sympy, "{postfix}");
+        assert_eq!(expr.to_infix_mathematica(), mathematica, "{postfix}");
+    }
+    // These are the real values the exported expressions must preserve.
+    for (postfix, expected) in [("38nv", -2.0), ("3n8nv", -0.5), ("12/4v", 16.0)] {
+        let result = ries_rs::eval::evaluate(&Expression::parse(postfix).unwrap(), 0.0).unwrap();
+        assert!((result.value - expected).abs() < 1e-14);
+    }
+}
+
+#[test]
+fn sympy_exports_the_public_lambert_w_function() {
+    for (postfix, expected) in [("1W", "LambertW(1)"), ("x1+W", "LambertW(x+1)")] {
+        assert_eq!(
+            Expression::parse(postfix).unwrap().to_infix_sympy(),
+            expected
+        );
+    }
+}

@@ -10,31 +10,22 @@
 - `compare_with_original.sh` and `validate_parity.py`: compare reported root accuracy with original RIES
 - `test_ci_validation.py`: regression tests for parity and benchmark baseline validation
 
-## Common Commands
+## Choosing checks
 
-Fast local Rust regression pass:
+Use [VALIDATION.md](../docs/VALIDATION.md) for commands and the change-to-check
+matrix. Start with the failing regression or affected test target. Run a full
+Rust/feature/binding suite at the integration boundary when that surface changed,
+rather than repeating it in each agent's loop.
 
-```bash
-cargo nextest run --tests --locked
-```
+- `numeric_contract.rs`: numerical acceptance, roots, and boundary regressions
+- `stop_contract.rs`: independent small-grammar oracle and stopping behavior
+- `tests/corpus/search-contract.json`: fixed matcher qualification inputs
+- `test_*.py`: independent tooling and CI-policy tests
 
-Simple local fallback:
-
-```bash
-cargo test --tests --locked
-```
-
-High-precision feature coverage:
-
-```bash
-cargo nextest run --tests --features highprec --locked
-```
-
-Browser smoke path:
-
-```bash
-npm run test:web:smoke:build
-```
+[QUALIFICATION.md](../docs/QUALIFICATION.md) explains what the independent
+oracles and certificates establish and where they are unavailable. Product
+hypothesis-quality evaluation is planned in [ROADMAP.md](../docs/ROADMAP.md);
+passing the existing matcher corpus is not a discovery-quality score.
 
 ## Original-RIES Comparison
 

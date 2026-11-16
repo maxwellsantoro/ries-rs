@@ -13,6 +13,7 @@ keywords = ["math", "equation", "solver", "algebraic", "ries"]
 categories = ["mathematics", "science"]
 exclude = [
     # Local dev tooling
+    ".agents/**",
     ".playwright-mcp/**",
     ".codex-playwright/**",
     ".impeccable/**",

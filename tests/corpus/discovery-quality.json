@@ -1,0 +1,166 @@
+{
+  "schema": "ries-discovery-corpus-v1",
+  "scope": "Small deterministic discovery-regression corpus; independent expected spellings and control observations, not a confidence/completeness benchmark.",
+  "cases": [
+    {
+      "name": "rounded-pi",
+      "target_literal": "3.14159265",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "p"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "truncated-pi",
+      "target_literal": "3.14159",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "p"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "rounded-sqrt2",
+      "target_literal": "1.41421356",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "2q"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "truncated-sqrt2",
+      "target_literal": "1.41421",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "2q"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "rounded-sqrt-e",
+      "target_literal": "1.64872127",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "eq"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "withheld-sqrt3",
+      "target_literal": "1.73205081",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "3q"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "withheld-log2",
+      "target_literal": "0.69314718",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "2l"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "negative-sqrt2",
+      "target_literal": "-1.41421356",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "2qn"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "rational-five-halves",
+      "target_literal": "2.50000000",
+      "kind": "formula",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "expected_solved_postfix": [
+        "52/"
+      ],
+      "required_top_k": 3
+    },
+    {
+      "name": "named-zeta2",
+      "target_literal": "1.64493407",
+      "kind": "named_constant",
+      "options": {
+        "level": 2,
+        "max_matches": 8,
+        "preset": "analytic-nt"
+      },
+      "expected_constant": "z2",
+      "required_top_k": 3
+    },
+    {
+      "name": "near-miss-sqrt2",
+      "target_literal": "1.41420000",
+      "kind": "near_miss",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "reference_solved_postfix": "2q",
+      "reference_value": "1.4142135623730950488"
+    },
+    {
+      "name": "seeded-control-1",
+      "target_literal": "0.23894761",
+      "kind": "control",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "origin": "Fixed digits from a seeded control fixture; no mathematical-truth label"
+    },
+    {
+      "name": "seeded-control-2",
+      "target_literal": "1.83746291",
+      "kind": "control",
+      "options": {
+        "level": 3,
+        "max_matches": 8
+      },
+      "origin": "Fixed digits from a seeded control fixture; no mathematical-truth label"
+    }
+  ]
+}

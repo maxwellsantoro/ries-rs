@@ -384,3 +384,225 @@ fn impossible_trig_levels_are_rejected_with_and_without_refinement() {
         }
     }
 }
+
+#[test]
+fn reciprocal_trig_levels_reject_impossible_roots_but_keep_real_ones() {
+    use ries_rs::expr::EvaluatedExpr;
+    use ries_rs::search::{ExprDatabase, SearchConfig};
+
+    // sec and csc have no real values strictly between -1 and 1. This
+    // target used to pass Newton's residual test on the rounded plateau.
+    for (postfix, target, sign) in [
+        ("xCr", 2.001, 1.0),
+        ("xCrn", 2.001, -1.0),
+        ("xCnr", 2.001, -1.0),
+        ("xSr", 0.501, 1.0),
+    ] {
+        let lhs = Expression::parse(postfix).unwrap();
+        let at = evaluate(&lhs, target).unwrap();
+        let lhs = EvaluatedExpr::new(lhs, at.value, at.derivative, at.num_type);
+        for (level, possible) in [(1.0_f64.next_down(), false), (1.000_001, true)] {
+            let constant = UserConstant {
+                weight: 1,
+                name: "level".into(),
+                description: String::new(),
+                value: sign * level,
+                num_type: NumType::Rational,
+            };
+            let mut db = ExprDatabase::new();
+            db.insert_rhs(vec![EvaluatedExpr::new(
+                expression(&[Symbol::UserConstant0]),
+                constant.value,
+                0.0,
+                constant.num_type,
+            )]);
+            for refine_with_newton in [false, true] {
+                let config = SearchConfig {
+                    target,
+                    max_error: 0.1,
+                    user_constants: vec![constant.clone()],
+                    refine_with_newton,
+                    ..Default::default()
+                };
+                let (matches, _) = db.find_matches_with_stats(std::slice::from_ref(&lhs), &config);
+                assert_eq!(
+                    !matches.is_empty(),
+                    possible,
+                    "{postfix}, level={}, refinement={refine_with_newton}: {matches:?}",
+                    constant.value
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_matcher_rejects_reciprocal_cosine_inside_its_range_gap() {
+    use ries_rs::search::{search_streaming_with_config, search_with_stats_and_config};
+    let constants = vec![UserConstant {
+        weight: 1,
+        name: "below_one".into(),
+        description: String::new(),
+        value: 1.0_f64.next_down(),
+        num_type: NumType::Rational,
+    }];
+    let gen = GenConfig {
+        constants: vec![Symbol::X],
+        unary_ops: vec![Symbol::CosPi, Symbol::Recip],
+        binary_ops: vec![],
+        rhs_constants: Some(vec![Symbol::UserConstant0]),
+        rhs_unary_ops: Some(vec![]),
+        rhs_binary_ops: Some(vec![]),
+        max_length: 3,
+        max_lhs_complexity: 35,
+        max_rhs_complexity: 35,
+        user_constants: constants.clone(),
+        ..Default::default()
+    };
+    for refine_with_newton in [false, true] {
+        let search = ries_rs::SearchConfig {
+            target: 2.001,
+            max_error: 0.1,
+            user_constants: constants.clone(),
+            refine_with_newton,
+            ..Default::default()
+        };
+        #[allow(unused_mut)]
+        let mut results = vec![
+            search_with_stats_and_config(&gen, &search),
+            search_streaming_with_config(&gen, &search),
+        ];
+        #[cfg(feature = "parallel")]
+        results.extend([
+            ries_rs::search::search_parallel_with_stats_and_config(&gen, &search),
+            ries_rs::search::search_turbo_with_stats_and_config(&gen, &search),
+        ]);
+        for (matches, _) in results {
+            assert!(!matches.iter().any(|m| m.lhs.expr.to_postfix() == "xCr"));
+            // The guard must retain the nearby, possible cospi(x) = below_one.
+            assert!(matches.iter().any(|m| m.lhs.expr.to_postfix() == "xC"));
+        }
+    }
+}
+
+#[test]
+fn every_matcher_checks_squared_trig_ranges_without_losing_real_roots() {
+    use ries_rs::search::{search_streaming_with_config, search_with_stats_and_config};
+
+    let above_one = 1.0_f64.next_up();
+    let below_one = 1.0_f64.next_down();
+    for (target, level, forbidden, required) in [
+        (2.001, above_one, vec!["xCs", "xCns", "xCss"], vec!["xCrs"]),
+        (2.001, below_one, vec!["xCrs", "xCsr", "xCnrs"], vec!["xCs"]),
+        (2.001, -above_one, vec!["xCsn"], vec!["xCrn"]),
+        (2.001, -below_one, vec!["xCrsn"], vec!["xCsn"]),
+        (2.001, 1.0, vec![], vec!["xCs", "xCrs"]),
+        (2.001, -1.0, vec![], vec!["xCsn"]),
+        (2.24, 0.5, vec!["xCrs", "xCsr"], vec!["xCs"]),
+        (2.24, 2.0, vec!["xCs", "xCns"], vec!["xCrs"]),
+    ] {
+        let constants = vec![UserConstant {
+            weight: 1,
+            name: "level".into(),
+            description: "squared-trig range boundary control".into(),
+            value: level,
+            num_type: NumType::Rational,
+        }];
+        let gen = GenConfig {
+            constants: vec![Symbol::X],
+            unary_ops: vec![Symbol::CosPi, Symbol::Neg, Symbol::Recip, Symbol::Square],
+            binary_ops: vec![],
+            rhs_constants: Some(vec![Symbol::UserConstant0]),
+            rhs_unary_ops: Some(vec![]),
+            rhs_binary_ops: Some(vec![]),
+            max_length: 5,
+            max_lhs_complexity: 70,
+            max_rhs_complexity: 70,
+            user_constants: constants.clone(),
+            ..Default::default()
+        };
+        for refine_with_newton in [false, true] {
+            let config = ries_rs::SearchConfig {
+                target,
+                max_error: 0.1,
+                max_matches: 2048,
+                user_constants: constants.clone(),
+                refine_with_newton,
+                ..Default::default()
+            };
+            #[allow(unused_mut)]
+            let mut runs = vec![
+                ("serial", search_with_stats_and_config(&gen, &config)),
+                ("streaming", search_streaming_with_config(&gen, &config)),
+            ];
+            #[cfg(feature = "parallel")]
+            runs.extend([
+                (
+                    "parallel",
+                    ries_rs::search::search_parallel_with_stats_and_config(&gen, &config),
+                ),
+                (
+                    "turbo",
+                    ries_rs::search::search_turbo_with_stats_and_config(&gen, &config),
+                ),
+            ]);
+            for (mode, (matches, _)) in runs {
+                let expressions: Vec<_> = matches.iter().map(|m| m.lhs.expr.to_postfix()).collect();
+                for lhs in &forbidden {
+                    assert!(
+                        !expressions.iter().any(|postfix| postfix == lhs),
+                        "{mode}, refinement={refine_with_newton}: impossible {lhs} = {level}"
+                    );
+                }
+                for lhs in &required {
+                    assert!(
+                        expressions.iter().any(|postfix| postfix == lhs),
+                        "{mode}, refinement={refine_with_newton}: lost real {lhs} = {level}: {expressions:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn equation_complexity_saturates_at_the_public_u32_limit() {
+    use ries_rs::search::{
+        search_one_sided_with_stats_and_config, search_streaming_with_config,
+        search_with_stats_and_config,
+    };
+    let profile = ries_rs::Profile {
+        symbol_weights: std::collections::HashMap::from([(Symbol::X, u32::MAX)]),
+        ..Default::default()
+    };
+    let gen = GenConfig {
+        constants: vec![Symbol::Two, Symbol::X],
+        unary_ops: vec![],
+        binary_ops: vec![],
+        max_length: 1,
+        max_lhs_complexity: u32::MAX,
+        max_rhs_complexity: u32::MAX,
+        symbol_table: std::sync::Arc::new(ries_rs::SymbolTable::from_profile(&profile)),
+        ..Default::default()
+    };
+    let search = ries_rs::SearchConfig {
+        target: 2.0,
+        ..Default::default()
+    };
+    #[allow(unused_mut)]
+    let mut results = vec![
+        search_with_stats_and_config(&gen, &search),
+        search_streaming_with_config(&gen, &search),
+        search_one_sided_with_stats_and_config(&gen, &search),
+    ];
+    #[cfg(feature = "parallel")]
+    results.extend([
+        ries_rs::search::search_parallel_with_stats_and_config(&gen, &search),
+        ries_rs::search::search_turbo_with_stats_and_config(&gen, &search),
+    ]);
+    for (matches, _) in results {
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].exact);
+        assert_eq!(matches[0].complexity, u32::MAX);
+    }
+}

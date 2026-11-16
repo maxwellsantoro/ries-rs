@@ -213,6 +213,100 @@ impl Default for SearchOptionsInput {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct DiscoveryOptionsInput {
+    level: u32,
+    #[serde(rename = "maxMatches", alias = "max_matches")]
+    max_matches: usize,
+    preset: Option<String>,
+    parallel: bool,
+    #[serde(rename = "verificationBits", alias = "verification_bits")]
+    verification_bits: Option<u32>,
+}
+
+impl Default for DiscoveryOptionsInput {
+    fn default() -> Self {
+        let defaults = crate::DiscoveryOptions::default();
+        Self {
+            level: defaults.level,
+            max_matches: defaults.max_matches,
+            preset: defaults.preset,
+            parallel: defaults.parallel,
+            verification_bits: defaults.verification_bits,
+        }
+    }
+}
+
+/// Discover distinct, precision-aware hypotheses from an original decimal.
+///
+/// Returns a plain JSON-compatible ries-discovery-v1 run, preserving the
+/// literal, resolved configuration, supporting equations, and evidence status.
+/// Raw search() and SearchOptions retain their existing behavior.
+#[wasm_bindgen(js_name = discover)]
+pub fn discover_wasm(target_literal: &str, options: Option<JsValue>) -> Result<JsValue, JsValue> {
+    let input: DiscoveryOptionsInput = match options {
+        None => DiscoveryOptionsInput::default(),
+        Some(value) if value.is_null() || value.is_undefined() => DiscoveryOptionsInput::default(),
+        Some(value) => {
+            if !value.is_object() || value.is_function() || js_sys::Array::is_array(&value) {
+                return Err(JsValue::from_str("Discovery options must be an object"));
+            }
+            let prototype = js_sys::Object::get_prototype_of(&value);
+            let ordinary_prototype = js_sys::Object::get_prototype_of(&js_sys::Object::new());
+            if !prototype.is_null()
+                && !js_sys::Object::is(prototype.as_ref(), ordinary_prototype.as_ref())
+            {
+                return Err(JsValue::from_str(
+                    "Discovery options must be a plain object",
+                ));
+            }
+            // serde-wasm-bindgen accesses the requested struct fields directly;
+            // Serde's deny_unknown_fields alone does not inspect extra JS keys.
+            for key in js_sys::Reflect::own_keys(&value)? {
+                let name = key.as_string().ok_or_else(|| {
+                    JsValue::from_str("Invalid discovery options: symbol keys are unsupported")
+                })?;
+                if ![
+                    "level",
+                    "maxMatches",
+                    "max_matches",
+                    "preset",
+                    "parallel",
+                    "verificationBits",
+                    "verification_bits",
+                ]
+                .contains(&name.as_str())
+                {
+                    return Err(JsValue::from_str(&format!(
+                        "Invalid discovery options: unknown field '{name}'"
+                    )));
+                }
+            }
+            serde_wasm_bindgen::from_value(value)
+                .map_err(|e| JsValue::from_str(&format!("Invalid discovery options: {e}")))?
+        }
+    };
+    if input.parallel && !cfg!(feature = "wasm-threads") {
+        return Err(JsValue::from_str(
+            "Parallel discovery requires an initialized wasm-threads build",
+        ));
+    }
+    let run = crate::discover(
+        target_literal,
+        &crate::DiscoveryOptions {
+            level: input.level,
+            max_matches: input.max_matches,
+            preset: input.preset,
+            parallel: input.parallel,
+            verification_bits: input.verification_bits,
+        },
+    )
+    .map_err(|e| JsValue::from_str(&e))?;
+    run.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 fn parse_search_options(options: Option<JsValue>) -> Result<SearchOptionsInput, JsValue> {
     match options {
         None => Ok(SearchOptionsInput::default()),
