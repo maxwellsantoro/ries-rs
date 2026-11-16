@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Release decision: these changes target **3.0.0**, not a 2.x release, because
-`ExpressionConstraintOptions` gains a required field and the stop contract
-changes observable ordering. Package metadata is staged at 3.0.0; this batch
-remains unpublished until the coordinated release in `RELEASING.md`.
+## [3.0.0] - 2026-11-15
+
+This major release adds precision-aware discovery across all interfaces.
+`ExpressionConstraintOptions` gains a required field and the corrected stop
+contract changes observable ordering; see the migration guidance in
+[the release notes](docs/releases/v3.0.0.md).
 
 ### Fixed
 - Reject impossible squared-trig and squared-reciprocal levels through conservative unary range propagation, retaining legitimate endpoint and interior roots.
