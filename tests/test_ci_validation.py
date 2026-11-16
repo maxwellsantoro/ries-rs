@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,6 +56,40 @@ class Checks(unittest.TestCase):
         self.assertNotEqual(run("other", "123"), 0)
         self.assertNotEqual(run("../main", "123"), 0)
         self.assertNotEqual(run("main", "abc"), 0)
+
+    def test_release_validation_uses_selected_tag_in_manual_recovery(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        step = workflow.split("      - name: Require tag to match package version\n", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1]
+                                 .split("\n  build-binaries:", 1)[0])
+        (self.directory / "Cargo.toml").write_text('[package]\nversion = "3.0.0"\n')
+        for tag, expected in (("v3.0.0", 0), ("v3.0.1", 1), ("main", 1)):
+            with self.subTest(tag=tag):
+                result = subprocess.run(
+                    ["bash", "-eo", "pipefail", "-c", script], cwd=self.directory,
+                    env=dict(os.environ, RELEASE_TAG=tag, GITHUB_REF_NAME="main"),
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+    def test_release_recovery_keeps_all_checkouts_on_selected_source(self):
+        # Missing one override can test or publish main while other jobs use the tag.
+        for name, expected in (
+            ("ci.yml", "ref: ${{ inputs.source_ref || github.sha }}"),
+            ("release.yml", "ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.sha }}"),
+        ):
+            lines = (ROOT / ".github/workflows" / name).read_text().splitlines()
+            checkouts = [i for i, line in enumerate(lines) if "uses: actions/checkout@" in line]
+            self.assertTrue(checkouts)
+            for i in checkouts:
+                with self.subTest(workflow=name, line=i + 1):
+                    self.assertEqual(lines[i + 1].strip(), "with:")
+                    self.assertEqual(lines[i + 2].strip(), expected)
+
+    def test_python_39_release_wheel_uses_supported_linux_runner(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        job = workflow.split("  build-python:\n", 1)[1].split("  build-python-sdist:\n", 1)[0]
+        self.assertIn("- os: ubuntu-24.04", job)
+        self.assertNotIn("- os: ubuntu-latest", job)
 
 
 if __name__ == "__main__":
