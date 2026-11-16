@@ -2,6 +2,12 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      source_ref:
+        description: Immutable source ref supplied by the release workflow
+        required: false
+        type: string
+        default: ''
   workflow_dispatch:
   push:
     branches: [main, master]
@@ -30,6 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           fetch-depth: 0
       - name: Select checks from the complete PR diff
         id: select
@@ -43,6 +50,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -66,6 +75,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -83,6 +94,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -112,6 +125,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -138,6 +153,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -166,6 +183,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -203,6 +222,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -230,6 +251,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -254,6 +277,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -274,6 +299,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.99.1
@@ -292,6 +319,8 @@ jobs:
     steps:
       - name: Checkout ries-rs
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Download and verify original RIES source
         run: |
@@ -345,6 +374,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-unknown-unknown
@@ -373,6 +404,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
       - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-python@v6
@@ -424,6 +457,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
       - name: Require every selected check to succeed
         env:
           CI_NEEDS: ${{ toJSON(needs) }}

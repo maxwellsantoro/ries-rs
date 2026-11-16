@@ -79,6 +79,16 @@ move together:
    - `publish-python` (PyPI upload)
    - `create-release` (GitHub release publication after registry publishes succeed)
 
+If a runner or workflow failure requires a repair after tagging, merge the
+workflow repair into `main`, then dispatch the release workflow with the existing
+tag, for example `gh workflow run release.yml --ref main -f tag=v3.0.0`. Every
+checkout and the full reusable CI gate use the selected tag; the release notes,
+version check, and GitHub release also use that tag. The workflow implementation
+comes from `main`, so retain both the workflow revision and the source commit
+from the installed-consumer receipt. Preserve the existing tag and monitor the
+new run through publication. Linux Python 3.9 wheels use Ubuntu 24.04 because
+`setup-python` does not provide that interpreter on Ubuntu 26.04.
+
 ### Artifact Verification
 
 After the workflow finishes, verify the GitHub release contains:
