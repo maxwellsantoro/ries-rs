@@ -2,6 +2,27 @@ use super::*;
 use serde_json::Value;
 
 #[test]
+fn stop_below_requires_a_finite_nonnegative_threshold() {
+    for value in ["nan", "NaN", "inf", "+inf", "-inf", "infinity", "-1"] {
+        let output = run_ries_raw(&[
+            "2.5",
+            "-l0",
+            &format!("--stop-below={value}"),
+            "--report",
+            "false",
+            "-n1",
+        ]);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "accepted --stop-below={value}"
+        );
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--stop-below"));
+    }
+}
+
+#[test]
 fn test_define_does_not_panic() {
     let (stdout, _stderr) = run_ries(&[
         "--define",
@@ -1806,8 +1827,13 @@ fn precision_preserves_default_trig_and_distinguishes_unavailable_operators() {
         "x1SE",
         "10000000000000000",
     ]);
-    let row = &trig["high_precision_verification"]["results"][0];
-    assert_eq!(row["lhs_postfix"], "xSE");
+    // Direct sinpi(x)=0 is now retained and may precede its exponential.
+    let row = trig["high_precision_verification"]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["lhs_postfix"] == "xSE")
+        .expect("the composed trig control remains available");
     assert_eq!(row["status"], "verified");
     assert_eq!(row["highprec_error"], 0.0);
 

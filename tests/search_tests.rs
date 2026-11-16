@@ -1440,8 +1440,9 @@ fn test_default_api_level_finds_plain_equations() {
         }
         if target == 2.5 {
             assert!(
-                matches.iter().all(|m| m.lhs.value.abs() >= 1e-4),
-                "a non-zero target must still drop LHS values under 1e-4"
+                matches.iter().all(|m| m.lhs.value.abs() >= 1e-4
+                    || (m.lhs.expr.to_postfix() == "xC" && m.rhs.value == 0.0 && m.exact)),
+                "near-zero filtering only exempts the direct, exact trig zero"
             );
         }
     }

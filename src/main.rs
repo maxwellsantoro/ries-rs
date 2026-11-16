@@ -84,6 +84,14 @@ fn main() {
         return;
     }
 
+    if args
+        .stop_below
+        .is_some_and(|threshold| !threshold.is_finite() || threshold < 0.0)
+    {
+        eprintln!("Error: --stop-below must be finite and nonnegative.");
+        std::process::exit(2);
+    }
+
     let _compat_noop = (args.wide, args.wide_output, args.relative_roots);
     let diagnostics = parse_diagnostics(args.diagnostics.as_deref(), args.show_work, args.stats);
 

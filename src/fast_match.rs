@@ -365,7 +365,7 @@ fn make_match(
     let rhs_eval = evaluate_with_context(&rhs_expr, target, context).ok()?;
 
     let x_value = rhs_eval.value;
-    let exact = crate::search::match_exactness(
+    let candidate_exact = crate::search::match_exactness(
         lhs_eval.value,
         rhs_eval.value,
         lhs_eval.derivative,
@@ -373,6 +373,8 @@ fn make_match(
         target,
     )?;
 
+    let exact =
+        candidate_exact && crate::eval::exactness_resolved(&lhs_expr, &rhs_expr, target, context);
     Some(Match {
         lhs: EvaluatedExpr {
             expr: lhs_expr,

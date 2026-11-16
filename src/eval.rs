@@ -12,6 +12,9 @@ use crate::profile::UserConstant;
 use crate::symbol::{NumType, Seft, Symbol};
 use crate::udf::{UdfOp, UserFunction};
 
+mod roundoff;
+pub(crate) use roundoff::exactness_resolved;
+
 /// Result of evaluating an expression
 #[derive(Debug, Clone, Copy)]
 pub struct EvalResult {

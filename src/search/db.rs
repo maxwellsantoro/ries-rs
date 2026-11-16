@@ -519,6 +519,12 @@ fn match_one_lhs(
     // Retain complexity ties for the canonical postfix tie-break.
     let rhs_is_eligible = |rhs: &EvaluatedExpr| {
         config.rhs_symbol_allowed(&rhs.expr)
+            && !super::zero_lhs_nonzero_rhs(
+                lhs.value,
+                rhs.value,
+                config.target,
+                config.zero_value_threshold,
+            )
             && crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
             && config.filters.allows_side(rhs)
             && config.filters.allows_pair(&lhs.expr, &rhs.expr)
@@ -531,7 +537,12 @@ fn match_one_lhs(
     // trivial matches (like cospi(2.5)=0 matching many RHS near 0).
     // Original RIES: "Prune zero subexpressions".
     // Target 0 is exempt: `x` itself is under the threshold there.
-    if super::prune_near_zero_lhs(lhs.value, config.target, config.zero_value_threshold) {
+    if super::prune_near_zero_lhs(
+        lhs,
+        config.target,
+        config.zero_value_threshold,
+        config.trig_argument_scale,
+    ) {
         if config.show_pruned_range {
             eprintln!(
                 "  [pruned range] value={:.6e} reason=\"near-zero\" expr=\"{}\"",
@@ -639,7 +650,7 @@ fn match_one_lhs(
         };
 
         let Some(exact) =
-            super::match_exactness(lhs.value, rhs.value, lhs.derivative, x_value, config.target)
+            super::resolved_exactness(lhs, rhs, x_value, config.target, &context.eval)
         else {
             continue;
         };

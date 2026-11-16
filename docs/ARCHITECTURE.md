@@ -26,7 +26,8 @@ raw match ordering and their original return types. See
 ### Core engine
 
 - `src/expr.rs`: postfix expression representation and infix rendering
-- `src/eval.rs`: numerical evaluation and derivatives
+- `src/eval.rs`: numerical evaluation and derivatives; `src/eval/roundoff.rs`
+  supplies the intermediate-roundoff sensitivity gate for numerical exact labels
 - `src/gen.rs`: expression generation
 - `src/search.rs`: search orchestration and match discovery
 - `src/pool.rs`: bounded match collection, ranking, and ordering

@@ -296,6 +296,20 @@ pub(crate) fn match_exactness(
     (derivative.is_finite() && derivative.abs() >= min_slope && derivative != 0.0)
         .then(|| near_target && sides_agree_within_ulps(lhs_value, rhs_value))
 }
+/// Retain the numerical exact label only when forward roundoff does not
+/// consume its precision budget. Unresolved candidates remain inexact matches.
+pub(crate) fn resolved_exactness(
+    lhs: &EvaluatedExpr,
+    rhs: &EvaluatedExpr,
+    solved_x: f64,
+    target: f64,
+    context: &EvalContext<'_>,
+) -> Option<bool> {
+    match_exactness(lhs.value, rhs.value, lhs.derivative, solved_x, target).map(|exact| {
+        exact && crate::eval::exactness_resolved(&lhs.expr, &rhs.expr, target, context)
+    })
+}
+
 #[cfg(test)]
 use newton::newton_raphson;
 use newton::newton_raphson_with_constants;
@@ -679,15 +693,36 @@ pub fn significant_digits_tolerance(target: f64, target_text: Option<&str>) -> f
         .min(f64::MAX)
 }
 
-/// Whether an LHS value should be dropped before matching.
-///
-/// Values under `threshold` match every constant near zero and flood the pool
-/// (`cospi(2.5) = 0` against many tiny right-hand sides). Target zero is the
-/// exception: `x` evaluates to 0, and dropping it makes `x = ln(1)` unreachable.
-/// `-0.0` compares equal to `0.0`, so a signed zero target is kept too.
+/// Preserve simple subnormal targets and direct, exact trig zeros without
+/// admitting every rounded or underflowed zero-valued expression.
 #[inline]
-pub(crate) fn prune_near_zero_lhs(value: f64, target: f64, threshold: f64) -> bool {
-    value.abs() < threshold && target != 0.0
+pub(crate) fn prune_near_zero_lhs(
+    lhs: &EvaluatedExpr,
+    target: f64,
+    threshold: f64,
+    trig_scale: f64,
+) -> bool {
+    if target == 0.0 || lhs.value.abs() >= threshold {
+        return false;
+    }
+    if target.is_subnormal() && lhs.expr.symbols() == [crate::symbol::Symbol::X] {
+        return false;
+    }
+    let direct_trig_zero = lhs.value == 0.0
+        && trig_scale == crate::eval::DEFAULT_TRIG_ARGUMENT_SCALE
+        && matches!(
+            lhs.expr.symbols(),
+            [
+                crate::symbol::Symbol::X,
+                crate::symbol::Symbol::SinPi | crate::symbol::Symbol::CosPi
+            ]
+        );
+    !direct_trig_zero
+}
+
+#[inline]
+pub(crate) fn zero_lhs_nonzero_rhs(lhs: f64, rhs: f64, target: f64, threshold: f64) -> bool {
+    threshold > 0.0 && lhs == 0.0 && rhs != 0.0 && target != 0.0
 }
 
 /// A matched equation
@@ -708,7 +743,9 @@ pub struct Match {
     /// The two sides, both evaluated at the typed target, agree to a few ulps
     /// of `max(|lhs|, |rhs|)` and `x_value` is within eight ulps of the target.
     /// The LHS slope must also map one ulp of the RHS to at most eight ulps
-    /// of the target.
+    /// of the target. Propagated intermediate roundoff must fit the side
+    /// agreement budget; a zero side requires no unresolved roundoff.
+    /// This is a numerical classification, not a symbolic proof.
     pub exact: bool,
 }
 
@@ -810,9 +847,10 @@ pub struct SearchConfig {
     /// Threshold for pruning LHS expressions with near-zero values.
     ///
     /// LHS expressions with absolute values below this threshold are pruned
-    /// to prevent flooding results with trivial matches like `cospi(2.5) = 0`.
-    /// The prune is skipped when the target itself is zero, so `x = ln(1)` can
-    /// be found. Set to 0.0 to disable this filtering for every target.
+    /// to prevent flooding results with near-zero matches. Exceptions retain
+    /// zero targets, a direct `x` at subnormal targets, and direct default-scale
+    /// trig zeros. With filtering enabled, a zero LHS at a nonzero target is
+    /// paired only with a zero RHS. Set to 0.0 to disable this filtering.
     ///
     /// Default: 1e-4
     pub zero_value_threshold: f64,
@@ -1618,9 +1656,10 @@ pub fn search_streaming_with_config(
                 // Skip LHS with value too close to 0. Target 0 is exempt so
                 // `x = ln(1)` is reachable. See `prune_near_zero_lhs`.
                 if prune_near_zero_lhs(
-                    lhs.value,
+                    lhs,
                     search_config.target,
                     search_config.zero_value_threshold,
+                    search_config.trig_argument_scale,
                 ) {
                     if search_config.show_pruned_range {
                         eprintln!(
@@ -1653,7 +1692,12 @@ pub fn search_streaming_with_config(
                 stats.record_candidate_window(lhs, rhs_db.count_in_range(low, high));
 
                 for rhs in rhs_db.iter_tiers_in_range(low, high) {
-                    if !crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
+                    if zero_lhs_nonzero_rhs(
+                        lhs.value,
+                        rhs.value,
+                        search_config.target,
+                        search_config.zero_value_threshold,
+                    ) || !crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
                         || !search_config.filters.allows_pair(&lhs.expr, &rhs.expr)
                         || pass_stop
                             .excludes(lhs.expr.complexity().saturating_add(rhs.expr.complexity()))
@@ -1698,13 +1742,9 @@ pub fn search_streaming_with_config(
                     } else {
                         (initial_guess, x_delta)
                     };
-                    let Some(exact) = match_exactness(
-                        lhs.value,
-                        rhs.value,
-                        lhs.derivative,
-                        x_value,
-                        search_config.target,
-                    ) else {
+                    let Some(exact) =
+                        resolved_exactness(lhs, rhs, x_value, search_config.target, &context.eval)
+                    else {
                         continue;
                     };
 
@@ -1827,13 +1867,9 @@ pub fn search_one_sided_with_stats_and_config(
             }
 
             let error = rhs.value - config.target;
-            let Some(is_exact) = match_exactness(
-                lhs.value,
-                rhs.value,
-                lhs.derivative,
-                rhs.value,
-                config.target,
-            ) else {
+            let Some(is_exact) =
+                resolved_exactness(&lhs, rhs, rhs.value, config.target, &context.eval)
+            else {
                 continue;
             };
             if !pool.would_accept(error.abs(), is_exact) || !config.filters.allows_error(error) {
