@@ -28,6 +28,15 @@ def test_search_returns_typed_matches():
     assert "error" in payload
 
 
+def test_roundoff_and_direct_trig_zero_contract():
+    rows = ries_rs.search(1e-15, level=0, max_matches=200, parallel=False)
+    suspect = [m for m in rows if m.lhs_postfix == "xrC" and m.rhs_postfix == "8rC"]
+    assert suspect, "retain the approximate candidate"
+    assert all(not m.is_exact for m in suspect)
+    zeros = ries_rs.search(0.5, level=0, max_matches=100, parallel=False)
+    assert any(m.lhs_postfix == "xC" and m.is_exact for m in zeros)
+
+
 def test_search_rejects_non_finite_target():
     for bad_target in (float("nan"), float("inf"), float("-inf")):
         try:

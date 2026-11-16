@@ -259,13 +259,32 @@ not a browser latency guarantee. Compare explicit budgets and use the recorded
 
 The canonical comparator is `compare_matches` in `src/pool.rs`.
 
-A row is exact when all three conditions hold (`match_exactness`):
+A row is numerically exact when the following conditions hold:
 
 - the two sides, both evaluated at the typed target, agree to a few ulps of
   `max(|lhs|, |rhs|)` (`sides_agree_within_ulps`)
 - the solved `x` is within eight ulps of the typed target
 - one ulp of the RHS corresponds to at most eight ulps of the target under
   the LHS slope, i.e. `ulp(rhs) ≤ 8 · ulp(target) · |f′(target)|`
+- the residual plus the propagated intermediate-roundoff budget fits the same
+  side-agreement allowance; a zero side requires both sides to be zero with no
+  unresolved roundoff (`src/eval/roundoff.rs`)
+
+The roundoff gate reuses the ordinary evaluator and accounts for lost bits
+through composed operations, including trig argument reduction, cancellation,
+and underflow. It can withhold an exact label while retaining an approximate
+candidate. This numerical sensitivity guard is not a certified interval,
+independent verification, or symbolic proof. Target and constant inputs remain
+the engine's f64 values; it cannot recover decimal digits lost during parsing.
+Lambert W's absolute-residual solver does not supply an ulp error bound; its
+exact label is therefore withheld except at zero, the `W(e)` control, and near
+zero when a small-argument bound fits the budget.
+
+Default near-zero filtering retains zero targets, direct `x` at subnormal
+targets, and direct default-scale trig zeros such as `cospi(0.5) = 0`. Other
+near-zero LHS expressions remain pruned. A zero LHS at a nonzero target is paired
+only with a zero RHS while this filter is enabled. Library callers can set
+`zero_value_threshold = 0.0` to disable both parts of this filtering.
 
 A stationary LHS cannot locate a root with the linearized search and is
 skipped. Every match, including an approximation, must resolve x at the

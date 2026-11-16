@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Withhold numerical exact labels when amplified intermediate rounding, cancellation, or underflow consumes the side-agreement budget, consistently across matchers and bindings.
+- Retain direct half-integer trig zeros and direct variable matches at subnormal targets under the default near-zero filter, while preserving the filter's explicit opt-out.
+- Reject nonfinite and negative CLI `--stop-below` thresholds before search or output.
+
 ## [3.0.0] - 2026-11-15
 
 This major release adds precision-aware discovery across all interfaces.

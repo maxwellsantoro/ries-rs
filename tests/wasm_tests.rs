@@ -64,6 +64,19 @@ fn test_wasm_basic_search() {
 }
 
 #[wasm_bindgen_test]
+fn test_wasm_roundoff_and_direct_trig_zero_contract() {
+    let rows = search(1e-15, Some(search_options(0, 200))).unwrap();
+    let suspect: Vec<_> = rows
+        .iter()
+        .filter(|m| m.lhs_postfix == "xrC" && m.rhs_postfix == "8rC")
+        .collect();
+    assert!(!suspect.is_empty(), "retain the approximate candidate");
+    assert!(suspect.iter().all(|m| !m.is_exact));
+    let zeros = search(0.5, Some(search_options(0, 100))).unwrap();
+    assert!(zeros.iter().any(|m| m.lhs_postfix == "xC" && m.is_exact));
+}
+
+#[wasm_bindgen_test]
 fn test_wasm_search_with_options() {
     // Match the public JS API by passing a plain options object.
     let limited = search(2.0, Some(search_options(3, 1)))
