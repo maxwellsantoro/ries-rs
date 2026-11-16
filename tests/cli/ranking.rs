@@ -316,3 +316,115 @@ fn root_pruning_keeps_two_index_root_without_sqrt() {
         "x = 2nd root of 2 should survive pruning when sqrt is unavailable\n{stdout}"
     );
 }
+
+#[test]
+fn cli_preserves_stop_winner_across_matcher_modes() {
+    let base = [
+        "2.12345",
+        "-l0",
+        "--report=false",
+        "-n5",
+        "--parity-ranking",
+        "--stop-below",
+        "5.551115123125783e-15",
+        "-X",
+        "16:a:first:2.123450000000006",
+        "-X",
+        "16:b:second:2.1234500000000054",
+        "--json",
+    ];
+    for options in [
+        vec![],
+        vec!["--deterministic"],
+        vec!["--streaming"],
+        vec!["--turbo"],
+        vec!["--turbo", "--deterministic"],
+    ] {
+        let mut args = base.to_vec();
+        args.extend(options);
+        let (stdout, _) = run_ries(&args);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let results = json["results"].as_array().unwrap();
+        assert_eq!(results[0]["equation"], "x = b", "{args:?}");
+        assert!(results[0]["error"].as_f64().unwrap() < 5.551115123125783e-15);
+        assert!(results.iter().any(|m| m["equation"] == "x = a"));
+    }
+}
+
+#[test]
+fn stop_threshold_winner_beats_a_cheaper_nonqualifying_constant() {
+    for options in [
+        vec![],
+        vec!["--deterministic"],
+        vec!["--streaming"],
+        vec!["--turbo"],
+        vec!["--parallel"],
+    ] {
+        let mut args = vec![
+            "1",
+            "-l0",
+            "-S",
+            "x\u{80}\u{81}",
+            "--report=false",
+            "-n5",
+            "--parity-ranking",
+            "--stop-below",
+            "1e-6",
+            "-X",
+            "16:a:first:1.0000010000000001",
+            "-X",
+            "20:b:second:1.000001",
+            "--json",
+        ];
+        args.extend(options);
+        let (stdout, _) = run_ries(&args);
+        let data: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(data["results"][0]["equation"], "x = b", "{args:?}");
+        assert!(data["results"][0]["error"].as_f64().unwrap() < 1e-6);
+    }
+}
+
+#[test]
+fn zero_weight_boundary_search_keeps_the_exact_equation_in_every_mode() {
+    for mode in ["--deterministic", "--parallel", "--streaming", "--turbo"] {
+        let (stdout, _) = run_ries(&[
+            "-l0",
+            "--report=false",
+            mode,
+            "-Sxn2",
+            "--S-RHS=2",
+            "--symbol-weights=:n:0 :x:35",
+            "--json",
+            "--",
+            "-2",
+        ]);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let results = json["results"].as_array().unwrap();
+        assert!(
+            results
+                .iter()
+                .any(|m| m["lhs_postfix"] == "xn" && m["rhs_postfix"] == "2" && m["exact"] == true),
+            "{mode}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn full_u32_symbol_weights_are_safe_in_cli_generation() {
+    for mode in ["--deterministic", "--parallel", "--streaming", "--turbo"] {
+        let (stdout, _) = run_ries(&[
+            "2.5",
+            "-l0",
+            "--report=false",
+            mode,
+            "-S1+",
+            "--symbol-weights=:1:4294967295",
+            "--json",
+        ]);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(
+            json["results"].as_array().unwrap().is_empty(),
+            "{mode}: {stdout}"
+        );
+    }
+}

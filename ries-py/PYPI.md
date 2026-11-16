@@ -35,6 +35,23 @@ x = sqrt(e)
 ln(x) = 1/2
 ```
 
+For rounded numerical observations, preserve the decimal as text and use the
+additive discovery API:
+
+```python
+import json
+
+run = ries_rs.discover("3.14159265", level=3, max_matches=3)
+print(run["hypotheses"][0]["representative"]["solve_for_x"])  # x = pi
+print(json.dumps(run, allow_nan=False))
+```
+
+The plain dictionary includes the original literal, resolved search settings,
+actual matcher statistics, and separate validation statuses. The cheapest
+equation resolving the entered precision bounds discovery, so fewer hypotheses
+than requested can be returned. Existing `search()` keeps its raw typed matches.
+Numerical matches and optional higher-precision corroboration are not proof.
+
 ## More Examples
 
 Use a preset to expose domain-specific constants:
@@ -60,6 +77,7 @@ print(json.dumps(payload, indent=2))
 ## What You Get
 
 - `ries_rs.search(...)` for equation search
+- `ries_rs.discover(...)` for decimal-precision-aware hypotheses and run records
 - `ries_rs.list_presets()` for available domain presets
 - `ries_rs.version()` for runtime version checks
 - `PyMatch` objects with `to_dict()` for serialization

@@ -4,6 +4,6 @@ import bindings from '../pkg-node/ries_rs.js';
 
 export default async function init() { return bindings.__wasm; }
 export function initSync() { return bindings.__wasm; }
-export const { SearchOptions, WasmMatch, search, listPresets, list_presets, version } = bindings;
+export const { SearchOptions, WasmMatch, search, discover, listPresets, list_presets, version } = bindings;
 export const initRuntime = bindings.init;
 export { initRuntime as init };

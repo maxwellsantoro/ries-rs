@@ -12,7 +12,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
 
 // Import the WASM functions
-use ries_rs::{init, list_presets, version, wasm_search as search};
+use ries_rs::{init, list_presets, version, wasm_discover as discover, wasm_search as search};
 
 fn search_options(level: u32, max_matches: u32) -> JsValue {
     let options = Object::new();
@@ -164,4 +164,154 @@ fn test_preset_constants_are_named() {
     assert!(results
         .iter()
         .all(|m| !m.lhs.contains("u0") && !m.rhs.contains("u0")));
+}
+
+#[wasm_bindgen_test]
+fn test_decimal_precision_and_underflow_are_checked() {
+    let options = search_options(0, 1);
+    Reflect::set(
+        &options,
+        &JsValue::from_str("matchAllDigits"),
+        &JsValue::TRUE,
+    )
+    .unwrap();
+    for text in [
+        "1.000000000000000000000000000001",
+        "-1.000000000000000000000000000001",
+        "1e-400",
+    ] {
+        Reflect::set(
+            &options,
+            &JsValue::from_str("targetText"),
+            &JsValue::from_str(text),
+        )
+        .unwrap();
+        assert!(
+            search(text.parse().unwrap(), Some(options.clone())).is_err(),
+            "{text}"
+        );
+    }
+    Reflect::set(
+        &options,
+        &JsValue::from_str("targetText"),
+        &JsValue::from_str("1.000000000000000000000000000000"),
+    )
+    .unwrap();
+    assert!(search(1.0, Some(options)).is_ok());
+}
+
+#[wasm_bindgen_test]
+fn discovery_recovers_rounded_known_answers_with_run_evidence() {
+    for (literal, lhs, rhs) in [
+        ("3.14159265", "x", "p"),
+        ("1.41421356", "x", "2q"),
+        ("1.64872127", "x", "eq"),
+    ] {
+        let value = discover(literal, Some(search_options(3, 3))).unwrap();
+        let run: ries_rs::DiscoveryRun = serde_wasm_bindgen::from_value(value).unwrap();
+        assert_eq!(run.schema, "ries-discovery-v1");
+        assert_eq!(run.target_literal, literal);
+        assert_eq!(run.config.max_lhs_complexity, 46);
+        assert_eq!(run.config.max_rhs_complexity, 46);
+        assert!(run.hypotheses.len() <= 3);
+        assert!(
+            run.hypotheses.iter().any(|hypothesis| {
+                let representative = &hypothesis.representative;
+                representative.lhs_postfix == lhs && representative.rhs_postfix == rhs
+            }),
+            "simple hypothesis missing for {literal}"
+        );
+        let keys: std::collections::HashSet<_> = run.hypotheses.iter().map(|h| &h.key).collect();
+        assert_eq!(keys.len(), run.hypotheses.len());
+        assert!(run.hypotheses[0].within_input_precision);
+        assert_eq!(run.hypotheses[0].validation.numerical.status, "numerical");
+        assert_eq!(
+            run.hypotheses[0].validation.high_precision.status,
+            "not_requested"
+        );
+        assert_eq!(
+            run.hypotheses[0].validation.polynomial_certificate.status,
+            "unavailable"
+        );
+    }
+}
+
+#[wasm_bindgen_test]
+fn discovery_option_aliases_preserve_literals_and_explicit_unavailable_checks() {
+    for json in [
+        r#"{"level":0,"maxMatches":1,"verificationBits":53}"#,
+        r#"{"level":0,"max_matches":1,"verification_bits":53}"#,
+    ] {
+        let value = discover(" 2.500 ", Some(js_sys::JSON::parse(json).unwrap())).unwrap();
+        let run: ries_rs::DiscoveryRun = serde_wasm_bindgen::from_value(value).unwrap();
+        assert_eq!(run.target_literal, " 2.500 ");
+        assert_eq!(run.config.max_matches, 1);
+        assert_eq!(run.config.verification_bits, Some(53));
+        assert_eq!(
+            run.hypotheses[0].validation.high_precision.status,
+            "unavailable"
+        );
+        assert!(!run.hypotheses[0]
+            .validation
+            .high_precision
+            .reason
+            .is_empty());
+    }
+    let value = discover("2", Some(search_options(0, 1))).unwrap();
+    let config = Reflect::get(&value, &JsValue::from_str("config")).unwrap();
+    assert!(Reflect::get(&config, &JsValue::from_str("preset"))
+        .unwrap()
+        .is_null());
+    assert!(
+        Reflect::get(&config, &JsValue::from_str("verification_bits"))
+            .unwrap()
+            .is_null()
+    );
+    assert!(js_sys::JSON::stringify(&value)
+        .unwrap()
+        .as_string()
+        .unwrap()
+        .contains("ries-discovery-v1"));
+}
+
+#[wasm_bindgen_test]
+fn discovery_rejects_ignored_or_invalid_options_and_decimal_loss() {
+    for json in [
+        "[]",
+        "true",
+        "1",
+        r#""options""#,
+        r#"{"level":6}"#,
+        r#"{"level":1.5}"#,
+        r#"{"level":-1}"#,
+        r#"{"level":null}"#,
+        r#"{"maxMatches":0}"#,
+        r#"{"maxMatches":1001}"#,
+        r#"{"maxMatches":1.5}"#,
+        r#"{"maxMatch":1}"#,
+        r#"{"maxMatches":1,"max_matches":2}"#,
+        r#"{"verificationBits":4097}"#,
+        r#"{"verificationBits":"128"}"#,
+        r#"{"rankingMode":"complexity"}"#,
+    ] {
+        assert!(
+            discover("2", Some(js_sys::JSON::parse(json).unwrap())).is_err(),
+            "{json}"
+        );
+    }
+    #[cfg(not(feature = "wasm-threads"))]
+    assert!(discover(
+        "2",
+        Some(js_sys::JSON::parse(r#"{"parallel":true}"#).unwrap())
+    )
+    .is_err());
+    for literal in [
+        "1garbage",
+        "0x10",
+        "NaN",
+        "1e-400",
+        "1.000000000000000000000000000001",
+    ] {
+        assert!(discover(literal, None).is_err(), "{literal}");
+    }
 }

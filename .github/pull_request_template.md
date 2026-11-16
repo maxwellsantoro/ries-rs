@@ -1,19 +1,14 @@
-## Summary
+## Problem and resulting behavior
 
-<!-- Briefly describe what this PR does and why. -->
+<!-- Explain the concrete trigger and before/after behavior. Link a roadmap packet when relevant. -->
 
-## Type of change
+## Validation
 
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Documentation update
-- [ ] Refactor
-- [ ] Other (describe below):
+<!-- Use docs/VALIDATION.md. Record focused and integrated checks, results/skips,
+     and the source/configuration identity of any reused evidence. Do not run
+     unaffected suites just to fill this section. CI result must pass. -->
 
-## Checklist
+## Contract and scope
 
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo clippy --all-targets --locked -- -D warnings` passes
-- [ ] `cargo nextest run --tests --locked` passes
-- [ ] Relevant feature/surface checks run if touched (`ries-py`, `wasm`, `web`, release docs)
-- [ ] Documentation updated if public APIs changed
+<!-- Public API/docs impact, meaningful regressions, and material limitations.
+     Omit sections that do not help review this change. -->

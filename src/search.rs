@@ -388,6 +388,13 @@ pub struct SearchStats {
     pub candidate_window_total: usize,
     /// Largest RHS candidate window scanned for any single LHS
     pub candidate_window_max: usize,
+    /// Window counts: 0, 1, 2–3, 4–7, …, 32768–65535, 65536+.
+    /// Counts include repeated scans when a stop search has two phases.
+    pub candidate_window_histogram: [usize; 18],
+    /// Actual final adaptive generation bound; None for fixed-budget matchers.
+    pub effective_max_lhs_complexity: Option<u32>,
+    /// Actual final adaptive generation bound; None for fixed-budget matchers.
+    pub effective_max_rhs_complexity: Option<u32>,
     /// Postfix form of the LHS that produced the largest candidate window
     pub candidate_window_max_lhs_postfix: Option<String>,
     /// LHS value for the largest candidate window
@@ -437,6 +444,9 @@ impl SearchStats {
 
     #[inline]
     pub fn record_candidate_window(&mut self, lhs: &EvaluatedExpr, width: usize) {
+        let bucket = ((usize::BITS - width.leading_zeros()) as usize).min(17);
+        self.candidate_window_histogram[bucket] =
+            self.candidate_window_histogram[bucket].saturating_add(1);
         self.candidate_window_total = self.candidate_window_total.saturating_add(width);
         if width > self.candidate_window_max {
             self.candidate_window_max = width;
@@ -461,6 +471,13 @@ impl SearchStats {
         self.candidate_window_total = self
             .candidate_window_total
             .saturating_add(other.candidate_window_total);
+        for (count, additional) in self
+            .candidate_window_histogram
+            .iter_mut()
+            .zip(other.candidate_window_histogram)
+        {
+            *count = count.saturating_add(additional);
+        }
         if other.candidate_window_max > self.candidate_window_max {
             self.candidate_window_max = other.candidate_window_max;
             self.candidate_window_max_lhs_postfix = other.candidate_window_max_lhs_postfix.clone();
@@ -1349,6 +1366,8 @@ pub fn search_adaptive_with_parallelism(
 
     // Overwrite the generation-side counts for the adaptive wrapper.
     stats.matcher = Some(MatcherPath::Adaptive);
+    stats.effective_max_lhs_complexity = Some(lhs_c);
+    stats.effective_max_rhs_complexity = Some(rhs_c);
     stats.gen_time = gen_time;
     stats.search_time = search_time;
     stats.lhs_count = all_lhs.len();
@@ -1636,7 +1655,8 @@ pub fn search_streaming_with_config(
                 for rhs in rhs_db.iter_tiers_in_range(low, high) {
                     if !crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
                         || !search_config.filters.allows_pair(&lhs.expr, &rhs.expr)
-                        || pass_stop.excludes(lhs.expr.complexity() + rhs.expr.complexity())
+                        || pass_stop
+                            .excludes(lhs.expr.complexity().saturating_add(rhs.expr.complexity()))
                     {
                         continue;
                     }
@@ -1696,7 +1716,7 @@ pub fn search_streaming_with_config(
                             rhs: rhs.clone(),
                             x_value,
                             error,
-                            complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                            complexity: lhs.expr.complexity().saturating_add(rhs.expr.complexity()),
                             exact,
                         };
                         pass_stop.observe(&m, search_config);
@@ -1791,7 +1811,7 @@ pub fn search_one_sided_with_stats_and_config(
     loop {
         for rhs in &generated.rhs {
             // RHS are visited in complexity order: past the bound, none qualify.
-            if pass_stop.excludes(lhs.expr.complexity() + rhs.expr.complexity()) {
+            if pass_stop.excludes(lhs.expr.complexity().saturating_add(rhs.expr.complexity())) {
                 early_exit = true;
                 break;
             }
@@ -1825,7 +1845,7 @@ pub fn search_one_sided_with_stats_and_config(
                 rhs: rhs.clone(),
                 x_value: rhs.value,
                 error,
-                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                complexity: lhs.expr.complexity().saturating_add(rhs.expr.complexity()),
                 exact: is_exact,
             };
 

@@ -16,8 +16,12 @@ use super::DisplayFormat;
 #[derive(Serialize)]
 pub struct JsonRunOutput {
     pub target: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_literal: Option<String>,
     pub trig_argument_scale: f64,
     pub search_level: f32,
+    pub requested_max_lhs_complexity: u32,
+    pub requested_max_rhs_complexity: u32,
     pub max_lhs_complexity: u32,
     pub max_rhs_complexity: u32,
     pub max_matches: usize,
@@ -109,6 +113,7 @@ pub struct JsonSearchStats {
     pub candidate_window_total: usize,
     pub candidate_window_avg: f64,
     pub candidate_window_max: usize,
+    pub candidate_window_histogram: [usize; 18],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_window_max_lhs_postfix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -266,11 +271,18 @@ pub fn build_json_output(
     let lhs_pruned = stats.lhs_count.saturating_sub(stats.lhs_tested);
     let peak_memory = peak_memory_bytes();
     JsonRunOutput {
+        target_literal: None,
         target,
         trig_argument_scale: eval_context.trig_argument_scale,
         search_level,
-        max_lhs_complexity,
-        max_rhs_complexity,
+        requested_max_lhs_complexity: max_lhs_complexity,
+        requested_max_rhs_complexity: max_rhs_complexity,
+        max_lhs_complexity: stats
+            .effective_max_lhs_complexity
+            .unwrap_or(max_lhs_complexity),
+        max_rhs_complexity: stats
+            .effective_max_rhs_complexity
+            .unwrap_or(max_rhs_complexity),
         max_matches,
         results_returned: results.len(),
         ranking_mode: ranking_mode_name(ranking_mode),
@@ -298,6 +310,7 @@ pub fn build_json_output(
             candidate_window_total: stats.candidate_window_total,
             candidate_window_avg: stats.candidate_window_avg(),
             candidate_window_max: stats.candidate_window_max,
+            candidate_window_histogram: stats.candidate_window_histogram,
             candidate_window_max_lhs_postfix: stats.candidate_window_max_lhs_postfix.clone(),
             candidate_window_max_lhs_value: stats.candidate_window_max_lhs_value,
             candidate_window_max_lhs_derivative: stats.candidate_window_max_lhs_derivative,

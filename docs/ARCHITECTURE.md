@@ -12,8 +12,14 @@ The repository ships the same search engine through four main surfaces:
 - Python bindings: `ries-py/`
 - WebAssembly + browser UI: `src/wasm.rs`, `web/`, and `package.json`
 
-All four surfaces ultimately feed into the same core generation, evaluation,
-ranking, and reporting logic in `src/`.
+All four surfaces use the same core generation, evaluation, refinement, and
+match-ordering code in `src/`. Their configuration and presentation differ:
+CLI reports can apply precision-aware category selection. The additive
+`discover()` API shares literal-aware hypothesis selection and a versioned run
+envelope across CLI/Rust, Python, and WASM/browser. Existing `search()` calls keep
+raw match ordering and their original return types. See
+[SEARCH_MODEL.md](SEARCH_MODEL.md) for the current contract and
+[ROADMAP.md](ROADMAP.md) for delivery status.
 
 ## Codebase Layout
 
@@ -24,6 +30,8 @@ ranking, and reporting logic in `src/`.
 - `src/gen.rs`: expression generation
 - `src/search.rs`: search orchestration and match discovery
 - `src/pool.rs`: bounded match collection, ranking, and ordering
+- `src/discovery.rs`: precision-resolving complexity tiers, conservative displayed
+  hypothesis grouping, resolved run settings, and numerical verification status
 - `src/solver.rs`: solve-for-x presentation helpers and canonicalization. `solve_for_x_at` picks the real inverse branch nearest the matched root, including every exactly representable integer period, and returns nothing when that branch is not real or not representable; `solve_for_x_rhs_expression` stays on the principal branch
 - `src/symbol.rs` and `src/symbol_table.rs`: built-in symbols plus profile overrides
 - `src/profile.rs`, `src/presets.rs`, `src/udf.rs`: user customization surfaces
@@ -37,7 +45,8 @@ ranking, and reporting logic in `src/`.
 
 - `src/report.rs`: categorized report output
 - `src/metrics.rs`: elegance/interestingness/stability-related metrics
-- `src/stability.rs`: impostor-detection and stability analysis
+- `src/stability.rs`: persistence across tolerance levels (separate from the
+  derivative-based report stability heuristic)
 - `src/manifest.rs`: reproducibility manifest generation
 - `src/pslq.rs`: integer-relation mode
 
@@ -58,6 +67,13 @@ At a high level, all runtime surfaces execute the same pipeline:
 4. Match LHS and RHS numerically and refine candidates with Newton iteration when enabled.
 5. Deduplicate and rank matches.
 6. Format results for the caller: CLI text, JSON, Python objects, or WASM objects.
+
+Discovery reuses the matchers' two-phase simplest-qualified stop contract before
+the result limit, then groups retained equations by conservative root-expression
+keys. It does not change the raw pool comparator. Supporting equations retain
+their original identities; grouped candidates do not claim identical global
+solution sets. Independent polynomial certificates remain external arithmetic
+checks through `scripts/verify_discovery.py`, not an engine proof claim.
 
 ## Generation Modes
 
@@ -91,8 +107,10 @@ Ranking and ordering are centralized rather than duplicated across frontends:
 - complexity weights live in `src/symbol.rs` and `src/symbol_table.rs`
 - deterministic sorting is part of the search contract, not a frontend concern
 
-That is why CLI, Python, and WASM all expose the same underlying match concepts
-even when they differ in presentation or supported options.
+CLI, Python, and WASM expose the same underlying match concepts. Pool ordering
+does not imply identical user-visible selections: CLI report categories apply
+additional ordering and deduplication, and the bindings expose fewer options.
+See [SEARCH_MODEL.md](SEARCH_MODEL.md) for those contracts.
 
 ## Build and Release Artifacts
 
@@ -104,8 +122,8 @@ Release outputs are split by surface:
 - GitHub release WASM tarball containing `pkg`, `pkg-node`, and `pkg-bundler`
 - optional static-site bundle built locally into `dist/web-site/`
 
-See `RELEASING.md` for the maintainer checklist and `web/README.md` for the
-browser bundle flow.
+See [RELEASING.md](../RELEASING.md) for the maintainer checklist and
+[web/README.md](../web/README.md) for the browser bundle flow.
 
 ## Related Documentation
 

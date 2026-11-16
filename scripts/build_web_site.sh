@@ -18,6 +18,7 @@ rm -rf "$SITE_DIR"
 mkdir -p "$SITE_DIR/pkg"
 
 cp "$ROOT_DIR/web/index.html" "$SITE_DIR/index.html"
+cp "$ROOT_DIR/web/styles.css" "$SITE_DIR/styles.css"
 cp "$ROOT_DIR/web/search-worker.js" "$SITE_DIR/search-worker.js"
 cp -R "$ROOT_DIR/web/vendor" "$SITE_DIR/vendor"
 cp -R "$ROOT_DIR/pkg/." "$SITE_DIR/pkg/"

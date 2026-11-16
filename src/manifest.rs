@@ -40,6 +40,9 @@ pub struct PlatformInfo {
 pub struct SearchConfigInfo {
     /// Target value searched for
     pub target: f64,
+    /// Original validated decimal spelling, distinct from its binary value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_literal: Option<String>,
     /// Search level
     pub level: f32,
     /// Maximum LHS complexity

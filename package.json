@@ -1,6 +1,6 @@
 {
   "name": "ries-rs",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "Find algebraic equations given their solution - WASM build",
   "main": "pkg-node/ries_rs.js",
   "module": "pkg/ries_rs.js",
@@ -39,14 +39,15 @@
     "build": "RUSTFLAGS='-C target-feature=-reference-types' rustup run nightly wasm-pack build --target web --out-dir pkg -- --features wasm -Z build-std=panic_abort,std",
     "build:node": "RUSTFLAGS='-C target-feature=-reference-types' rustup run nightly wasm-pack build --target nodejs --out-dir pkg-node -- --features wasm -Z build-std=panic_abort,std",
     "build:bundler": "RUSTFLAGS='-C target-feature=-reference-types' rustup run nightly wasm-pack build --target bundler --out-dir pkg-bundler -- --features wasm -Z build-std=panic_abort,std",
-    "build:web:site": "npm run build && bash scripts/build_web_site.sh",
+    "build:web:site": "npm run build:css && npm run build && bash scripts/build_web_site.sh",
     "build:all": "npm run build && npm run build:node && npm run build:bundler",
     "build:threads": "bash scripts/build_web_threads.sh",
     "prepack": "npm run build:all",
     "test": "wasm-pack test --node -- --features wasm",
     "test:web:smoke": "playwright test -c playwright.config.ts tests/web-smoke.spec.ts --reporter=line --workers=1",
     "test:web:smoke:build": "npm run build:web:site && npm run test:web:smoke",
-    "test:wasm:package": "node tests/wasm-package.mjs"
+    "test:wasm:package": "node tests/wasm-package.mjs",
+    "build:css": "tailwindcss -c tailwind.config.cjs -i web/tailwind.css -o web/styles.css --minify"
   },
   "keywords": [
     "math",
@@ -68,6 +69,7 @@
   },
   "homepage": "https://maxwellsantoro.com/projects/ries-rs",
   "devDependencies": {
-    "@playwright/test": "^1.58.2"
+    "@playwright/test": "^1.58.2",
+    "tailwindcss": "3.4.17"
   }
 }

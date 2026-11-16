@@ -19,7 +19,6 @@ env/
 
 # Node.js and WASM artifacts
 node_modules/
-package-lock.json
 pkg/
 pkg-node/
 pkg-bundler/

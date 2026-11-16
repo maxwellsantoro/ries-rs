@@ -450,23 +450,19 @@ fn category_compare(
                         .cmp(&(b.m.lhs.expr.len() + b.m.rhs.expr.len()))
                 })
         }
-        Category::Best => {
-            let a_resolved = a.metrics.error <= config.best_error_floor;
-            let b_resolved = b.metrics.error <= config.best_error_floor;
-            b_resolved.cmp(&a_resolved).then_with(|| {
-                if a_resolved && b_resolved {
-                    a.metrics
-                        .complexity
-                        .cmp(&b.metrics.complexity)
-                        .then_with(|| a.metrics.ugliness.total_cmp(&b.metrics.ugliness))
-                        .then_with(|| {
-                            displayed_equation_key(&a.m).cmp(&displayed_equation_key(&b.m))
-                        })
-                } else {
-                    compare_matches(&a.m, &b.m, RankingMode::Complexity)
-                }
-            })
-        }
+        Category::Best => crate::discovery::compare_precision_resolved(
+            a.metrics.error,
+            a.metrics.complexity,
+            b.metrics.error,
+            b.metrics.complexity,
+            config.best_error_floor,
+        )
+        .map(|order| {
+            order
+                .then_with(|| a.metrics.ugliness.total_cmp(&b.metrics.ugliness))
+                .then_with(|| displayed_equation_key(&a.m).cmp(&displayed_equation_key(&b.m)))
+        })
+        .unwrap_or_else(|| compare_matches(&a.m, &b.m, RankingMode::Complexity)),
         Category::Elegant => {
             // Sort by elegant score (lower first)
             a.metrics

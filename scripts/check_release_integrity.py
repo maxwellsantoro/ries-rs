@@ -88,6 +88,8 @@ def main() -> int:
     }
 
     errors: list[str] = []
+    if package_lock is None:
+        errors.append("Missing package-lock.json; clean npm ci builds require a committed lockfile.")
 
     for label, version in versions.items():
         if version != expected_version:

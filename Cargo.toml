@@ -1,6 +1,6 @@
 [package]
 name = "ries"
-version = "2.1.0"
+version = "3.0.0"
 edition = "2021"
 authors = ["Maxwell Santoro"]
 description = "Find algebraic equations given their solution - Rust implementation"
@@ -13,6 +13,7 @@ keywords = ["math", "equation", "solver", "algebraic", "ries"]
 categories = ["mathematics", "science"]
 exclude = [
     # Local dev tooling
+    ".agents/**",
     ".playwright-mcp/**",
     ".codex-playwright/**",
     ".impeccable/**",

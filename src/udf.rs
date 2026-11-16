@@ -2,7 +2,8 @@
 //!
 //! Parse and evaluate user-defined functions specified via --define option.
 //! Functions are defined as postfix expressions using existing symbols
-//! plus stack operations: | (dup) and @ (swap).
+//! plus stack operations: | (dup) and @ (swap). Function bodies cannot call
+//! other user-defined functions; nested calls are rejected during parsing.
 
 use crate::symbol::{NumType, Symbol};
 
@@ -118,6 +119,12 @@ fn parse_udf_formula(formula: &str) -> Result<Vec<UdfOp>, String> {
             _ => {
                 // Try to parse as a standard symbol
                 if let Some(sym) = Symbol::from_byte(b) {
+                    if sym.user_function_index().is_some() {
+                        return Err(format!(
+                            "Nested user-function symbol '{}' is not supported in function definitions",
+                            b as char
+                        ));
+                    }
                     ops.push(UdfOp::Symbol(sym));
                 } else {
                     return Err(format!(
@@ -232,6 +239,17 @@ mod tests {
         let error = UserFunction::parse("1:f:test:x*").unwrap_err();
         assert!(error.contains("search variable"));
         assert!(error.contains("function argument"));
+    }
+
+    #[test]
+    fn test_parse_rejects_nested_user_functions() {
+        for byte in 0..=127 {
+            if Symbol::from_byte(byte).is_some_and(|s| s.user_function_index().is_some()) {
+                let formula = format!("4:outer:wrapper:{}", byte as char);
+                let error = UserFunction::parse(&formula).unwrap_err();
+                assert!(error.contains("Nested user-function"), "{error}");
+            }
+        }
     }
 
     #[test]

@@ -889,9 +889,17 @@ impl Expression {
                             (format!("{}^{}", a_s, b_s), PREC_POWER)
                         }
                         Symbol::Root => {
+                            // Surd preserves negative odd roots, but requires an
+                            // integer index. Positive radicands also support
+                            // noninteger indices in the evaluator.
                             let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, false);
                             let a_s = infix_paren_unless_primary(&a, a_prec);
-                            (format!("{}^(1/{})", b_s, a_s), PREC_POWER)
+                            (
+                                format!(
+                                    "Piecewise[{{{{Surd[{b}, {a}], {b}<0}}}}, {b_s}^(1/{a_s})]"
+                                ),
+                                PREC_ATOM,
+                            )
                         }
                         Symbol::Log => (format!("Log[{}, {}]", a, b), PREC_ATOM),
                         Symbol::Atan2 => (format!("ArcTan[{}, {}]", b, a), PREC_ATOM),
@@ -980,7 +988,7 @@ impl Expression {
                             format_trig("tan", &grouped, trig_scale, OutputFormat::SymPy),
                             PREC_ATOM,
                         ),
-                        Symbol::LambertW => (format!("lambertw({})", arg), PREC_ATOM),
+                        Symbol::LambertW => (format!("LambertW({})", arg), PREC_ATOM),
                         Symbol::UserFunction0
                         | Symbol::UserFunction1
                         | Symbol::UserFunction2
@@ -1034,11 +1042,7 @@ impl Expression {
                             let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, true);
                             (format!("{}**{}", a_s, b_s), PREC_POWER)
                         }
-                        Symbol::Root => {
-                            let b_s = infix_maybe_paren(&b, b_prec, PREC_POWER, true, false);
-                            let a_s = infix_paren_unless_primary(&a, a_prec);
-                            (format!("{}**(1/{})", b_s, a_s), PREC_POWER)
-                        }
+                        Symbol::Root => (format!("real_root({b}, {a})"), PREC_ATOM),
                         Symbol::Log => (format!("log({}, {})", b, a), PREC_ATOM),
                         Symbol::Atan2 => (format!("atan2({}, {})", a, b), PREC_ATOM),
                         _ => unreachable!(),

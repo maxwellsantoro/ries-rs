@@ -121,6 +121,9 @@ async function handleRequest(message) {
       const matches = wasmModule.search(message.targetValue, message.searchConfig);
       return serializeMatches(matches);
     }
+    case 'discover': {
+      return wasmModule.discover(message.targetLiteral, message.options);
+    }
     default:
       throw new Error('Unknown worker request: ' + message.type);
   }

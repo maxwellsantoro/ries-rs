@@ -194,6 +194,29 @@ fn cheaper_constant_within_stop_below_leads_over_exact_builtin() {
     );
 }
 
+fn tiny_value_and_slope(symbols: &[Symbol], target: f64) -> (f64, f64) {
+    let atom = |s| {
+        if s == Symbol::X {
+            (target, 1.0)
+        } else {
+            (f64::from(s as u8 - b'0'), 0.0)
+        }
+    };
+    match symbols {
+        [a] => atom(*a),
+        [a, b, op] => {
+            let (a, da) = atom(*a);
+            let (b, db) = atom(*b);
+            match op {
+                Symbol::Add => (a + b, da + db),
+                Symbol::Mul => (a * b, da * b + a * db),
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
 /// Independent oracle: enumerate every length-1/3 expression in a tiny grammar
 /// and solve its linear/quadratic LHS analytically. No generator, Newton step,
 /// representative policy, or StopBound is used to choose the expected winner.
@@ -201,19 +224,36 @@ fn cheaper_constant_within_stop_below_leads_over_exact_builtin() {
 fn stop_matches_equal_an_exhaustive_analytic_oracle() {
     use ries_rs::expr::EvaluatedExpr;
     use ries_rs::Expression;
-    let atoms = [
-        Symbol::X,
-        Symbol::One,
-        Symbol::Two,
-        Symbol::Three,
-        Symbol::Five,
-    ];
-    for custom_weights in [false, true] {
+    // Reproducible randomized grammars, costs and per-side budgets. The seed
+    // is fixed so failures replay identically on every platform.
+    let mut state = 0x5eed_u64;
+    for scenario in 0..18 {
+        let mut next = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (state >> 32) as u32
+        };
+        let mut atoms = vec![Symbol::X, Symbol::One, Symbol::Two];
+        if scenario < 2 || next() % 2 == 0 {
+            atoms.push(Symbol::Three);
+        }
+        if scenario < 2 || next() % 2 == 0 {
+            atoms.push(Symbol::Five);
+        }
+        let ops = match scenario % 3 {
+            0 if scenario >= 2 => vec![Symbol::Add],
+            1 if scenario >= 2 => vec![Symbol::Mul],
+            _ => vec![Symbol::Add, Symbol::Mul],
+        };
+        let budget = if scenario < 2 { 100 } else { 25 + next() % 26 };
         let mut profile = Profile::default();
-        if custom_weights {
+        if scenario == 1 {
             profile.symbol_weights.insert(Symbol::Two, 35);
             profile.symbol_weights.insert(Symbol::Add, 4);
             profile.symbol_weights.insert(Symbol::Mul, 7);
+        } else if scenario >= 2 {
+            for &symbol in atoms.iter().chain(&ops) {
+                profile.symbol_weights.insert(symbol, 1 + next() % 20);
+            }
         }
         let table = Arc::new(SymbolTable::from_profile(&profile));
         let mut expressions = Vec::new();
@@ -227,7 +267,7 @@ fn stop_matches_equal_an_exhaustive_analytic_oracle() {
         for &a in &atoms {
             expressions.push(make(&[a]));
             for &b in &atoms {
-                for op in [Symbol::Add, Symbol::Mul] {
+                for &op in &ops {
                     expressions.push(make(&[a, b, op]));
                 }
             }
@@ -235,10 +275,10 @@ fn stop_matches_equal_an_exhaustive_analytic_oracle() {
         let gen = GenConfig {
             constants: atoms.to_vec(),
             unary_ops: vec![],
-            binary_ops: vec![Symbol::Add, Symbol::Mul],
+            binary_ops: ops,
             max_length: 3,
-            max_lhs_complexity: 100,
-            max_rhs_complexity: 100,
+            max_lhs_complexity: budget,
+            max_rhs_complexity: budget,
             symbol_table: table,
             ..Default::default()
         };
@@ -255,26 +295,32 @@ fn stop_matches_equal_an_exhaustive_analytic_oracle() {
                         ..Default::default()
                     };
                     let mut qualifying = Vec::new();
-                    for lhs in expressions.iter().filter(|e| e.contains_x()) {
-                        for rhs in expressions.iter().filter(|e| !e.contains_x()) {
-                            let rv = ries_rs::eval::evaluate(rhs, target).unwrap();
+                    for lhs in expressions
+                        .iter()
+                        .filter(|e| e.contains_x() && e.complexity() <= budget)
+                    {
+                        for rhs in expressions
+                            .iter()
+                            .filter(|e| !e.contains_x() && e.complexity() <= budget)
+                        {
+                            let (rv, _) = tiny_value_and_slope(rhs.symbols(), target);
                             let symbols = lhs.symbols();
                             let root = if symbols.len() == 1 {
-                                rv.value
+                                rv
                             } else {
                                 let [a, b, op] = symbols else { unreachable!() };
                                 let xs =
                                     usize::from(*a == Symbol::X) + usize::from(*b == Symbol::X);
                                 match (*op, xs) {
-                                    (Symbol::Add, 2) => rv.value / 2.0,
-                                    (Symbol::Mul, 2) => rv.value.sqrt(),
+                                    (Symbol::Add, 2) => rv / 2.0,
+                                    (Symbol::Mul, 2) => rv.sqrt(),
                                     (Symbol::Add, 1) | (Symbol::Mul, 1) => {
                                         let constant = if *a == Symbol::X { *b } else { *a };
                                         let c = f64::from(constant as u8 - b'0');
                                         if *op == Symbol::Add {
-                                            rv.value - c
+                                            rv - c
                                         } else {
-                                            rv.value / c
+                                            rv / c
                                         }
                                     }
                                     _ => unreachable!(),
@@ -288,20 +334,10 @@ fn stop_matches_equal_an_exhaustive_analytic_oracle() {
                             {
                                 continue;
                             }
-                            let lv = ries_rs::eval::evaluate(lhs, target).unwrap();
+                            let (lv, slope) = tiny_value_and_slope(lhs.symbols(), target);
                             qualifying.push(Match {
-                                lhs: EvaluatedExpr::new(
-                                    lhs.clone(),
-                                    lv.value,
-                                    lv.derivative,
-                                    lv.num_type,
-                                ),
-                                rhs: EvaluatedExpr::new(
-                                    rhs.clone(),
-                                    rv.value,
-                                    rv.derivative,
-                                    rv.num_type,
-                                ),
+                                lhs: EvaluatedExpr::new(lhs.clone(), lv, slope, NumType::Rational),
+                                rhs: EvaluatedExpr::new(rhs.clone(), rv, 0.0, NumType::Rational),
                                 x_value: root,
                                 error,
                                 exact,
@@ -328,7 +364,7 @@ fn stop_matches_equal_an_exhaustive_analytic_oracle() {
                         search_with_stats_and_config(&gen, &config),
                         search_streaming_with_config(&gen, &config),
                     ] {
-                        assert_eq!(equation(&actual[0]), equation(expected), "target={target}, ranking={ranking_mode:?}, exact={stop_at_exact}, custom={custom_weights}");
+                        assert_eq!(equation(&actual[0]), equation(expected), "target={target}, ranking={ranking_mode:?}, exact={stop_at_exact}, scenario={scenario}, budget={budget}");
                     }
                 }
             }

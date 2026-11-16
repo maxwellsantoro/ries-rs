@@ -522,8 +522,9 @@ fn match_one_lhs(
             && crate::eval::value_in_expression_range(&lhs.expr, rhs.value)
             && config.filters.allows_side(rhs)
             && config.filters.allows_pair(&lhs.expr, &rhs.expr)
-            && exact_ceiling
-                .is_none_or(|ceiling| lhs.expr.complexity() + rhs.expr.complexity() <= ceiling)
+            && exact_ceiling.is_none_or(|ceiling| {
+                lhs.expr.complexity().saturating_add(rhs.expr.complexity()) <= ceiling
+            })
     };
 
     // Skip LHS with value too close to 0 - these produce floods of
@@ -594,7 +595,9 @@ fn match_one_lhs(
     let refined: Option<Vec<Option<Option<NewtonHit>>>> = None;
 
     for (index, rhs) in rhs_slice.iter().enumerate() {
-        if !rhs_is_eligible(rhs) || stop.excludes(lhs.expr.complexity() + rhs.expr.complexity()) {
+        if !rhs_is_eligible(rhs)
+            || stop.excludes(lhs.expr.complexity().saturating_add(rhs.expr.complexity()))
+        {
             continue;
         }
 
@@ -646,7 +649,7 @@ fn match_one_lhs(
                 rhs: rhs.clone(),
                 x_value,
                 error,
-                complexity: lhs.expr.complexity() + rhs.expr.complexity(),
+                complexity: lhs.expr.complexity().saturating_add(rhs.expr.complexity()),
                 exact,
             };
             stop.observe(&m, config);
@@ -718,7 +721,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::approx_constant)] // Exercise the rounded, typed target.
-    fn pi_no_root_approximation_is_rejected_after_newton() {
+    fn pi_no_root_approximation_is_rejected_before_newton() {
         use crate::expr::Expression;
         let target = 3.14159265;
         let eval = |postfix| {
@@ -749,14 +752,7 @@ mod tests {
         let rhs = EvaluatedExpr::new(rhs_expr, at.value, at.derivative, at.num_type);
         assert!(rhs.value < 1.0);
         let delta = -(lhs.value - rhs.value) / lhs.derivative;
-        let hit =
-            refine_candidate(&lhs, &rhs, delta, &context).expect("Newton returns a plateau hit");
-        assert!(hit.real, "loose residual test accepts the rounded plateau");
-        assert!(!super::super::solved_x_within_ulps(hit.x, target));
-        assert_eq!(
-            super::super::match_exactness(lhs.value, rhs.value, lhs.derivative, hit.x, target),
-            None
-        );
+        assert!(refine_candidate(&lhs, &rhs, delta, &context).is_none());
         let mut db = ExprDatabase::new();
         db.insert_rhs(vec![rhs]);
         let mut pool = config.pool();
@@ -770,7 +766,7 @@ mod tests {
             &mut crate::search::StopBound::default(),
             false
         ));
-        assert_eq!(stats.newton_success, 1, "exercise post-Newton admission");
+        assert_eq!(stats.newton_calls, 0, "range rejection precedes refinement");
         assert!(pool.into_sorted().is_empty());
     }
 

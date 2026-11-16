@@ -89,6 +89,13 @@ multiplying by π and handles representable integers and half-integers exactly.
 equations. `solve_for_x_at_with_context` uses the same scale and custom
 symbols as the search when choosing and checking the inverse branch.
 
+CAS exports preserve real root branches: SymPy uses `real_root(radicand, index)`
+and `LambertW(argument)`. Mathematica uses `Surd` for negative radicands and a
+fractional power otherwise, expressed with `Piecewise`; the positive branch
+continues to support noninteger indices. Browser rendering and LaTeX copies
+group the complete trig argument in `sin(π·(argument))`, and likewise for cosine
+and tangent.
+
 Numeric classification describes expression structure, not the value sampled at
 one target. The variable is a polynomial indeterminate: `x^2` preserves the
 integer-polynomial class, but `2^x` and a root with an x-dependent index have no
@@ -179,7 +186,12 @@ Search implementations:
 
 ## Complexity Metric (Core Engine)
 
-Core complexity is additive over active symbol weights.
+Core complexity is additive over active symbol weights. Weights may be any
+`u32`, including zero. Generation keeps zero-cost extensions at the budget
+boundary, subject to the expression length and count limits. Budget comparisons
+and rewrite costs use wider arithmetic so large weights cannot wrap into the
+budget. Stored equation complexity saturates at `u32::MAX` if the sum of the
+two side costs exceeds that representation.
 
 For an expression `e = (s_1, ..., s_n)`:
 
@@ -233,9 +245,15 @@ Python, WebAssembly, and other programmatic callers use:
 | 4 | (48, 48) | (75, 75) |
 | 5 | (50, 50) | (85, 85) |
 
-Level 3 is the usual default. Symbol weights make `2*x = 5` cost 32 on the left, `x = 5/2` and `x = 2*6` cost 35 on the right, `x = 6*7` cost 40, and `x = 9*9` cost 42. Budget 46 is one add or multiply past that heaviest single-digit product, so the default level finds those equations with room to spare. It is not the smallest budget that contains `6*7`.
+The browser UI defaults to level 3; Python and the WASM API default to level 2.
+Symbol weights make `2*x = 5` cost 32 on the left, `x = 5/2` and `x = 2*6` cost 35 on the right, `x = 6*7` cost 40, and `x = 9*9` cost 42. The browser's default budget 46 is one add or multiply past that heaviest single-digit product. The Python/WASM API default budget 44 also admits those examples. Neither is the smallest budget that contains `6*7`.
 
-The two scales are not the same function, and benchmarks should not treat them as interchangeable. The CLI step of 10 is the historical command-line tuning. Sharing it with the browser would make the demo's default (level 3, complexity 65) run for minutes on a target with no cheap exact match, and the CLI's own default (level 2, complexity 55) is already past an interactive full scan. The API step is 2 so that level 5, complexity 50, still finishes within a few seconds on that same full scan. `MAX_API_LEVEL` stays 5: the slider already covers the interactive range, and another step would cross the measured cliff past complexity 50.
+The two scales are not interchangeable. The CLI step of 10 preserves historical
+command-line tuning; the smaller API step limits interactive search growth.
+Measured full scans motivated the API cap at level 5 (complexity 50), but runtime
+depends on the target, grammar, device, and build. The mapping is a budget policy,
+not a browser latency guarantee. Compare explicit budgets and use the recorded
+[benchmark methodology](PERFORMANCE.md) when evaluating performance.
 
 ## Match Ranking (Ordering)
 
@@ -517,7 +535,10 @@ threshold is recorded separately as `adaptive_error_threshold`.
 
 `--stability-check` compares results from the same matcher at each
 tolerance level. The stability runs disable first-hit stopping, even when the
-main search uses it.
+main search uses it. This persistence analysis is distinct from the report's
+Stable/robust category, whose heuristic scores the LHS derivative magnitude.
+Interesting/unexpected scores operator rarity and other presentation heuristics;
+neither report category is calibrated confidence that a conjecture is true.
 
 Recommended reproducibility workflow:
 
@@ -568,7 +589,131 @@ constant, even though a nearby root is mathematically valid. This does not
 justify admitting an RHS outside cosine's range or a float with no nearby root.
 
 Sine/cosine RHS values outside [-1, 1] are rejected before refinement and pool
-admission, including when refinement is disabled. The Newton entry point uses
+admission, including when refinement is disabled. The range check propagates
+signs and conservative absolute bounds through negation, reciprocal, square,
+and square root. Thus `cospi(x)^2` cannot exceed one, and
+`(1/cospi(x))^2` cannot fall below one. Reciprocal trig expressions cannot equal
+levels strictly between -1 and 1, and a reciprocal cannot equal zero. Unknown
+inner operators remain unconstrained. The Newton entry point uses
 the same range check. A loose residual threshold near an extremum is insufficient
 to establish existence of a root; `tests/numeric_contract.rs` includes an
 out-of-range regression that failed before this guard.
+
+## Independent qualification and resource limits
+
+[QUALIFICATION.md](QUALIFICATION.md) documents the finite matcher corpus,
+randomized tiny-grammar analytic oracle, historical polynomial differential,
+experimental rational root certificates, and Linux address-space supervisor.
+CLI JSON includes `target_literal` and a candidate-window histogram; high-precision
+reevaluation still starts from the parsed `f64`, not that original decimal text.
+No narrower candidate gate or new completeness claim is introduced by these tools.
+
+## Decimal input, verification requests, and adaptive bounds
+
+CLI decimal input and WASM `targetText` use `target::validate_decimal_target`.
+It compares exact decimal integers to the exact binary f64 value without rounded
+subtraction. With match-all-digits enabled, parsing error must be at most half
+the last typed decimal place. Nonzero input rounded to zero is always rejected.
+These checks protect the requested input precision; accepted results still carry
+numerical exactness, not symbolic proof. The shared check bounds input length to
+4096 characters. An independent Python `Fraction` oracle exercises 110 boundary
+and seeded cases in CI (`scripts/check_decimal_boundary.py`).
+
+Explicit CLI verification requests fail when unavailable unless
+`--allow-unverified` is supplied; fallback JSON then records unavailable status.
+The flag is preserved in self-contained replay arguments.
+
+Adaptive generation deliberately grows independently of supplied fixed bounds.
+Its statistics retain actual final per-side bounds; JSON and manifests use those
+as `max_lhs_complexity` and `max_rhs_complexity`. JSON also records requested
+bounds, and manifest replay metadata stores `requested_complexity_bounds`.
+CLI adaptive and one-sided modes reject `--streaming`, `--turbo`, and memory-hint
+flags, as well as each other. Their fixed corpus case compares the applicable
+serial/parallel adaptive paths and checks every returned side against its reported
+bound using the manifest's effective symbol weights.
+
+`--pslq --match-all-digits` is explicitly unsupported and returns a configuration
+error before results. Decimal validation still applies to PSLQ targets, but a
+PSLQ residual tolerance is not a general root-distance guarantee. Use ordinary
+numerical search for the match-all-digits result contract.
+
+## Additive precision-aware discovery
+
+The Rust entry point `discover(target_literal, &DiscoveryOptions)` returns a
+serializable `ries-discovery-v1` run. It complements the existing raw search
+APIs; it does not change `RankingMode`, raw pool ordering, or existing manifest
+schemas. Python/WASM adapters and CLI discovery use this shared contract when
+available; their individual reference guides document their entry points.
+
+Discovery requires the original decimal string. It retains that string verbatim
+and validates its trimmed form with the exact decimal/f64 boundary check before
+search. `input_tolerance` is half the last entered decimal place, including
+trailing zeros and scientific notation. `within_input_precision` compares the
+refined root's distance from the **parsed f64 target** with that tolerance; it
+does not certify equality to the literal or to an intended mathematical constant.
+If the tolerance underflows to zero, only zero f64 root distance resolves it.
+Numeric callers may explicitly supply their shortest round-trip spelling, but
+doing so cannot reconstruct the original input precision.
+
+`DiscoveryOptions` provides `level` (0..5, default 2), `max_matches` (1..1000,
+default 8), an optional named `preset`, `parallel` (default false), and optional
+`verification_bits` (at most 4096). Levels use the API budget `40 + 2*L` on each
+side. No implicit user profile is loaded. Resolved run settings include those
+budgets, the active symbols/names/weights and preset constant values, expression
+length, trig scale, Newton settings, maximum distance, and retained-candidate
+limit. An unsupported preset or invalid literal/options returns an error before
+search.
+
+Discovery uses the existing minimum-complexity stop contract with an inclusive
+input-tolerance condition. The strict internal stop threshold is the next float
+above `input_tolerance`, including when it is zero. A qualifying match is retained
+independently of raw-pool eviction; its minimum total complexity bounds the second
+search phase **before** final truncation. Thus an artificial correction formula
+with a smaller sub-precision residual cannot evict a cheaper resolving hypothesis.
+`effective_total_complexity_bound` records this bound. The guarantee is scoped
+to candidates admitted by the configured grammar, budgets, and numerical gates;
+it is not a universal simplest-form or search-completeness guarantee.
+
+This policy can intentionally return fewer distinct hypotheses than requested:
+more expensive alternatives are not searched after a cheaper one resolves the
+input. If no candidate resolves it, the bound is absent and discovery reports
+the ordinary closest candidates inside the declared maximum distance, marked
+`within_input_precision: false`. The bounded candidate pool is
+`max(64, 8*max_matches)`; it does not promise retention of every equation variant
+or every unresolved hypothesis.
+
+Selection first prefers resolving hypotheses, then their lower equation cost.
+Unresolved candidates retain the raw complexity comparator. Equivalent displayed
+root candidates are grouped by the solved expression's structural key, preserving
+the chosen inverse branch; only safe leading double negation and existing
+commutative canonicalization are collapsed. Unsolved equations use their
+structural equation key. Root proximity alone never groups hypotheses, and
+reciprocal/root/log/trig identities are not guessed. Each group retains a
+representative plus `supporting_equations` **excluding the representative**.
+Grouping describes the same displayed root candidate, not equality of the
+original equations' complete domains or global solution sets.
+
+Every hypothesis reports separate `numerical`, `high_precision`, and
+`polynomial_certificate` checks with status and reason. Optional high-precision
+reevaluation uses the existing verifier on the original equation and parsed f64
+target/constants. Its status is `not_requested`, `verified`, `failed`, or
+`unavailable`; nonfinite failure estimates serialize as null, never zero. A build
+without `highprec`, an unsupported operator, or precision at most 53 bits reports
+unavailable. This is numerical corroboration, not symbolic proof. Discovery does
+not itself compute a polynomial certificate; it explains that the equation and
+literal can be exported to the independently checked restricted-grammar tool.
+
+The run records the engine version and actual matcher/statistics. A requested
+parallel search currently uses the serial stop-contract fallback, which is
+reported honestly. Timing fields are observations, not deterministic identity.
+For exact reproducibility retain the source/build and artifact hashes externally
+alongside the run, as described in [VALIDATION.md](VALIDATION.md); the envelope's
+version string is not a unique identifier for an unpublished working tree.
+
+The additive CLI mode is `ries-rs --discover [options] -- TARGET`. It accepts
+integer API levels 0..5, `--max-matches`, `--preset`, `--deterministic`,
+`--parallel`, `--json`, and `--precision` / `--allow-unverified`. Explicit raw
+search/profile/format flags are rejected rather than ignored. Discovery JSON
+is the run envelope above; ordinary JSON/manifests keep their existing schemas.
+Requested CLI verification that is unavailable for the build, bit count, or a
+returned operator fails before output unless `--allow-unverified` is explicit.

@@ -1,0 +1,23 @@
+{
+  "schema": "ries-followup-review-v1",
+  "scope": "Uncommitted local 3.0.0 candidate; no hosted release or published artifacts claimed",
+  "binary_sha256": "dcd06d58b6d57c4e305afb33194e454353344b0dee5620c5a9fc8b634b3d28d0",
+  "archive": "2026-11-11-followup-evidence.tar.gz",
+  "archive_sha256": "d11da0b30ecb3d8e7604f76ba47b7d45460406b3199bb3d6fe238b536038ca40",
+  "matcher_runs": 126,
+  "matcher_corpus_passed": true,
+  "all_reported_side_bounds_valid": true,
+  "decimal_cases": 110,
+  "decimal_oracle_passed": true,
+  "tests": {
+    "default": 571,
+    "no_default": 560,
+    "highprec": 595,
+    "browser": 13,
+    "wasm": 13,
+    "wasm_doctests": 7,
+    "python_wheel": 6,
+    "python_rust": 2
+  },
+  "source_files": 159
+}

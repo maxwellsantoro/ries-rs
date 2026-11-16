@@ -6,7 +6,7 @@ use crate::solver::canonical_expression_key;
 ///
 /// Binding surfaces (WASM, Python) convert this into their own types with
 /// trivial field copies, keeping derived-field logic in one place.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MatchSummary {
     /// Left-hand side expression in infix notation
     pub lhs: String,

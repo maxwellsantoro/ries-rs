@@ -1,6 +1,8 @@
 # ries-rs
 
-Rust inverse equation solver for turning a target number into compact algebraic equations.
+Turn a mysterious decimal into your next mathematical conjecture with `ries-rs`,
+an equation-discovery engine you can explore in your browser or build into your
+research workflow.
 
 [![CI](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/ci.yml)
 [![Coverage](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/maxwellsantoro/ries-rs/actions/workflows/coverage.yml)
@@ -10,9 +12,15 @@ Rust inverse equation solver for turning a target number into compact algebraic 
 [![DOI](https://zenodo.org/badge/1123876688.svg)](https://doi.org/10.5281/zenodo.19101924)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`ries-rs` is a Rust implementation of Robert P. Munafo's RIES inverse equation
-solver. Given a target number, it searches for algebraic equations that have
-that number as a solution.
+`ries-rs` is an inverse equation solver that searches for concise mathematical
+explanations of numerical values. Inspired by Robert Munafo’s RIES, it combines
+expression generation, numerical evaluation, root refinement, and ranking to find
+candidate equations involving arithmetic, roots, familiar constants, and
+transcendental functions. Its shared Rust engine powers a command-line tool, a
+Rust library, Python bindings, and a browser interface, with custom symbols,
+reproducible searches, and structured output for further analysis. It gives
+researchers, programmers, and curious mathematicians a practical way to turn
+numerical observations into testable mathematical ideas.
 
 The historical acronym is RIES, for "RILYBOT Inverse Equation Solver". This
 repository aims to be a modern, documented, reproducible reference
@@ -79,17 +87,7 @@ cd ries-py
 maturin develop --release
 ```
 
-For Rust-side binding checks without building/loading the extension module:
-
-```bash
-./scripts/test_ries_py_rust.sh
-```
-
-For end-to-end Python import/search checks in an isolated virtualenv:
-
-```bash
-./scripts/test_ries_py_python.sh -q
-```
+For binding checks, see [the validation guide](docs/VALIDATION.md).
 
 ### Web App / WASM
 
@@ -98,8 +96,8 @@ packages. To build the browser bundle locally, install the JS dependencies and
 the nightly Rust toolchain first:
 
 ```bash
-npm install
-rustup toolchain install nightly
+npm ci
+rustup toolchain install nightly --profile minimal --component rust-src --target wasm32-unknown-unknown
 npm run build:web:site
 ```
 
@@ -120,6 +118,34 @@ Detailed setup guides:
 
 ## Quick Start
 
+For a rounded decimal, use precision-aware discovery. It selects a minimum-cost
+precision-resolving tier before limiting the results, groups safely recognizable
+presentations, and preserves the original literal and resolved settings. From a
+repository checkout, export a run and apply the independent polynomial checker:
+
+```bash
+ries-rs --discover --deterministic --json 1.41421356 > run.json
+python3 scripts/verify_discovery.py run.json --output selected.json
+python3 scripts/verify_discovery.py selected.json --verify
+```
+
+The first hypothesis is `x = sqrt(2)`, with `x^2 = 2` retained as a supporting
+equation. The external verifier can independently bound that polynomial root;
+named constants and unsupported expressions report unavailable checks. Numerical
+agreement does not prove the intended constant equals the equation's root.
+
+Discovery uses API levels 0–5 and may return fewer hypotheses than requested when
+only a small tier resolves the input precision. `--discover --json` exports the
+versioned `ries-discovery-v1` envelope; it does not change ordinary CLI JSON or
+the existing manifest schema. Use ordinary search for custom profiles and the
+broader CLI configuration. See [the search contract](docs/SEARCH_MODEL.md) and
+[the evidence workflow](docs/DISCOVERY_WORKFLOW.md).
+
+The same additive workflow is available as `ries_rs.discover("1.41421356")` in
+Python and `discover("1.41421356")` in JavaScript/WASM. Existing float-based
+`search()` calls retain their raw ordering. The browser defaults to discovery and
+keeps explicit raw complexity/parity modes.
+
 Basic search:
 
 ```bash
@@ -133,6 +159,14 @@ Example output:
                       -x = -pi                      ('exact' match) {43}
                      1/x = 1/pi                     ('exact' match) {43}
 ```
+
+An **“exact” match is a numerical classification**, not a symbolic proof that
+the intended mathematical constant satisfies the equation. Search uses the
+parsed `f64` target. Optional high-precision reevaluation corroborates that
+numerical result; it cannot recover decimal digits lost during parsing.
+Completeness depends on the grammar, budgets, numerical gates, and pruning.
+The [qualification tools](docs/QUALIFICATION.md) provide independent known-answer
+checks and an experimental exact rational root-certificate workflow.
 
 For a rounded input such as `ries-rs 3.14159265`, the report's Best
 approximations category prefers simpler equations once they match the precision
@@ -199,7 +233,7 @@ ries-rs --profile examples/fano-heawood.ries --one-sided --deterministic \
 
 Not primary goals of this repository:
 
-- Symbolic AI or conjecture systems
+- Automated proof discovery or treating numerical matches as established theorems
 - Turning the bundled PSLQ integer-relation mode into a separate research platform
 - Experimental search branches outside the core RIES model
 
@@ -210,12 +244,11 @@ for end-to-end CLI runs and generation-only scaling:
 
 - End-to-end CLI baseline:
   [`docs/benchmarks/2026-03-20-level3-baseline.md`](docs/benchmarks/2026-03-20-level3-baseline.md)
-  captures the current level-3 workload; after tightening the adaptive search
-  radius and snapping exact default-scale trig singularities, the candidate
-  scan set dropped to about `8.1M` pairs. The default `--parallel` CLI path is
-  near break-even on this workload because it parallelizes generation only,
-  while the dominant matching/Newton phase stays serial to preserve
-  byte-identical results.
+  records a March 20 workload at its captured source and environment, with about
+  `8.1M` candidate pairs and near break-even sequential/parallel times. These
+  measurements predate later search changes and are not a performance claim for
+  the current candidate. The default `--parallel` path parallelizes generation;
+  the matching/Newton phase stays serial to preserve byte-identical results.
 - `--turbo` parallelizes Newton refinement for wide RHS candidate windows. It
   uses the same traversal, adaptive gates, and result pool as serial matching.
   See [the search model](docs/SEARCH_MODEL.md#turbo-contract) for the contract.
@@ -257,6 +290,7 @@ historical notes.
 
 ## Documentation
 
+- [Roadmap and parallel work packets](docs/ROADMAP.md)
 - [Documentation map](docs/README.md)
 - [Search model](docs/SEARCH_MODEL.md)
 - [Complexity and weights](docs/COMPLEXITY.md)
@@ -302,7 +336,7 @@ If you use `ries-rs` in academic work, cite the project version you used.
   author       = {Santoro, Maxwell},
   title        = {ries-rs: A Rust Implementation of the RIES Inverse Equation Solver},
   year         = {2026},
-  version      = {2.1.0},
+  version      = {3.0.0},
   url          = {https://maxwellsantoro.com/projects/ries-rs},
   license      = {MIT},
   note         = {Features parallel search, deterministic mode, and run manifest for reproducibility}
@@ -315,7 +349,7 @@ Zenodo concept DOI for the project and its archived releases:
 The latest verified version DOI is for `v1.1.1`:
 `10.5281/zenodo.19101925`
 
-No version DOI is recorded for `v2.1.0` until its Zenodo archive has completed.
+No version DOI is recorded for `v3.0.0` until its Zenodo archive has completed.
 
 Use the concept DOI when you want a stable project-level reference that resolves
 to the latest archived release. Use the version DOI when you need to cite the
@@ -344,3 +378,40 @@ MIT License. See [`LICENSE`](LICENSE).
 - [`clsn/ries` fork](https://github.com/clsn/ries)
 - Stoutemyer, D.R. (2024). "Computing with No Machine Constants, Only
   Constructive Axioms". arXiv:2402.03304
+
+## Strict configuration and resource-sensitive runs
+
+Use `--strict-config` in reproducible experiments to fail with exit code 2 on
+invalid custom constants/functions, malformed symbol weights/names, unknown symbol
+set codes, invalid memory hints, or unavailable precision options. The default
+compatibility mode retains warnings for malformed custom definitions. Replay
+manifests preserve the strict flag; CLI JSON also preserves the original target
+literal separately from its `f64` value.
+
+`--max-memory` selects a strategy and does not enforce an RSS ceiling.
+The [Linux resource supervisor](docs/QUALIFICATION.md#enforced-resource-limits-on-linux)
+adds an OS-enforced address-space budget and timeout. An aborted run is incomplete.
+
+When `--match-all-digits` is set, the original decimal must survive conversion to
+`f64` within half its last typed decimal place. Inputs such as
+`1.000000000000000000000000000001` are rejected instead of searching for exactly
+1. Nonzero decimals that underflow to zero (for example `1e-400`) are rejected
+in every decimal-input search mode. Exact representable values with many trailing
+zeros remain valid. This validation does not change the engine to arbitrary precision.
+
+A requested `--precision` now fails if verification is unavailable. Use
+`--allow-unverified` explicitly to continue and obtain per-result `unavailable`
+status in JSON. This covers missing feature support, at most 53 bits, and
+unsupported high-precision operators.
+
+Adaptive searches grow their own budgets: JSON `max_lhs_complexity` and
+`max_rhs_complexity` report the actual final bounds, while
+`requested_max_lhs_complexity` and `requested_max_rhs_complexity` retain the level
+mapping. Manifests record actual bounds and requested bounds in replay metadata.
+Adaptive and one-sided modes reject streaming, turbo, and memory-hint flags that
+they cannot honor; memory hints still do not impose a hard RSS ceiling.
+
+`--pslq --match-all-digits` is explicitly unsupported and returns a configuration
+error before results. Decimal validation still applies to PSLQ targets, but a
+PSLQ residual tolerance is not a general root-distance guarantee. Use ordinary
+numerical search for the match-all-digits result contract.

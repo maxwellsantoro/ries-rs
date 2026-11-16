@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ries-rs"
-version = "2.1.0"
+version = "3.0.0"
 description = "Find algebraic equations given their solution"
 readme = "PYPI.md"
 license = {text = "MIT"}
@@ -32,4 +32,5 @@ Documentation = "https://github.com/maxwellsantoro/ries-rs/blob/main/docs/PYTHON
 Repository = "https://github.com/maxwellsantoro/ries-rs.git"
 
 [tool.maturin]
+module-name = "ries_rs"
 strip = true

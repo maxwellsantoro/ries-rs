@@ -1594,7 +1594,16 @@ fn precision_verifies_matches_without_manifest() {
 #[test]
 fn low_precision_cannot_report_a_spurious_zero_root_error() {
     for bits in ["1", "53"] {
-        let result = json_search(&["2.51", "-l", "0", "-S", "x25/", "--precision", bits]);
+        let result = json_search(&[
+            "2.51",
+            "-l",
+            "0",
+            "-S",
+            "x25/",
+            "--precision",
+            bits,
+            "--allow-unverified",
+        ]);
         assert_eq!(result["results"][0]["equation"], "x = 5/2");
         let row = &result["high_precision_verification"]["results"][0];
         assert_eq!(row["status"], "unavailable");
@@ -1803,6 +1812,7 @@ fn precision_preserves_default_trig_and_distinguishes_unavailable_operators() {
     assert_eq!(row["highprec_error"], 0.0);
 
     let args = [
+        "--allow-unverified",
         "--precision",
         "256",
         "--deterministic",
@@ -1866,7 +1876,7 @@ fn deterministic_streaming_keeps_stop_match_first() {
     assert_eq!(streaming["results"][0]["lhs_postfix"], "xs");
 }
 
-fn replay_python() -> Option<&'static str> {
+pub(super) fn replay_python() -> Option<&'static str> {
     // The Rust-only test suite also runs on hosts without Python installed.
     let python = ["python3", "python"].into_iter().find(|&command| {
         Command::new(command)
@@ -1904,6 +1914,7 @@ fn manifest_replay_round_trip_and_rejects_unsafe_arguments() {
             "1.2",
             "--level=0.5",
             "--deterministic",
+            "--strict-config",
             "--report=false",
             "--max-matches=1",
             "--emit-manifest",

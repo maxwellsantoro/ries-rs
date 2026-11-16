@@ -1,4 +1,9 @@
-# Cleanup Remediation Plan
+# Completed cleanup remediation plan
+
+Archived 2026-11-14: the implementation now has optional stability serialization
+coverage, level help pointing at the mapping contract, and portable verbose-time
+selection. This plan is retained as history. Active work is tracked in
+[ROADMAP.md](../../ROADMAP.md).
 
 Scope: manifest/schema alignment, CLI level documentation cleanup, and profiling script portability.
 

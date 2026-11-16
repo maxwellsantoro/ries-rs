@@ -18,9 +18,11 @@ Python 3.9 and newer.
 Local development build:
 
 ```bash
-pip install maturin
+uv venv
+source .venv/bin/activate
+uv pip install maturin
 cd ries-py
-maturin develop --release
+maturin develop --release --locked
 ```
 
 Build distribution artifacts:
@@ -31,37 +33,17 @@ maturin build --release --locked
 maturin sdist --out dist
 ```
 
-Rust-only verification without building a wheel:
-
-```bash
-cargo check --manifest-path ries-py/Cargo.toml --locked
-```
-
-Rust-side binding tests without building the extension-module flavor:
-
-```bash
-./scripts/test_ries_py_rust.sh
-```
-
-End-to-end Python integration tests:
-
-```bash
-./scripts/test_ries_py_python.sh -q
-```
-
-CI note:
-
-- GitHub Actions pins Python 3.11 for the `ries-py` Rust-side test lane.
-- Release wheels are built with Python 3.9 and tagged for the CPython stable ABI.
-- GitHub Actions also runs an end-to-end Python integration lane via
-  `./scripts/test_ries_py_python.sh -q`.
-- Local machines may use newer interpreters; the helper script keeps that path
-  usable by enabling PyO3 stable-ABI forward compatibility when needed.
+Use [VALIDATION.md](VALIDATION.md) to select Rust helper and installed-wheel
+checks for your change. The helpers prefer `uv` and keep extension-module tests
+separate from Rust-only binding tests. Published wheels use the stable ABI;
+local helper scripts also handle newer interpreters through PyO3's forward
+compatibility setting when needed.
 
 ## Module API
 
 The module exports:
 
+- `discover(...)`: precision-aware hypotheses and a serializable run record
 - `search(...)`
 - `list_presets()`
 - `version()`
@@ -75,10 +57,68 @@ import ries_rs
 print(ries_rs.version())
 print(ries_rs.list_presets())
 
+run = ries_rs.discover("3.14159265", level=3, max_matches=3)
+for hypothesis in run["hypotheses"]:
+    print(hypothesis["representative"]["solve_for_x"])
+
+# Existing typed raw-search API remains available.
 results = ries_rs.search(1.6487212707, level=5, max_matches=3)
 for match in results[:3]:
     print(match)
 ```
+
+## `discover()` Parameters and Result
+
+```python
+run = ries_rs.discover(
+    "1.41421356",
+    level=3,
+    max_matches=8,
+    preset=None,
+    parallel=False,
+    verification_bits=None,
+)
+```
+
+`target_literal` is required text so entered precision, trailing zeros, and
+scientific notation survive. Passing a float raises `TypeError`; converting an
+already rounded float to text cannot recover its original spelling. Optional
+`level` is 0..5 (default 2), `max_matches` is 1..1000 (default 8), and `preset`
+uses the names from `list_presets()`. Invalid decimal input, unavailable presets,
+or unsupported option values raise `ValueError`. Unknown keywords raise
+`TypeError`.
+
+The result is a plain JSON-compatible `dict` with schema `ries-discovery-v1`:
+
+- `target_literal`, `target`, and `engine_version` preserve the input and engine.
+- `config` contains resolved precision, grammar/weights, budgets, selection
+  policy, requested parallel/verification settings, and numerical controls.
+- `stats` identifies the actual matcher and observed counts/times. A parallel
+  request currently uses the serial stop-contract fallback.
+- `hypotheses` contains a `representative` match dictionary, structural `key`,
+  `supporting_equations` excluding the representative, `within_input_precision`,
+  and separate numerical/high-precision/polynomial-certificate check statuses.
+
+The shared policy finds the cheapest admitted equation resolving the entered
+precision before limiting results. More costly alternatives are excluded at
+that bound, so fewer hypotheses than `max_matches` can be returned. If none
+resolves the precision, closest candidates are returned with
+`within_input_precision: False`. Safe structural grouping preserves inverse
+branches; numerical proximity alone is not equivalence. See
+[SEARCH_MODEL.md](SEARCH_MODEL.md#additive-precision-aware-discovery) for the
+selection and evidence contract.
+
+`verification_bits` optionally requests higher-precision numerical corroboration
+and is capped at 4096 bits. A wheel built without `highprec`, an unsupported
+operator, or precision at most 53 bits reports `unavailable`; it never silently
+reports verification success. With no request the status is `not_requested`.
+The target and preset constants remain their parsed f64 values. Discovery does
+not compute a polynomial certificate itself; the result explains the separate
+restricted-grammar export/check path. None of these statuses is symbolic proof.
+
+Both native search entry points release the GIL during computation. Export the
+whole run with `json.dumps(run, allow_nan=False)`; retain source/artifact identity
+externally when exact build provenance matters.
 
 ## `search()` Parameters
 
@@ -94,8 +134,11 @@ Notes:
 
 - The Python API exposes `search::level_to_complexity` (`40 + 2*L` on each side),
   not the CLI's `-l/--level` mapping (`35 + 10*L`).
-- The Python API currently uses complexity-first ranking and does not expose the
-  CLI's broader flag surface.
+- Results use the complexity ranking comparator: exact matches precede inexact
+  matches, inexact errors use eight-ULP buckets, then complexity and canonical
+  postfix tie-breaks apply. Parity ranking is not exposed here. See
+  [SEARCH_MODEL.md](SEARCH_MODEL.md) for the full ordering contract.
+- The Python API does not expose the CLI's broader flag surface.
 - `target` must be finite; `NaN` and `Infinity` raise `ValueError`.
 
 The native search releases the Python GIL so other Python threads can run.
@@ -114,8 +157,13 @@ CLI pulls ahead.
 | 3 | (46, 46) | (65, 65) |
 | 5 | (50, 50) | (85, 85) |
 
-For reproducible CLI-equivalent runs from Python, build a `GenConfig` with the
-CLI bounds from `docs/SEARCH_MODEL.md` and call the Rust library directly.
+The raw `search()` entry point does not expose `GenConfig`, target literals,
+custom profiles, run manifests, or precision-aware selection. Use `discover()`
+for literal-based discovery and its resolved run record. To drive a full
+CLI-equivalent reproducible run from Python, invoke the CLI with an explicit
+decimal string, `--deterministic`, `--json`, and `--emit-manifest`, then parse its
+JSON output. Rust callers can configure `GenConfig` directly; discovery does not
+duplicate every advanced CLI option.
 
 ## `PyMatch` Properties
 
@@ -193,3 +241,8 @@ print(json.dumps(payload, indent=2))
 - The Python API currently exposes a smaller configuration surface than the CLI,
   so use the CLI when you need deterministic mode, JSON manifests, or parity
   flags.
+
+The extension's Cargo library target is `ries_rs_py`, distinct from the core
+crate's `ries_rs` target. Maturin's `module-name = "ries_rs"` preserves the public
+Python import and initialization symbol while avoiding shared-directory output
+filename collisions.

@@ -7,12 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Release decision: these changes target **3.0.0**, not a 2.x release, because
-`ExpressionConstraintOptions` gains a required field and the stop contract
-changes observable ordering. Versioned package metadata remains at 2.1.0 until
-the coordinated release preparation in `RELEASING.md`.
+## [3.0.0] - 2026-11-15
+
+This major release adds precision-aware discovery across all interfaces.
+`ExpressionConstraintOptions` gains a required field and the corrected stop
+contract changes observable ordering; see the migration guidance in
+[the release notes](docs/releases/v3.0.0.md).
+
+### Fixed
+- Reject impossible squared-trig and squared-reciprocal levels through conservative unary range propagation, retaining legitimate endpoint and interior roots.
+- Keep browser cards, text, clipboard, and downloads tied to an immutable completed run after input edits, in-flight changes, empty results, and later failures.
+- Retain zero-weight extensions at generation budget boundaries and prevent large symbol weights from overflowing cost arithmetic.
+- Preserve real root branches and Lambert W names in CAS exports, and group compound trig arguments in browser LaTeX.
+- Reject PSLQ with match-all-digits instead of silently substituting residual tolerance for a root-distance contract.
+- Validate decimal targets before PSLQ/special-mode dispatch.
+- Preserve original target spelling in manifests and replay arguments; exact replay now requires identical root/error bits, with explicit opt-in tolerance.
+- Bound experimental certificate arithmetic before expensive integer operations.
+- Reject precision-sensitive decimal targets whose conversion loses more than the last-digit tolerance; reject nonzero decimal underflow in CLI/WASM.
+- Report actual adaptive bounds separately from requested bounds and reject ignored mode/memory combinations.
+- Fail unavailable explicit verification requests unless `--allow-unverified` is supplied; retain unavailable JSON on explicit fallback.
+- Give the Python extension a distinct Cargo artifact identity while preserving `import ries_rs`; document the actual comparator.
+- Preserve the engine's designated stop winner through deterministic and turbo CLI postprocessing.
+- Report unavailable high-precision verification with `is_verified = false`.
+- Reject unsupported nested user-function calls during definition parsing.
+- Group chained exponents in browser LaTeX output to preserve associativity and avoid KaTeX double-superscript errors.
+- Synchronize complexity weights, level examples, and historical accuracy CI documentation with the implementation.
+
+### Added
+- Literal-aware `discover()` APIs for Rust, Python, and WASM, plus CLI `--discover`, returning a versioned `ries-discovery-v1` run with resolved settings, supporting equations, and separate validation statuses.
+- A fixed discovery-quality corpus and `verify_discovery.py` workflow for binding selected hypotheses to supported independent polynomial root certificates.
+- Opt-in `--strict-config` validation, replay preservation, and original target literals in CLI JSON.
+- Candidate-window histograms, a fixed cross-matcher qualification corpus, and a restricted historical equation differential with retained CI evidence.
+- Experimental exact rational polynomial root certificates and a Linux address-space/time supervisor.
+- Built browser CI coverage, mobile smoke coverage, compiled Tailwind CSS, and a full-CI release gate at the tagged commit.
 
 ### Changed
+- The browser defaults to precision-aware discovery with explicit raw complexity/parity modes. Existing float-based `search()` interfaces retain their return types and raw ordering.
+- Discovery protects the minimum-cost precision-resolving tier before result truncation, so sub-precision correction formulas cannot displace a simpler resolving hypothesis. It can return fewer hypotheses than requested.
+- Pull-request CI selects affected surfaces conservatively, retains full validation for shared/unknown inputs and release calls, and uses failure-aware CI and coverage result gates.
 - Search now preserves structurally distinct left-hand sides by default. The
   same search can return a different first equation, ordered result list, or
   solved root. `--lhs-value-dedup` (Rust: `SearchConfig::lhs_value_dedup`) opts

@@ -5,7 +5,8 @@ Why these files are checked in:
 - The Playwright smoke test asserts that the page does not fetch Tailwind or KaTeX from third-party CDNs.
 
 Current upstream sources:
-- `tailwindcdn.js`: downloaded from `https://cdn.tailwindcss.com` on 2026-03-17
+- Tailwind utilities are compiled by the pinned npm dependency into `web/styles.css`; no Tailwind runtime ships to the browser.
+  Run `npm ci && npm run build:css` after changing classes or `tailwind.config.cjs`.
 - `katex/`: downloaded from `https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/` on 2026-03-17
 
 When updating:

@@ -189,6 +189,31 @@ pub(super) fn newton_raphson_with_constants(
 mod tests {
     use super::ulp_local_root;
 
+    #[test]
+    fn unary_range_guard_rejects_impossible_plateaus_before_newton_acceptance() {
+        for (postfix, rhs) in [
+            ("xCs", 1.0_f64.next_up()),
+            ("xCsn", -1.0_f64.next_up()),
+            ("xCrs", 1.0_f64.next_down()),
+            ("xCrsn", -1.0_f64.next_down()),
+        ] {
+            let expr = crate::expr::Expression::parse(postfix).unwrap();
+            assert!(
+                super::newton_raphson(&expr, rhs, 2.000_000_015, 15).is_none(),
+                "small floating residual does not establish a root of {postfix} = {rhs}"
+            );
+        }
+    }
+
+    #[test]
+    fn unary_range_guard_keeps_real_squared_trig_roots() {
+        for (postfix, rhs) in [("xCs", 0.5), ("xCsn", -0.5), ("xCrs", 2.0), ("xCrsn", -2.0)] {
+            let expr = crate::expr::Expression::parse(postfix).unwrap();
+            let root = super::newton_raphson(&expr, rhs, 2.24, 15).unwrap();
+            assert!((root - 2.25).abs() < 1e-12, "{postfix}: {root}");
+        }
+    }
+
     /// The old cap was `1e-5 * max(|rhs|, 1)`. These gaps sit under that
     /// absolute `1e-5` and over `1e-5` relative to the two sides.
     #[test]

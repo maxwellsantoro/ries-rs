@@ -1,0 +1,136 @@
+{
+  "schema": "ries-search-corpus-v1",
+  "cases": [
+    {
+      "name": "integer",
+      "target": "2",
+      "args": [
+        "-l0",
+        "-Sx12345+-*ns",
+        "--classic"
+      ],
+      "expected_polynomial": [
+        "-2",
+        "1"
+      ]
+    },
+    {
+      "name": "half-integer",
+      "target": "1.5",
+      "args": [
+        "-l0",
+        "-Sx12345+-*ns",
+        "--classic"
+      ],
+      "expected_polynomial": [
+        "-3/2",
+        "1"
+      ]
+    },
+    {
+      "name": "five-halves",
+      "target": "2.5",
+      "args": [
+        "-l0",
+        "-Sx12345+-*ns",
+        "--classic"
+      ],
+      "expected_polynomial": [
+        "-5/2",
+        "1"
+      ]
+    },
+    {
+      "name": "quadratic",
+      "target": "1.4142135623730951",
+      "args": [
+        "-l0",
+        "-Sx12345+-*ns",
+        "--classic"
+      ],
+      "expected_polynomial": [
+        "-2",
+        "0",
+        "1"
+      ]
+    },
+    {
+      "name": "restricted-full-pool",
+      "target": "2.12345",
+      "args": [
+        "-l0",
+        "-Sx123+-*ns",
+        "--max-match-distance",
+        "0.3"
+      ]
+    },
+    {
+      "name": "custom-weights",
+      "target": "2.49",
+      "args": [
+        "-l0",
+        "-Sx1235+-*ns",
+        "--max-match-distance",
+        "0.1",
+        "--symbol-weights",
+        ":2:21 :s:7 :*:3"
+      ]
+    },
+    {
+      "name": "pi",
+      "target": "3.141592653589793",
+      "args": [
+        "-l0",
+        "--classic"
+      ]
+    },
+    {
+      "name": "threshold-tie",
+      "target": "2.12345",
+      "args": [
+        "-l0",
+        "--parity-ranking",
+        "--stop-below",
+        "5.551115123125783e-15",
+        "-X",
+        "16:a:first:2.123450000000006",
+        "-X",
+        "16:b:second:2.1234500000000054"
+      ],
+      "expected_first": "x = b"
+    },
+    {
+      "name": "full-grammar",
+      "target": "3.301",
+      "args": [
+        "-l2",
+        "--max-match-distance",
+        "0.01"
+      ]
+    },
+    {
+      "name": "full-grammar-level3",
+      "target": "3.301",
+      "args": [
+        "-l3",
+        "--max-match-distance",
+        "0.01"
+      ]
+    },
+    {
+      "name": "adaptive-bounds",
+      "target": "2.99",
+      "args": [
+        "--adaptive",
+        "-l0",
+        "-Sx12+",
+        "--max-match-distance",
+        "0.1"
+      ],
+      "modes": [
+        "serial",
+        "parallel"
+      ]
+    }
+  ]
+}
