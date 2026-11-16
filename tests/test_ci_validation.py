@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression checks for the parity and Criterion baseline gates."""
 import os
+import fnmatch
 from pathlib import Path
 import subprocess
 import tempfile
@@ -90,6 +91,21 @@ class Checks(unittest.TestCase):
         job = workflow.split("  build-python:\n", 1)[1].split("  build-python-sdist:\n", 1)[0]
         self.assertIn("- os: ubuntu-24.04", job)
         self.assertNotIn("- os: ubuntu-latest", job)
+
+    def test_github_release_excludes_ci_evidence_and_consumer_builds(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        job = workflow.split("  create-release:\n", 1)[1]
+        selectors = [line.strip().split(": ", 1)[1] for line in job.splitlines()
+                     if line.strip().startswith(("pattern: ", "name: python-sdist"))]
+        artifact_names = ["ries-rs-linux-x86_64", "ries-rs-macos-x86_64",
+                          "ries-rs-macos-aarch64", "ries-rs-windows-x86_64.exe",
+                          "ries-rs-wasm", "python-wheel-ubuntu-24.04",
+                          "python-wheel-macos-latest", "python-wheel-windows-latest",
+                          "python-sdist", "search-qualification-commit", "installed-consumers-commit"]
+        selected = [name for name in artifact_names
+                    if any(fnmatch.fnmatchcase(name, pattern) for pattern in selectors)]
+        self.assertEqual(selected, artifact_names[:9])
+        self.assertNotIn("artifacts/**/*", job)
 
 
 if __name__ == "__main__":

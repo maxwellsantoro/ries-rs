@@ -331,9 +331,24 @@ jobs:
         with:
           ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.sha }}
 
-      - name: Download all artifacts
+      - name: Download native and WASM release artifacts
         uses: actions/download-artifact@v7
         with:
+          pattern: ries-rs-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Download release wheels
+        uses: actions/download-artifact@v7
+        with:
+          pattern: python-wheel-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Download release source distribution
+        uses: actions/download-artifact@v7
+        with:
+          name: python-sdist
           path: artifacts
 
       - name: Display structure of downloaded files
@@ -353,6 +368,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/**/*
+            artifacts/*
           tag_name: ${{ inputs.tag || github.ref_name }}
           body_path: ${{ steps.release_notes.outputs.body_path }}
